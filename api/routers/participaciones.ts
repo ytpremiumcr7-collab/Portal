@@ -1,0 +1,168 @@
+import { z } from "zod";
+import { eq, desc, and, count, asc } from "drizzle-orm";
+import { createRouter, convocanteQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
+import { getDb } from "../queries/connection";
+import { participaciones, licitaciones, proveedores } from "@db/schema";
+import { TRPCError } from "@trpc/server";
+import { assertLicitacionExists, validateRubric } from "../lib/domain";
+import { assertPositiveDays, assertScore } from "../lib/security";
+import { pageInput, pageResult } from "../lib/pagination";
+import { writeAudit } from "../lib/security";
+import { detectLicitacionRisks } from "../lib/detection";
+
+const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
+
+async function ensureProviderForUser(tenantId: number, userId: number) {
+  const db = getDb();
+  const provider = await db.query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, tenantId), eq(proveedores.usuarioId, userId), eq(proveedores.activo, true)) });
+  if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "El usuario proveedor no tiene un expediente de proveedor activo asociado." });
+  return provider;
+}
+
+export const participacionesRouter = createRouter({
+  list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
+    const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
+    const conditions = [eq(participaciones.tenantId, ctx.user.tenantId)];
+    if (ctx.user.role === "proveedor") {
+      const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
+      conditions.push(eq(participaciones.proveedorId, provider.id));
+    } else if (input?.proveedorId) conditions.push(eq(participaciones.proveedorId, input.proveedorId));
+    if (input?.licitacionId) conditions.push(eq(participaciones.licitacionId, input.licitacionId));
+    const where = and(...conditions); const db = getDb();
+    const [items, totalRows] = await Promise.all([
+      db.query.participaciones.findMany({ where, orderBy: [desc(participaciones.createdAt)], limit: pageSize, offset, with: { proveedor: true, licitacion: true, evaluator: true } }),
+      db.select({ total: count() }).from(participaciones).where(where),
+    ]);
+    return pageResult(items, Number(totalRows[0]?.total ?? 0), page, pageSize);
+  }),
+
+  getById: authedQuery.input(z.object({ id: z.number().int().positive() })).query(async ({ input, ctx }) => {
+    const db = getDb(); const item = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)), with: { proveedor: true, licitacion: true, evaluator: true } });
+    if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
+    if (ctx.user.role === "proveedor" && item.proveedor?.usuarioId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "No puede consultar una oferta de otro proveedor." });
+    return item;
+  }),
+
+  create: proveedorQuery.input(z.object({ licitacionId: z.number().int().positive(), montoOferta: money, plazoEjecucion: z.number().int().positive(), observaciones: z.string().trim().optional() })).mutation(async ({ input, ctx }) => {
+    const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
+    const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
+    if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
+    if (lic.fechaCierre && lic.fechaCierre < new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El periodo de presentación de ofertas ya cerró." });
+    if (Number(input.montoOferta) <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
+    assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
+    const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
+    if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });
+    const result = await db.insert(participaciones).values({ tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id, montoOferta: input.montoOferta, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion, estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null });
+    const id = Number(result[0].insertId); const created = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, id), eq(participaciones.tenantId, ctx.user.tenantId)) });
+    await db.update(proveedores).set({ licitacionesParticipadas: (provider.licitacionesParticipadas ?? 0) + 1 }).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "participaciones", entidadId: id, valorNuevo: created });
+    await detectLicitacionRisks(ctx.user.tenantId, input.licitacionId);
+    return created;
+  }),
+
+  evaluar: convocanteQuery.input(z.object({
+    id: z.number().int().positive(),
+    puntajeTecnico: z.number().min(0).max(100).optional(),
+    criteriosTecnicos: z.record(z.string().trim().min(1), z.number().min(0).max(100)).optional(),
+    estadoEvaluacion: z.enum(["ADMISIBLE","NO_ADMISIBLE","RECHAZADA"]),
+    observaciones: z.string().trim().optional(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const offer = await db.query.participaciones.findFirst({
+      where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)),
+      with: { licitacion: true },
+    });
+    if (!offer) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
+    const lic = offer.licitacion;
+    if (lic.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "La licitación debe estar EN_EVALUACION." });
+
+    let technical: number | null = null;
+    let criteriaJson: string | null = null;
+    if (input.estadoEvaluacion === "ADMISIBLE") {
+      const rubric = validateRubric(lic.rubricaTecnica);
+      if (lic.modoEvaluacion === "AUTOMATICA" && !input.criteriosTecnicos) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Esta licitación exige evaluación técnica por rúbrica." });
+      }
+      if (lic.modoEvaluacion === "MANUAL" && input.criteriosTecnicos) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Esta licitación exige captura manual del puntaje técnico." });
+      }
+      if (input.criteriosTecnicos) {
+        if (!rubric) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Se requiere una rúbrica técnica configurada." });
+        const codes = new Set(rubric.map(x => x.codigo));
+        const inputCodes = Object.keys(input.criteriosTecnicos);
+        if (inputCodes.length !== rubric.length || inputCodes.some(code => !codes.has(code))) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Debe evaluarse exactamente cada criterio definido en la rúbrica." });
+        }
+        technical = Number(rubric.reduce((sum, r) => sum + Number(input.criteriosTecnicos?.[r.codigo]) * (Number(r.peso) / 100), 0).toFixed(2));
+        criteriaJson = JSON.stringify(input.criteriosTecnicos);
+      } else if (input.puntajeTecnico != null) {
+        technical = Number(input.puntajeTecnico.toFixed(2));
+      } else {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Debe proporcionar puntaje técnico o criterios técnicos." });
+      }
+      assertScore(technical, "puntajeTecnico");
+    }
+
+    const current = offer;
+    await db.transaction(async (tx) => {
+      await tx.select({ id: participaciones.id })
+        .from(participaciones)
+        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id)))
+        .for("update");
+
+      await tx.update(participaciones).set({
+        estadoEvaluacion: input.estadoEvaluacion,
+        puntajeTecnico: technical == null ? null : technical.toFixed(2),
+        puntajeEconomico: null,
+        puntajeTotal: null,
+        ordenMerito: null,
+        criteriosTecnicos: criteriaJson,
+        evaluatedBy: ctx.user.id,
+        evaluatedAt: new Date(),
+        observaciones: input.observaciones ?? null,
+      }).where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+
+      const admissible = await tx.select({ id: participaciones.id, montoOferta: participaciones.montoOferta })
+        .from(participaciones)
+        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")));
+      const minBid = admissible.length ? Math.min(...admissible.map(x => Number(x.montoOferta))) : 0;
+
+      for (const candidate of admissible) {
+        const economic = minBid > 0 ? Number((minBid / Number(candidate.montoOferta) * 100).toFixed(2)) : 0;
+        assertScore(economic, "puntajeEconomico");
+        const candidateRow = candidate.id === input.id
+          ? null
+          : (await tx.select({ puntajeTecnico: participaciones.puntajeTecnico }).from(participaciones).where(and(eq(participaciones.id, candidate.id), eq(participaciones.tenantId, ctx.user.tenantId))).limit(1))[0];
+        const candidateTechnical = candidate.id === input.id ? Number(technical) : Number(candidateRow?.puntajeTecnico ?? NaN);
+        if (!Number.isFinite(candidateTechnical)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Existe una oferta admisible sin evaluación técnica completa." });
+        const total = Number((candidateTechnical * (Number(lic.ponderacionTecnica) / 100) + economic * (Number(lic.ponderacionEconomica) / 100)).toFixed(2));
+        assertScore(total, "puntajeTotal");
+        await tx.update(participaciones).set({ puntajeEconomico: economic.toFixed(2), puntajeTotal: total.toFixed(2) })
+          .where(and(eq(participaciones.id, candidate.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      }
+
+      const ranking = await tx.select({ id: participaciones.id, puntajeTotal: participaciones.puntajeTotal })
+        .from(participaciones)
+        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")))
+        .orderBy(desc(participaciones.puntajeTotal), asc(participaciones.id));
+      for (let i = 0; i < ranking.length; i++) {
+        await tx.update(participaciones).set({ ordenMerito: i + 1 })
+          .where(and(eq(participaciones.id, ranking[i].id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      }
+    });
+
+    const updated = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)) });
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "EVALUAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
+    return updated;
+  }),
+
+  delete: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+    const db = getDb(); const current = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)) });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
+    if (!["PENDIENTE","NO_ADMISSIBLE","RECHAZADA","DESCARTADA"].includes(current.estadoEvaluacion)) throw new TRPCError({ code: "CONFLICT", message: "Una oferta evaluada/adjudicada no se elimina." });
+    await db.delete(participaciones).where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo });
+    return { success: true };
+  }),
+});
