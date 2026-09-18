@@ -7,6 +7,7 @@ import { TRPCError } from "@trpc/server";
 import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric } from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
 import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura } from "../lib/phase2-transitions";
+import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 
@@ -141,6 +142,7 @@ export const licitacionesRouter = createRouter({
     const db = getDb();
     const provider = await db.query.proveedores.findFirst({ where: and(eq(proveedores.id, input.proveedorGanadorId), eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.activo, true)) });
     if (!provider) throw new TRPCError({ code: "BAD_REQUEST", message: "El proveedor ganador no existe, está inactivo o pertenece a otro tenant." });
+    await assertProveedorPuedeAdjudicarse(ctx.user.tenantId, provider.id);
     if (provider.estadoVerificacion !== "VERIFICADO") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El proveedor ganador debe tener expediente VERIFICADO." });
     const offer = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.id), eq(participaciones.proveedorId, input.proveedorGanadorId)) });
     if (!offer) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El proveedor no presentó oferta en esta licitación." });

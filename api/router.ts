@@ -17,6 +17,17 @@ import { dictamenesRouter } from "./routers/dictamenes";
 import { fallosRouter } from "./routers/fallos";
 import { contratosRouter } from "./routers/contratos";
 import { garantiasRouter } from "./routers/garantias";
+import { planeacionRouter } from "./routers/planeacion";
+import { investigacionMercadoRouter } from "./routers/investigacionMercado";
+import { procedimientoRouter } from "./routers/procedimiento";
+import { ejecucionRouter } from "./routers/ejecucion";
+import { pagosRouter } from "./routers/pagos";
+import { incidenciasRouter } from "./routers/incidencias";
+import { sancionesRouter } from "./routers/sanciones";
+import { inconformidadesRouter } from "./routers/inconformidades";
+import { notificacionesRouter } from "./routers/notificaciones";
+import { consultaPublicaRouter } from "./routers/consultaPublica";
+import { capabilitiesRouter } from "./routers/capabilities";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -38,6 +49,17 @@ export const appRouter = createRouter({
   fallos: fallosRouter,
   contratos: contratosRouter,
   garantias: garantiasRouter,
+  planeacion: planeacionRouter,
+  investigacionMercado: investigacionMercadoRouter,
+  procedimiento: procedimientoRouter,
+  ejecucion: ejecucionRouter,
+  pagos: pagosRouter,
+  incidencias: incidenciasRouter,
+  sanciones: sancionesRouter,
+  inconformidades: inconformidadesRouter,
+  notificaciones: notificacionesRouter,
+  consultaPublica: consultaPublicaRouter,
+  capabilities: capabilitiesRouter,
 });
 
 export type AppRouter = typeof appRouter;

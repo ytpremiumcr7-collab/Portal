@@ -9,6 +9,7 @@ import { assertPositiveDays, assertScore } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { writeAudit } from "../lib/security";
 import { detectLicitacionRisks } from "../lib/detection";
+import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -45,6 +46,7 @@ export const participacionesRouter = createRouter({
 
   create: proveedorQuery.input(z.object({ licitacionId: z.number().int().positive(), montoOferta: money, plazoEjecucion: z.number().int().positive(), observaciones: z.string().trim().optional() })).mutation(async ({ input, ctx }) => {
     const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
+    await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
     if (lic.fechaCierre && lic.fechaCierre < new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El periodo de presentación de ofertas ya cerró." });

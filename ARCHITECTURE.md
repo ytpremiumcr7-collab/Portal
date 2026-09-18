@@ -1,64 +1,81 @@
-# ARES Engine MX — Architecture (Phase 2)
+# ARES Engine MX — Architecture (Phase 3 — ciclo completo)
 
 ## Boundary (ARES only)
 
-ARES is Mexico’s **transactional public procurement** platform: convocatoria → aclaraciones → recepción/apertura → evaluación → dictamen → fallo → adjudicación → contrato → garantías → (future) ejecución/pagos/sanciones.
+ARES is Mexico’s **transactional public procurement** platform: planeación → investigación de mercado → convocatoria → aclaraciones → recepción/apertura → evaluación → dictamen → fallo → adjudicación → contrato → garantías → ejecución → pagos → incidencias / sanciones / inconformidades, con notificaciones oficiales y consulta pública.
 
 **Out of scope / never merge here:** Megalodon, BIM, APU, or any “preparation platform” features. MEGALODON prepares; ARES contracts, administers, and governs.
 
 Design rule: do **not** fake missing phases with more `hitos`, `tipo_documento`, or fields on `licitaciones`. Each act is a real transactional domain (identity, states, transitions, actors, deadlines, evidence, permissions, link to expediente).
 
-## Conserved from Phase 1
+**ALERTA ≠ SANCIÓN.** `alertas_seguridad` are risk signals. `sanciones` / `proveedores_impedidos` are legal acts with vigencia that gate participación and adjudicación.
 
-- Expediente electrónico gobernado (`expedientes`, requirements, hash-chain `expediente_events`)
-- Document versioning (`version_group`, `es_version_vigente`)
-- Publication gates (expediente APROBADO + docs + junta)
-- Evaluación in `participaciones` + integrity alerts
-- Tenant isolation filters
+## Conserved from Phase 1–2
 
-## What landed in Phase 2
+- Expediente electrónico gobernado + hash-chain events
+- Document versioning; publication gates
+- Phase 2: Aclaraciones, Apertura, Dictamen, Fallo, Contratos, Garantías
+- Adjudicación requires dictamen APROBADO + fallo PUBLICADO
+- Soft-delete `tenants.deleted_at`; ON DELETE RESTRICT on evidence tables
+
+## Phase 3 domains
 
 | Domain | Tables | Key workflow |
 |--------|--------|--------------|
-| **Aclaraciones** | `aclaraciones_juntas`, `_preguntas`, `_respuestas` | PROGRAMADA → ABIERTA → CERRADA_PREGUNTAS → EN_RESPUESTA → ACTA_EMITIDA → PUBLICADA |
-| **Apertura gobernada** | `aperturas`, `apertura_registros` | RECEPCION_ABIERTA → CERRADA → SELLADA → ABIERTA → REGISTRADA → ACTA_EMITIDA → PUBLICADA |
-| **Dictamen** | `dictamenes`, `dictamen_firmantes` | BORRADOR (firmas) → EMITIDO → APROBADO \| RECHAZADO |
-| **Fallo** | `fallos` | BORRADOR → EMITIDO → APROBADO → PUBLICADO |
-| **Contratos** | `contratos` | BORRADOR → FORMALIZADO → VIGENTE → TERMINADO \| RESCINDIDO |
-| **Garantías** | `garantias` | REQUERIDA → PRESENTADA → VIGENTE → LIBERADA \| EJECUTADA |
+| **Planeación** | `programas_anuales`, `partidas_presupuestarias`, `necesidades`, `suficiencias_presupuestarias`, `estrategias_procedimiento` | necesidad BORRADOR→…→APROBADA; suficiencia OTORGADA; estrategia; **vincularALicitacion** creates procedimiento without collapsing planning into `licitaciones` |
+| **Inv. mercado** | `investigaciones_mercado`, `proveedores_consultados`, `cotizaciones_mercado` | Distinct from participación/oferta; comparativo → conclusion |
+| **Procedimiento** | `procedimiento_eventos`, `procedimiento_plazos` | Legal-operational enrichment + deadlines (Phase 2 domains untouched) |
+| **Ejecución** | `modificaciones_contractuales`, `ejecuciones_contractuales`, `entregables`, `finiquitos` | Convenios/ampliaciones/prórrogas; avance; aceptación; finiquito — expediente events in same TX |
+| **Pagos** | `estimaciones_pago` | PRESENTADA→EN_REVISION→AUTORIZADA→PAGADA \| RECHAZADA (not just FACTURA doc) |
+| **Incidencias** | `incidencias` | ABIERTA→…→RESUELTA/CERRADA; acción correctiva |
+| **Sanciones** | `investigaciones_sancion`, `sanciones`, `proveedores_impedidos` | tipo/fundamento/autoridad/vigencia; gates on participate/adjudicar |
+| **Inconformidades** | `inconformidades` | promovente, acto, plazos, resolución |
+| **Notificaciones** | `notificacion_templates`, `notificaciones`, `notificacion_destinatarios` | delivery_status + acknowledgement; hooks for fallo/adjudicación/contrato/sanción/inconformidad |
+| **Consulta pública** | (reads existing) | `consultaPublica.*` via `publicQuery` — no admin auth |
+| **RBAC capabilities** | `user_capabilities` | capability-based beyond admin/licitante/proveedor |
 
-### Sequence wiring
+### Capability catalog
 
-`EVALUACIÓN → DICTAMEN → FALLO → ADJUDICACIÓN → CONTRATO`
+`crear_procedimiento`, `publicar`, `evaluar_tecnico`, `evaluar_economico`, `aprobar_juridico`, `emitir_dictamen`, `autorizar_fallo`, `formalizar_contrato`, `aprobar_pago`, `resolver_incidencia`, `administrar_sancion`, `auditar`, `administrar_planeacion`, `investigar_mercado`, `administrar_ejecucion`, `resolver_inconformidad`, `notificar`, `consulta_publica_admin`.
 
-- `licitaciones.iniciarEvaluacion` requires apertura **PUBLICADA** (not only `ACTA_APERTURA` document).
-- `licitaciones.adjudicar` requires dictamen **APROBADO** + fallo **PUBLICADO** aligned on proveedor/monto (no longer only a DICTAMEN document).
-- Material acts append `expediente_events` **in the same DB transaction** as the state change.
+Role defaults in `api/lib/capabilities.ts`; overrides in `user_capabilities`. Middleware: `capabilityQuery(...)`.
 
-### Evidence / tenant delete
+### Public consult
 
-- Soft-delete column `tenants.deleted_at`.
-- `ON DELETE RESTRICT` for evidentiary aggregates: `expedientes`, `expediente_events`, `audit_log`, and all Phase 2 domain tables (no CASCADE wipe of history).
+Unauthenticated router `consultaPublica` (registered in `api/router.ts`):
 
-### Routers
+- `procedimientos`, `adjudicaciones`, `contratos`, `sancionados`, `documentosPublicos`, `resumen`
+- UI: `/consulta-publica` (outside AppLayout auth gate)
 
-Registered in `api/router.ts`: `aclaraciones`, `aperturas`, `dictamenes`, `fallos`, `contratos`, `garantias`.
+### Integrity
 
-UI routes under AppLayout: `/aclaraciones`, `/aperturas`, `/dictamenes`, `/fallos`, `/contratos`, `/garantias`.
+- Material acts + `expediente_events` (+ audit) in **same transaction** where an expediente exists
+- Soft-delete / RESTRICT on evidence; no CASCADE wipe of history for tenant delete
+- Alert → optional `investigaciones_sancion` stub linking to sanción
 
-Migration: `db/migrations/0003_phase2_dominios_transaccionales.sql`.
+### Routers (Phase 3)
 
-## TODOs (next domains — stubs only, not implemented)
+`planeacion`, `investigacionMercado`, `procedimiento`, `ejecucion`, `pagos`, `incidencias`, `sanciones`, `inconformidades`, `notificaciones`, `consultaPublica`, `capabilities`.
 
-- Investigación de mercado (cotizaciones ≠ participación)
-- Pagos / administración contractual / modificaciones / ejecución
-- Sanciones e investigación (≠ alertas)
-- Inconformidades
-- Notificaciones oficiales
-- Consulta pública
-- Segregación de roles más fina (más allá de admin/licitante/proveedor)
+Migration: `db/migrations/0004_phase3_ciclo_completo.sql`.
+
+Transition guards: `api/lib/phase2-transitions.ts` + `api/lib/phase3-transitions.ts` (vitest, no live DB).
+
+## Sequence (full cycle)
+
+```
+PLANEACIÓN → (inv. mercado) → PROCEDIMIENTO → ACLARACIONES → APERTURA
+→ EVALUACIÓN → DICTAMEN → FALLO → ADJUDICACIÓN → CONTRATO → GARANTÍAS
+→ EJECUCIÓN / MODIFICACIONES → PAGOS → FINIQUITO
+(+ incidencias / sanciones / inconformidades / notificaciones)
+```
+
+## TODOs (light stubs / future)
+
 - Hash-chain on `audit_log` (today chain lives on expediente events)
+- Full out-of-band email/SMS delivery adapters (status machine is real; transport is in-process mark-as-sent)
+- Finer UI for capability assignment beyond admin API `capabilities.grant`
 
 ## Stack
 
-Drizzle (MySQL) + tRPC + React. Pure transition guards in `api/lib/phase2-transitions.ts` (vitest without live DB).
+Drizzle (MySQL) + tRPC + React. Spanish domain terms. ARES only — no Megalodon.
