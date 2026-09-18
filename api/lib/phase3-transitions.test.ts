@@ -50,6 +50,7 @@ describe("Phase 3 — ejecución / pagos", () => {
     expect(() => assertEjecucionTransition("EN_EJECUCION", "SUSPENDIDA")).not.toThrow();
     expect(() => assertEjecucionTransition("SUSPENDIDA", "EN_EJECUCION")).not.toThrow();
     expect(msg(() => assertEjecucionTransition("NO_INICIADA", "TERMINADA"))).toContain("Transición inválida");
+    expect(msg(() => assertEjecucionTransition("TERMINADA", "FINIQUITADA"))).toContain("emitirFiniquito");
   });
   it("estimación presentar→revisar→autorizar→pagar", () => {
     for (let i = 0; i < ESTIMACION_FLOW.length - 1; i++) {

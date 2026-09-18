@@ -8,6 +8,7 @@ import { assertEstimacionTransition } from "../lib/phase3-transitions";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { assertProcedimientoAsignacion } from "../lib/sod";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -40,6 +41,7 @@ export const pagosRouter = createRouter({
     await db.transaction(async (tx) => {
       const locked = await tx.select({
         id: contratos.id, estado: contratos.estado, monto: contratos.monto, expedienteId: contratos.expedienteId,
+        licitacionId: contratos.licitacionId,
       }).from(contratos)
         .where(and(eq(contratos.id, input.contratoId), eq(contratos.tenantId, ctx.user.tenantId)))
         .for("update")
@@ -48,6 +50,7 @@ export const pagosRouter = createRouter({
       if (!contrato || !["VIGENTE", "FORMALIZADO"].includes(contrato.estado)) {
         throw new TRPCError({ code: "CONFLICT", message: "Contrato no admite estimaciones." });
       }
+      await assertProcedimientoAsignacion(ctx.user, contrato.licitacionId, "presentar_pago");
       // Cumulative sum of non-rejected estimaciones must not exceed contrato.monto
       const sumRows = await tx.select({
         total: sql<string>`COALESCE(SUM(${estimacionesPago.montoNeto}), 0)`,
@@ -96,6 +99,9 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
   assertEstimacionTransition(current.estado as any, next as any);
   const contrato = await db.query.contratos.findFirst({ where: and(eq(contratos.id, current.contratoId), eq(contratos.tenantId, ctx.user.tenantId)) });
   if (!contrato) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+  if (["EN_REVISION", "AUTORIZADA", "PAGADA", "RECHAZADA"].includes(next)) {
+    await assertProcedimientoAsignacion(ctx.user, contrato.licitacionId, "aprobar_pago");
+  }
   await db.transaction(async (tx) => {
     const result = await tx.update(estimacionesPago).set({ ...patch, estado: next } as any).where(and(eq(estimacionesPago.id, id), eq(estimacionesPago.tenantId, ctx.user.tenantId), eq(estimacionesPago.estado, current.estado)));
     if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La estimación cambió de estado." });

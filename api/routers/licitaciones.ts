@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { eq, desc, like, and, count, asc, sql } from "drizzle-orm";
+import { eq, desc, like, and, count, sql } from "drizzle-orm";
 import { createRouter, convocanteQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos } from "@db/schema";
+import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, toYmd} from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
@@ -10,6 +10,7 @@ import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura } fro
 import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { hashReglas, assertIsPrimerLugar, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -108,8 +109,44 @@ export const licitacionesRouter = createRouter({
   publicar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionReadyForPublish(ctx.user.tenantId, input.id);
     const db = getDb();
-    const result = await db.update(licitaciones).set({ estado: "PUBLICADA", etapa: "CONVOCATORIA", fechaPublicacion: current.fechaPublicacion ?? new Date() }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "BORRADOR")));
-    if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación cambió de estado antes de publicarse; vuelva a cargar el expediente." });
+    const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
+    if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
+    const frozen: FrozenReglas = {
+      criterioEvaluacion: current.criterioEvaluacion as CriterioEvaluacion,
+      ponderacionTecnica: current.ponderacionTecnica,
+      ponderacionEconomica: current.ponderacionEconomica,
+      modoEvaluacion: current.modoEvaluacion,
+      tipoLicitacion: current.tipoLicitacion,
+      tipoContratacion: current.tipoContratacion,
+      marcoJuridico: expediente.marcoJuridico,
+      rubricaTecnica: current.rubricaTecnica ?? null,
+    };
+    const reglasHash = hashReglas(frozen);
+    await db.transaction(async (tx) => {
+      const result = await tx.update(licitaciones).set({ estado: "PUBLICADA", etapa: "CONVOCATORIA", fechaPublicacion: current.fechaPublicacion ?? new Date() }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "BORRADOR")));
+      if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación cambió de estado antes de publicarse; vuelva a cargar el expediente." });
+      // Freeze evaluation parameters at publish — evaluation/adjudicación MUST read this version.
+      await tx.insert(licitacionReglasVersion).values({
+        tenantId: ctx.user.tenantId,
+        licitacionId: input.id,
+        version: 1,
+        criterioEvaluacion: frozen.criterioEvaluacion,
+        ponderacionTecnica: String(Number(frozen.ponderacionTecnica).toFixed(2)),
+        ponderacionEconomica: String(Number(frozen.ponderacionEconomica).toFixed(2)),
+        modoEvaluacion: frozen.modoEvaluacion,
+        tipoLicitacion: frozen.tipoLicitacion,
+        tipoContratacion: frozen.tipoContratacion,
+        marcoJuridico: frozen.marcoJuridico,
+        rubricaTecnica: frozen.rubricaTecnica,
+        reglasHash,
+        publishedBy: ctx.user.id,
+      });
+      await appendExpedienteEvent(tx, ctx, {
+        expedienteId: expediente.id, tipo: "REGLAS_EVALUACION_CONGELADAS",
+        estadoAnterior: "BORRADOR", estadoNuevo: "PUBLICADA", motivo: input.motivo,
+        payload: { reglasHash, criterioEvaluacion: frozen.criterioEvaluacion, version: 1 },
+      });
+    });
     const updated = await getByTenant(input.id, ctx.user.tenantId);
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
     return updated;
@@ -147,9 +184,27 @@ export const licitacionesRouter = createRouter({
     const offer = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.id), eq(participaciones.proveedorId, input.proveedorGanadorId)) });
     if (!offer) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El proveedor no presentó oferta en esta licitación." });
     if (offer.estadoEvaluacion !== "ADMISIBLE") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La oferta del proveedor no es admisible." });
-    if (offer.puntajeTotal == null || offer.puntajeTecnico == null || offer.puntajeEconomico == null) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La oferta no tiene evaluación técnica y económica completa." });
-    const higher = await db.select({ id: participaciones.id, proveedorId: participaciones.proveedorId }).from(participaciones).where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE"))).orderBy(desc(participaciones.puntajeTotal), asc(participaciones.id)).limit(1);
-    if (!higher.length || higher[0].id !== offer.id) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El proveedor indicado no ocupa el primer lugar de la evaluación vigente." });
+    if (offer.puntajeTecnico == null) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La oferta no tiene evaluación técnica completa." });
+    // Use frozen evaluation rules — NOT live mutable licitacion fields.
+    const frozenRow = await db.query.licitacionReglasVersion.findFirst({
+      where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, input.id)),
+      orderBy: [desc(licitacionReglasVersion.version)],
+    });
+    if (!frozenRow) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No hay reglas de evaluación congeladas; publique el procedimiento primero." });
+    const criterio = frozenRow.criterioEvaluacion as CriterioEvaluacion;
+    if (criterio === "MEJOR_RELACION_CALIDAD_PRECIO" && (offer.puntajeTotal == null || offer.puntajeEconomico == null)) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La oferta no tiene evaluación técnica y económica completa." });
+    }
+    const admisibles = await db.select({
+      id: participaciones.id, montoOferta: participaciones.montoOferta,
+      puntajeTecnico: participaciones.puntajeTecnico, puntajeEconomico: participaciones.puntajeEconomico,
+      puntajeTotal: participaciones.puntajeTotal,
+    }).from(participaciones).where(and(
+      eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.id),
+      eq(participaciones.estadoEvaluacion, "ADMISIBLE"),
+    ));
+    // NO universal max(puntajeTotal) when criterion is PRECIO_MAS_BAJO / MEJOR_VALOR_TECNICO.
+    assertIsPrimerLugar(criterio, admisibles, offer.id);
     if (Number(input.montoAdjudicado) !== Number(offer.montoOferta)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El monto adjudicado debe coincidir con la oferta ganadora." });
     const dictamen = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.tenantId, ctx.user.tenantId), eq(dictamenes.licitacionId, input.id), eq(dictamenes.estado, "APROBADO")), orderBy: [desc(dictamenes.version)] });
     const fallo = await db.query.fallos.findFirst({ where: and(eq(fallos.tenantId, ctx.user.tenantId), eq(fallos.licitacionId, input.id)) });

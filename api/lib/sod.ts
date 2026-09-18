@@ -1,4 +1,7 @@
 import { TRPCError } from "@trpc/server";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "../queries/connection";
+import { procedimientoAsignaciones } from "@db/schema";
 
 /** Procedure-level assignment roles (per licitación/procedimiento). */
 export const PROCEDIMIENTO_ROLES = [
@@ -83,4 +86,65 @@ export function findCapabilityConflicts(
     }
   }
   return out;
+}
+
+export type SodUser = {
+  id: number;
+  tenantId: number;
+  role: string;
+};
+
+/**
+ * Enforce procedure-level SoD assignment.
+ * - Admin: full bypass (no assignment required). Override justification is persisted on grant
+ *   (procedimiento_asignaciones.justificacion_override + expediente SOD_OVERRIDE_ASIGNACION).
+ * - Non-admin: must hold `role` on `licitacionId` in procedimiento_asignaciones.
+ * When `role` is an array, any one match is enough (OR).
+ */
+export async function assertProcedimientoAsignacion(
+  user: SodUser,
+  licitacionId: number,
+  role: ProcedimientoRole | ProcedimientoRole[],
+  opts?: { adminBypass?: boolean },
+) {
+  const adminBypass = opts?.adminBypass !== false;
+  if (adminBypass && user.role === "admin") return;
+
+  const roles = Array.isArray(role) ? role : [role];
+  for (const r of roles) {
+    if (!isProcedimientoRole(r)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `Rol de procedimiento desconocido: ${r}` });
+    }
+  }
+
+  const db = getDb();
+  const rows = await db.query.procedimientoAsignaciones.findMany({
+    where: and(
+      eq(procedimientoAsignaciones.tenantId, user.tenantId),
+      eq(procedimientoAsignaciones.licitacionId, licitacionId),
+      eq(procedimientoAsignaciones.userId, user.id),
+    ),
+  });
+  const held = new Set(rows.map((r) => r.rol));
+  if (roles.some((r) => held.has(r))) return;
+
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: `Segregación de funciones: se requiere asignación de procedimiento (${roles.join(" | ")}) en la licitación ${licitacionId}.`,
+  });
+}
+
+/** Pure helper for unit/governance tests — same logic without DB. */
+export function evaluateProcedimientoAsignacion(input: {
+  userRole: string;
+  heldRoles: readonly string[];
+  required: readonly string[];
+  adminBypass?: boolean;
+}): { ok: boolean; reason?: string } {
+  if ((input.adminBypass !== false) && input.userRole === "admin") return { ok: true };
+  if (input.required.some((r) => input.heldRoles.includes(r))) return { ok: true };
+  return {
+    ok: false,
+    reason: `Se requiere asignación (${input.required.join(" | ")})`,
+  };
 }

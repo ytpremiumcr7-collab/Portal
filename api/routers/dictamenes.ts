@@ -9,6 +9,8 @@ import { assertLicitacionExists } from "../lib/domain";
 import { assertDictamenTransition } from "../lib/phase2-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { assertProcedimientoAsignacion } from "../lib/sod";
+import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -109,6 +111,11 @@ export const dictamenesRouter = createRouter({
     if (!current.firmantes.length || current.firmantes.some((f: any) => !f.firmado)) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Todos los firmantes deben haber firmado antes de emitir." });
     }
+    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "dictaminador");
+    const offers = await db.select({ id: participaciones.id, estadoEvaluacion: participaciones.estadoEvaluacion })
+      .from(participaciones)
+      .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, current.licitacionId)));
+    assertEvaluacionesCompletas(offers);
     await db.transaction(async (tx) => {
       const result = await tx.update(dictamenes).set({ estado: "EMITIDO", emitidoPor: ctx.user.id, emitidoAt: new Date() }).where(and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId), eq(dictamenes.estado, "BORRADOR")));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "El dictamen cambió de estado." });
@@ -124,6 +131,7 @@ export const dictamenesRouter = createRouter({
     const current = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Dictamen no encontrado." });
     assertDictamenTransition(current.estado as any, "APROBADO");
+    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "dictaminador");
     await db.transaction(async (tx) => {
       const result = await tx.update(dictamenes).set({ estado: "APROBADO", aprobadoPor: ctx.user.id, aprobadoAt: new Date() }).where(and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId), eq(dictamenes.estado, "EMITIDO")));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "El dictamen cambió de estado." });

@@ -3,7 +3,7 @@
 ## Estado en la máquina del agente
 - MariaDB 11.8 local en `localhost:3306`
 - Base `ares`, usuario `ares` / `ares_dev_local`
-- Migraciones `0001`–`0006` aplicadas
+- Migraciones `0001`–`0007` aplicadas
 - App Vite + API Hono en **http://localhost:3000/**
 
 ## Bootstrap de operaciones (`db/seed.ts`)
@@ -31,3 +31,4 @@ npm run dev -- --host 0.0.0.0 --port 3000
 docker compose up -d mysql
 # esperar healthy, luego migrate + seed + npm run dev
 ```
+# Nota: docker-compose monta migraciones 0001–0007 en initdb.

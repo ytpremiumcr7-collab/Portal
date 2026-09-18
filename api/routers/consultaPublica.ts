@@ -119,11 +119,12 @@ export const consultaPublicaRouter = createRouter({
     pageSize: z.number().int().positive().max(50).optional(),
   }).optional()).query(async ({ input }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize ?? 20);
-    // Public docs require APROBADO + esPublico + vigente (publishable phases preferred via procedimientos filter when listing procs).
+    // Public docs require APROBADO + esPublico + vigente AND related procedimiento in a publicable estado (not BORRADOR).
     const conditions = [
       eq(documentos.esPublico, true),
       eq(documentos.esVersionVigente, true),
       eq(documentos.estado, "APROBADO"),
+      sql`${licitaciones.estado} IN ('PUBLICADA','EN_EVALUACION','ADJUDICADA','FINALIZADA','DESIERTA','CANCELADA')`,
     ];
     if (input?.tenantId) conditions.push(eq(documentos.tenantId, input.tenantId));
     if (input?.licitacionId) conditions.push(eq(documentos.licitacionId, input.licitacionId));
@@ -134,8 +135,12 @@ export const consultaPublicaRouter = createRouter({
         id: documentos.id, tenantId: documentos.tenantId, licitacionId: documentos.licitacionId,
         tipo: documentos.tipo, nombreArchivo: documentos.nombreArchivo, version: documentos.version,
         fechaSubida: documentos.fechaSubida,
-      }).from(documentos).where(where).orderBy(desc(documentos.fechaSubida)).limit(pageSize).offset(offset),
-      db.select({ total: count() }).from(documentos).where(where),
+      }).from(documentos)
+        .innerJoin(licitaciones, and(eq(licitaciones.id, documentos.licitacionId), eq(licitaciones.tenantId, documentos.tenantId)))
+        .where(where).orderBy(desc(documentos.fechaSubida)).limit(pageSize).offset(offset),
+      db.select({ total: count() }).from(documentos)
+        .innerJoin(licitaciones, and(eq(licitaciones.id, documentos.licitacionId), eq(licitaciones.tenantId, documentos.tenantId)))
+        .where(where),
     ]);
     return pageResult(rows, Number(totalRows[0]?.total ?? 0), page, pageSize);
   }),

@@ -3,12 +3,13 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { sanciones, proveedoresImpedidos, investigacionesSancion, proveedores } from "@db/schema";
+import { sanciones, proveedoresImpedidos, investigacionesSancion, proveedores, incidencias } from "@db/schema";
 import { assertSancionTransition, assertInvestigacionSancionTransition } from "../lib/phase3-transitions";
 import { syncImpedimentosActivo } from "../lib/sanciones-gate";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { tryNotifyEvent } from "../lib/notify-hook";
+import { assertProcedimientoAsignacion } from "../lib/sod";
 
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/).optional();
@@ -52,11 +53,19 @@ export const sancionesRouter = createRouter({
   abrirInvestigacion: capabilityQuery("investigar_sancion").input(z.object({
     proveedorId: z.number().int().positive(), folio: z.string().trim().min(3).max(60),
     resumen: z.string().trim().min(10), alertaId: z.number().int().positive().optional(),
-    incidenciaId: z.number().int().positive().optional(), motivo: z.string().trim().min(3),
+    incidenciaId: z.number().int().positive().optional(),
+    licitacionId: z.number().int().positive().optional(),
+    motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const prov = await db.query.proveedores.findFirst({ where: and(eq(proveedores.id, input.proveedorId), eq(proveedores.tenantId, ctx.user.tenantId)) });
     if (!prov) throw new TRPCError({ code: "NOT_FOUND", message: "Proveedor no encontrado." });
+    let licitacionId = input.licitacionId ?? null;
+    if (!licitacionId && input.incidenciaId) {
+      const inc = await db.query.incidencias.findFirst({ where: and(eq(incidencias.id, input.incidenciaId), eq(incidencias.tenantId, ctx.user.tenantId)) });
+      if (inc?.licitacionId) licitacionId = inc.licitacionId;
+    }
+    if (licitacionId) await assertProcedimientoAsignacion(ctx.user, licitacionId, "investigar_sancion");
     const result = await db.insert(investigacionesSancion).values({
       tenantId: ctx.user.tenantId, proveedorId: input.proveedorId, folio: input.folio, resumen: input.resumen,
       estado: "ABIERTA", abiertaPor: ctx.user.id, alertaId: input.alertaId ?? null, incidenciaId: input.incidenciaId ?? null,
@@ -71,12 +80,19 @@ export const sancionesRouter = createRouter({
   transicionarInvestigacion: capabilityQuery("investigar_sancion").input(z.object({
     id: z.number().int().positive(),
     to: z.enum(["EN_TRAMITE", "CERRADA_SIN_SANCION"]),
+    licitacionId: z.number().int().positive().optional(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cur = await db.query.investigacionesSancion.findFirst({ where: and(eq(investigacionesSancion.id, input.id), eq(investigacionesSancion.tenantId, ctx.user.tenantId)) });
     if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Investigación no encontrada." });
     assertInvestigacionSancionTransition(cur.estado as any, input.to);
+    let licitacionId = input.licitacionId ?? null;
+    if (!licitacionId && cur.incidenciaId) {
+      const inc = await db.query.incidencias.findFirst({ where: and(eq(incidencias.id, cur.incidenciaId), eq(incidencias.tenantId, ctx.user.tenantId)) });
+      if (inc?.licitacionId) licitacionId = inc.licitacionId;
+    }
+    if (licitacionId) await assertProcedimientoAsignacion(ctx.user, licitacionId, "investigar_sancion");
     const patch: Record<string, unknown> = { estado: input.to };
     if (input.to === "CERRADA_SIN_SANCION") patch.cerradaAt = new Date();
     await db.update(investigacionesSancion).set(patch as any)
@@ -90,6 +106,7 @@ export const sancionesRouter = createRouter({
     proveedorId: z.number().int().positive(),
     investigacionId: z.number().int().positive().optional(),
     fromAlertaId: z.number().int().positive().optional(),
+    licitacionId: z.number().int().positive().optional(),
     tipo: z.enum(["AMONESTACION", "MULTA", "INHABILITACION", "RESCISION", "IMPEDIMENTO"]),
     fundamento: z.string().trim().min(10), autoridad: z.string().trim().min(3).max(200),
     resolucion: z.string().trim().min(10), folio: z.string().trim().min(3).max(80),
@@ -98,6 +115,7 @@ export const sancionesRouter = createRouter({
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
+    if (input.licitacionId) await assertProcedimientoAsignacion(ctx.user, input.licitacionId, "administrar_sancion");
     let investigacionId = input.investigacionId ?? null;
     // From alerta: must link investigation — no inventing autoridad/sanción free-only.
     if (input.fromAlertaId && !investigacionId) {

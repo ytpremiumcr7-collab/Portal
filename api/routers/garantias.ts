@@ -9,6 +9,7 @@ import { assertGarantiaTransition } from "../lib/phase2-transitions";
 import { assertGarantiaListaParaVigente } from "../lib/garantia-gates";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { assertDocumentoBoundToContext } from "../lib/documento-binding";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -85,12 +86,18 @@ export const garantiasRouter = createRouter({
     } else if (!["admin", "licitante"].includes(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Sin permiso para intake de garantía." });
     }
+    const contrato = await db.query.contratos.findFirst({ where: and(eq(contratos.id, current.contratoId), eq(contratos.tenantId, ctx.user.tenantId)) });
+    if (!contrato) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato de la garantía no encontrado." });
     const doc = await db.query.documentos.findFirst({
       where: and(eq(documentos.id, input.documentoId), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)),
     });
-    if (!doc || doc.tipo !== "GARANTIA" || doc.estado !== "APROBADO") {
-      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Se requiere documento tipo GARANTIA APROBADO/vigente." });
-    }
+    assertDocumentoBoundToContext(doc, {
+      tenantId: ctx.user.tenantId,
+      expedienteId: contrato.expedienteId,
+      licitacionId: current.licitacionId,
+      proveedorId: current.proveedorId,
+      expectedTipo: "GARANTIA",
+    });
     return transition(ctx, input.id, "PRESENTADA", input.motivo, {
       instrumento: input.instrumento, numeroPoliza: input.numeroPoliza,
       fechaInicio: input.fechaInicio, fechaVencimiento: input.fechaVencimiento,
@@ -108,6 +115,20 @@ export const garantiasRouter = createRouter({
       numeroPoliza: current.numeroPoliza, fechaInicio: current.fechaInicio as any,
       fechaVencimiento: current.fechaVencimiento as any, documentoId: (current as any).documentoId,
     });
+    const contrato = await db.query.contratos.findFirst({ where: and(eq(contratos.id, current.contratoId), eq(contratos.tenantId, ctx.user.tenantId)) });
+    if (!contrato) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato de la garantía no encontrado." });
+    if (current.documentoId) {
+      const doc = await db.query.documentos.findFirst({
+        where: and(eq(documentos.id, current.documentoId), eq(documentos.tenantId, ctx.user.tenantId)),
+      });
+      assertDocumentoBoundToContext(doc, {
+        tenantId: ctx.user.tenantId,
+        expedienteId: contrato.expedienteId,
+        licitacionId: current.licitacionId,
+        proveedorId: current.proveedorId,
+        expectedTipo: "GARANTIA",
+      });
+    }
     return transition(ctx, input.id, "VIGENTE", input.motivo, {});
   }),
 

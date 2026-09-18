@@ -3,7 +3,8 @@ import { TRPCError } from "@trpc/server";
 import { isOfertaDocumentalCompleta, assertOfertasDocumentalesCompletas } from "./oferta-completa";
 import { evaluateFiniquitoGates, assertFiniquitoGates } from "./finiquito-gates";
 import { assertGarantiaListaParaVigente, assertGarantiasRequeridasActivas } from "./garantia-gates";
-import { findRoleConflict, assertNoRoleConflict, findCapabilityConflicts } from "./sod";
+import { findRoleConflict, assertNoRoleConflict, findCapabilityConflicts, evaluateProcedimientoAsignacion } from "./sod";
+import { assertEjecucionTransition } from "./phase3-transitions";
 import { assertInvestigacionSancionTransition, canonicalImpedimentoActivo } from "./phase3-transitions";
 
 function msg(fn: () => unknown) {
@@ -25,21 +26,25 @@ describe("P1 oferta documental", () => {
 });
 
 describe("P1 finiquito gates", () => {
-  it("blocks on open critical / pending / reconciliation / garantias", () => {
+  it("blocks on open critical / pending / reconciliation / garantias / montoFinal", () => {
     const errors = evaluateFiniquitoGates({
       criticalIncidenciasOpen: 1, pendingEstimaciones: 0, pendingEntregables: 0,
-      paidCumulative: 100, contratoMonto: 100, blockingGarantias: 0,
+      paidCumulativeBruto: 100, contratoMonto: 100, montoFinal: 100, blockingGarantias: 0,
     });
     expect(errors.some((e) => e.includes("incidencia"))).toBe(true);
     expect(msg(() => assertFiniquitoGates({
       criticalIncidenciasOpen: 0, pendingEstimaciones: 0, pendingEntregables: 0,
-      paidCumulative: 50, contratoMonto: 100, blockingGarantias: 0,
+      paidCumulativeBruto: 50, contratoMonto: 100, montoFinal: 50, blockingGarantias: 0,
     }))).toContain("concilian");
+    expect(msg(() => assertFiniquitoGates({
+      criticalIncidenciasOpen: 0, pendingEstimaciones: 0, pendingEntregables: 0,
+      paidCumulativeBruto: 100, contratoMonto: 100, montoFinal: 99, blockingGarantias: 0,
+    }))).toContain("montoFinal");
   });
   it("passes when clean", () => {
     expect(() => assertFiniquitoGates({
       criticalIncidenciasOpen: 0, pendingEstimaciones: 0, pendingEntregables: 0,
-      paidCumulative: 100, contratoMonto: 100, blockingGarantias: 0,
+      paidCumulativeBruto: 100, contratoMonto: 100, montoFinal: 100, blockingGarantias: 0,
     })).not.toThrow();
   });
 });
@@ -83,5 +88,27 @@ describe("Investigación sanción + impedimento canonical", () => {
   it("canonical activo from vigencia window", () => {
     expect(canonicalImpedimentoActivo({ vigenteDesde: "2020-01-01", vigenteHasta: "2099-01-01", asOf: "2026-09-18" })).toBe(true);
     expect(canonicalImpedimentoActivo({ vigenteDesde: "2020-01-01", vigenteHasta: "2020-02-01", asOf: "2026-09-18" })).toBe(false);
+  });
+});
+
+describe("SoD assertProcedimientoAsignacion helper", () => {
+  it("admin bypasses; non-admin needs assignment", () => {
+    expect(evaluateProcedimientoAsignacion({
+      userRole: "admin", heldRoles: [], required: ["dictaminador"],
+    }).ok).toBe(true);
+    expect(evaluateProcedimientoAsignacion({
+      userRole: "licitante", heldRoles: [], required: ["dictaminador"],
+    }).ok).toBe(false);
+    expect(evaluateProcedimientoAsignacion({
+      userRole: "licitante", heldRoles: ["dictaminador"], required: ["dictaminador"],
+    }).ok).toBe(true);
+  });
+});
+
+describe("Finiquito bypass — TERMINADA → FINIQUITADA via transition helper rejected", () => {
+  it("assertEjecucionTransition rejects FINIQUITADA", () => {
+    expect(msg(() => assertEjecucionTransition("TERMINADA", "FINIQUITADA"))).toContain("emitirFiniquito");
+    expect(msg(() => assertEjecucionTransition("EN_EJECUCION", "FINIQUITADA"))).toContain("emitirFiniquito");
+    expect(() => assertEjecucionTransition("EN_EJECUCION", "TERMINADA")).not.toThrow();
   });
 });

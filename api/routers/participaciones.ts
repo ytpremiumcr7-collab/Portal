@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { eq, desc, and, count, asc } from "drizzle-orm";
+import { eq, desc, and, count } from "drizzle-orm";
 import { createRouter, convocanteQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { participaciones, proveedores } from "@db/schema";
+import { participaciones, proveedores, licitacionReglasVersion } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertLicitacionExists, validateRubric } from "../lib/domain";
 import { assertPositiveDays, assertScore } from "../lib/security";
@@ -10,6 +10,8 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { writeAudit } from "../lib/security";
 import { detectLicitacionRisks } from "../lib/detection";
 import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
+import { assertProcedimientoAsignacion } from "../lib/sod";
+import { computeScoresAndOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -79,14 +81,34 @@ export const participacionesRouter = createRouter({
     const lic = offer.licitacion;
     if (lic.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "La licitación debe estar EN_EVALUACION." });
 
+    // SoD: evaluador_tecnico (tech scoring) — economic recompute is derived from frozen rules.
+    await assertProcedimientoAsignacion(ctx.user, lic.id, ["evaluador_tecnico", "evaluador_economico"]);
+
+    // Read frozen reglas — not live mutable fields.
+    const frozenRow = await db.query.licitacionReglasVersion.findFirst({
+      where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, lic.id)),
+      orderBy: [desc(licitacionReglasVersion.version)],
+    });
+    if (!frozenRow) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No hay reglas de evaluación congeladas; publique el procedimiento primero." });
+    const frozen: FrozenReglas = {
+      criterioEvaluacion: frozenRow.criterioEvaluacion as CriterioEvaluacion,
+      ponderacionTecnica: frozenRow.ponderacionTecnica,
+      ponderacionEconomica: frozenRow.ponderacionEconomica,
+      modoEvaluacion: frozenRow.modoEvaluacion,
+      tipoLicitacion: frozenRow.tipoLicitacion,
+      tipoContratacion: frozenRow.tipoContratacion,
+      marcoJuridico: frozenRow.marcoJuridico,
+      rubricaTecnica: frozenRow.rubricaTecnica ?? null,
+    };
+
     let technical: number | null = null;
     let criteriaJson: string | null = null;
     if (input.estadoEvaluacion === "ADMISIBLE") {
-      const rubric = validateRubric(lic.rubricaTecnica);
-      if (lic.modoEvaluacion === "AUTOMATICA" && !input.criteriosTecnicos) {
+      const rubric = validateRubric(frozen.rubricaTecnica);
+      if (frozen.modoEvaluacion === "AUTOMATICA" && !input.criteriosTecnicos) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Esta licitación exige evaluación técnica por rúbrica." });
       }
-      if (lic.modoEvaluacion === "MANUAL" && input.criteriosTecnicos) {
+      if (frozen.modoEvaluacion === "MANUAL" && input.criteriosTecnicos) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Esta licitación exige captura manual del puntaje técnico." });
       }
       if (input.criteriosTecnicos) {
@@ -125,32 +147,27 @@ export const participacionesRouter = createRouter({
         observaciones: input.observaciones ?? null,
       }).where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
 
-      const admissible = await tx.select({ id: participaciones.id, montoOferta: participaciones.montoOferta })
-        .from(participaciones)
+      const admissible = await tx.select({
+        id: participaciones.id, montoOferta: participaciones.montoOferta, puntajeTecnico: participaciones.puntajeTecnico,
+      }).from(participaciones)
         .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")));
-      const minBid = admissible.length ? Math.min(...admissible.map(x => Number(x.montoOferta))) : 0;
 
-      for (const candidate of admissible) {
-        const economic = minBid > 0 ? Number((minBid / Number(candidate.montoOferta) * 100).toFixed(2)) : 0;
-        assertScore(economic, "puntajeEconomico");
-        const candidateRow = candidate.id === input.id
-          ? null
-          : (await tx.select({ puntajeTecnico: participaciones.puntajeTecnico }).from(participaciones).where(and(eq(participaciones.id, candidate.id), eq(participaciones.tenantId, ctx.user.tenantId))).limit(1))[0];
-        const candidateTechnical = candidate.id === input.id ? Number(technical) : Number(candidateRow?.puntajeTecnico ?? NaN);
-        if (!Number.isFinite(candidateTechnical)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Existe una oferta admisible sin evaluación técnica completa." });
-        const total = Number((candidateTechnical * (Number(lic.ponderacionTecnica) / 100) + economic * (Number(lic.ponderacionEconomica) / 100)).toFixed(2));
-        assertScore(total, "puntajeTotal");
-        await tx.update(participaciones).set({ puntajeEconomico: economic.toFixed(2), puntajeTotal: total.toFixed(2) })
-          .where(and(eq(participaciones.id, candidate.id), eq(participaciones.tenantId, ctx.user.tenantId)));
-      }
+      // Ensure current row's technical is reflected for ranking (update already applied above).
+      const forRank = admissible.map((c) => ({
+        id: c.id,
+        montoOferta: c.montoOferta,
+        puntajeTecnico: c.id === input.id ? technical : c.puntajeTecnico,
+      }));
 
-      const ranking = await tx.select({ id: participaciones.id, puntajeTotal: participaciones.puntajeTotal })
-        .from(participaciones)
-        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")))
-        .orderBy(desc(participaciones.puntajeTotal), asc(participaciones.id));
-      for (let i = 0; i < ranking.length; i++) {
-        await tx.update(participaciones).set({ ordenMerito: i + 1 })
-          .where(and(eq(participaciones.id, ranking[i].id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      const patches = computeScoresAndOrden(frozen, forRank);
+      for (const patch of patches) {
+        assertScore(Number(patch.puntajeEconomico), "puntajeEconomico");
+        assertScore(Number(patch.puntajeTotal), "puntajeTotal");
+        await tx.update(participaciones).set({
+          puntajeEconomico: patch.puntajeEconomico,
+          puntajeTotal: patch.puntajeTotal,
+          ordenMerito: patch.ordenMerito,
+        }).where(and(eq(participaciones.id, patch.id), eq(participaciones.tenantId, ctx.user.tenantId)));
       }
     });
 

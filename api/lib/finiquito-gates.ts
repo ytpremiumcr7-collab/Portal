@@ -17,13 +17,24 @@ export const FINIQUITO_PENDING_ENTREGABLE_ESTADOS = ["PENDIENTE", "ENTREGADO"] a
 export const FINIQUITO_COMPATIBLE_GARANTIA_ESTADOS = ["VIGENTE", "LIBERADA", "EJECUTADA", "VENCIDA"] as const;
 export const FINIQUITO_BLOCKING_GARANTIA_ESTADOS = ["REQUERIDA", "PRESENTADA"] as const;
 
+/**
+ * Financial reconciliation rule (explicit):
+ * 1. Cumulative **montoBruto** of PAGADA estimaciones must reconcile vs contrato.monto
+ *    (contrato.monto already reflects formalized modificaciones).
+ * 2. Client **montoFinal** must match that computed cumulative bruto (not an arbitrary figure)
+ *    within a tiny epsilon (default 0.01 MXN).
+ * Net paid (montoNeto) is informational; the gate uses bruto as the recognized amount.
+ */
 export type FiniquitoGateInput = {
   criticalIncidenciasOpen: number;
   pendingEstimaciones: number;
   pendingEntregables: number;
-  /** Sum of PAGADA estimaciones (monto neto). */
-  paidCumulative: number;
+  /** Sum of PAGADA estimaciones (montoBruto — recognized cumulative amount). */
+  paidCumulativeBruto: number;
+  /** Contrato monto (already adjusted by formalized modificaciones). */
   contratoMonto: number;
+  /** Client-supplied finiquito montoFinal — must match paidCumulativeBruto. */
+  montoFinal: number;
   /** Tolerance for floating reconciliation (default 0.01 MXN). */
   tolerance?: number;
   blockingGarantias: number;
@@ -41,9 +52,14 @@ export function evaluateFiniquitoGates(input: FiniquitoGateInput): string[] {
     errors.push(`Hay ${input.pendingEntregables} entregable(s) pendientes de aceptación.`);
   }
   const tol = input.tolerance ?? 0.01;
-  if (Math.abs(input.paidCumulative - input.contratoMonto) > tol) {
+  if (Math.abs(input.paidCumulativeBruto - input.contratoMonto) > tol) {
     errors.push(
-      `Pagos acumulados (${input.paidCumulative.toFixed(2)}) no concilian con monto del contrato (${input.contratoMonto.toFixed(2)}).`,
+      `Pagos acumulados bruto (${input.paidCumulativeBruto.toFixed(2)}) no concilian con monto del contrato (${input.contratoMonto.toFixed(2)}).`,
+    );
+  }
+  if (Math.abs(input.montoFinal - input.paidCumulativeBruto) > tol) {
+    errors.push(
+      `montoFinal (${input.montoFinal.toFixed(2)}) no concilia con el acumulado bruto reconocido (${input.paidCumulativeBruto.toFixed(2)}); no se aceptan montos arbitrarios del cliente.`,
     );
   }
   if (input.blockingGarantias > 0) {

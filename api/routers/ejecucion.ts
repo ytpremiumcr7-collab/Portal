@@ -7,7 +7,7 @@ import {
   modificacionesContractuales, ejecucionesContractuales, entregables, finiquitos, contratos, licitaciones,
   incidencias, estimacionesPago, garantias,
 } from "@db/schema";
-import { assertModContratoTransition, assertEjecucionTransition } from "../lib/phase3-transitions";
+import { assertModContratoTransition, assertEjecucionTransition, assertFiniquitoEstadoFromTerminada } from "../lib/phase3-transitions";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
@@ -155,7 +155,7 @@ export const ejecucionRouter = createRouter({
 
   transicionarEjecucion: capabilityQuery("administrar_ejecucion").input(z.object({
     contratoId: z.number().int().positive(),
-    to: z.enum(["SUSPENDIDA", "EN_EJECUCION", "TERMINADA", "FINIQUITADA"]),
+    to: z.enum(["SUSPENDIDA", "EN_EJECUCION", "TERMINADA"]),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
@@ -235,7 +235,8 @@ export const ejecucionRouter = createRouter({
       eq(entregables.tenantId, ctx.user.tenantId), eq(entregables.contratoId, input.contratoId),
       inArray(entregables.estado, [...FINIQUITO_PENDING_ENTREGABLE_ESTADOS] as any),
     ));
-    const paidRows = await db.select({ total: sql<string>`COALESCE(SUM(${estimacionesPago.montoNeto}), 0)` }).from(estimacionesPago).where(and(
+    // Financial rule: cumulative montoBruto (PAGADA) vs contrato.monto; montoFinal must match bruto.
+    const paidRows = await db.select({ total: sql<string>`COALESCE(SUM(${estimacionesPago.montoBruto}), 0)` }).from(estimacionesPago).where(and(
       eq(estimacionesPago.tenantId, ctx.user.tenantId), eq(estimacionesPago.contratoId, input.contratoId),
       eq(estimacionesPago.estado, "PAGADA"),
     ));
@@ -247,8 +248,9 @@ export const ejecucionRouter = createRouter({
       criticalIncidenciasOpen: Number(crit[0]?.total ?? 0),
       pendingEstimaciones: Number(pendEst[0]?.total ?? 0),
       pendingEntregables: Number(pendEnt[0]?.total ?? 0),
-      paidCumulative: Number(paidRows[0]?.total ?? 0),
+      paidCumulativeBruto: Number(paidRows[0]?.total ?? 0),
       contratoMonto: Number(contrato.monto),
+      montoFinal: Number(input.montoFinal),
       blockingGarantias: Number(blockGar[0]?.total ?? 0),
     });
 
@@ -259,7 +261,7 @@ export const ejecucionRouter = createRouter({
         folio: input.folio, montoFinal: input.montoFinal, estado: "EMITIDO",
       });
       id = Number(result[0].insertId);
-      assertEjecucionTransition("TERMINADA", "FINIQUITADA");
+      assertFiniquitoEstadoFromTerminada(ejec.estado as any);
       await tx.update(ejecucionesContractuales).set({ estado: "FINIQUITADA" }).where(and(eq(ejecucionesContractuales.id, ejec.id), eq(ejecucionesContractuales.tenantId, ctx.user.tenantId)));
       await appendExpedienteEvent(tx, ctx, { expedienteId: contrato.expedienteId, tipo: "FINIQUITO_EMITIDO", estadoAnterior: "TERMINADA", estadoNuevo: "FINIQUITADA", motivo: input.motivo, payload: { finiquitoId: id } });
     });

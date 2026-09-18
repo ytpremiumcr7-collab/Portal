@@ -11,6 +11,7 @@ import { assertGarantiasRequeridasActivas } from "../lib/garantia-gates";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { tryNotifyEvent } from "../lib/notify-hook";
+import { assertDocumentoBoundToContext } from "../lib/documento-binding";
 
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
 
@@ -88,15 +89,13 @@ export const contratosRouter = createRouter({
     const doc = await db.query.documentos.findFirst({
       where: and(eq(documentos.id, input.documentoContratoId), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)),
     });
-    if (!doc || doc.tipo !== "CONTRATO" || doc.estado !== "APROBADO") {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "Formalizar requiere evidencia documental: documento tipo CONTRATO APROBADO/vigente.",
-      });
-    }
-    if (doc.licitacionId && Number(doc.licitacionId) !== Number(current.licitacionId)) {
-      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El documento contractual no corresponde a la licitación del contrato." });
-    }
+    assertDocumentoBoundToContext(doc, {
+      tenantId: ctx.user.tenantId,
+      expedienteId: current.expedienteId,
+      licitacionId: current.licitacionId,
+      proveedorId: current.proveedorId,
+      expectedTipo: "CONTRATO",
+    });
     const updated = await transition(ctx, input.id, "FORMALIZADO", input.motivo, {
       fechaFirma: input.fechaFirma, formalizadoPor: ctx.user.id, documentoContratoId: input.documentoContratoId,
     });

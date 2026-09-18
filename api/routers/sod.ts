@@ -54,31 +54,35 @@ export const sodRouter = createRouter({
     });
     if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Usuario no encontrado." });
 
-    const existing = await db.query.procedimientoAsignaciones.findMany({
-      where: and(
-        eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId),
-        eq(procedimientoAsignaciones.licitacionId, input.licitacionId),
-        eq(procedimientoAsignaciones.userId, input.userId),
-      ),
-    });
-    assertNoRoleConflict(
-      existing.map((e) => e.rol),
-      input.rol,
-      { override: input.overrideSod, justification: input.justificacionOverride },
-    );
-
-    const dup = existing.find((e) => e.rol === input.rol);
-    if (dup) throw new TRPCError({ code: "CONFLICT", message: "El usuario ya tiene ese rol en el procedimiento." });
-
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
     let id = 0;
+    // check+insert in same TX with FOR UPDATE lock on existing assignments for this procedimiento/user
     await db.transaction(async (tx) => {
+      const existing = await tx.select()
+        .from(procedimientoAsignaciones)
+        .where(and(
+          eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId),
+          eq(procedimientoAsignaciones.licitacionId, input.licitacionId),
+          eq(procedimientoAsignaciones.userId, input.userId),
+        ))
+        .for("update");
+
+      assertNoRoleConflict(
+        existing.map((e) => e.rol),
+        input.rol,
+        { override: input.overrideSod, justification: input.justificacionOverride },
+      );
+
+      const dup = existing.find((e) => e.rol === input.rol);
+      if (dup) throw new TRPCError({ code: "CONFLICT", message: "El usuario ya tiene ese rol en el procedimiento." });
+
       const result = await tx.insert(procedimientoAsignaciones).values({
         tenantId: ctx.user.tenantId,
         licitacionId: input.licitacionId,
         userId: input.userId,
         rol: input.rol,
         overrideSod: input.overrideSod,
+        // Persist SoD override justification on grant (column + expediente event payload).
         justificacionOverride: input.overrideSod ? (input.justificacionOverride ?? null) : null,
         asignadoPor: ctx.user.id,
       });
@@ -118,19 +122,20 @@ export const sodRouter = createRouter({
       where: and(eq(procedimientoAsignaciones.id, input.id), eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId)),
     });
     if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Asignación no encontrada." });
-    await db.delete(procedimientoAsignaciones).where(and(
-      eq(procedimientoAsignaciones.id, input.id), eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId),
-    ));
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, cur.licitacionId);
-    if (expediente) {
-      await db.transaction(async (tx) => {
+    // DELETE + expediente event SAME transaction
+    await db.transaction(async (tx) => {
+      await tx.delete(procedimientoAsignaciones).where(and(
+        eq(procedimientoAsignaciones.id, input.id), eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId),
+      ));
+      if (expediente) {
         await appendExpedienteEvent(tx, ctx, {
           expedienteId: expediente.id, tipo: "SOD_REVOCACION",
           estadoAnterior: cur.rol, estadoNuevo: null, motivo: input.motivo,
           payload: { asignacionId: cur.id, userId: cur.userId, rol: cur.rol },
         });
-      });
-    }
+      }
+    });
     await writeAudit({
       ctx: ctxForAudit(ctx), accion: "SOD_REVOCAR", entidad: "procedimiento_asignaciones",
       entidadId: input.id, valorAnterior: cur, motivo: input.motivo,

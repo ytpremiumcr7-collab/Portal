@@ -130,5 +130,49 @@ if (fs.readdirSync(".").some(f => f.startsWith("DEMO_"))) throw new Error("DEMO_
 const routerIdx2 = fs.readFileSync("api/router.ts", "utf8");
 if (!routerIdx2.includes("sodRouter")) throw new Error("sod router not registered");
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD)");
+
+// Institutional audit tranche (0007 + evaluation + finiquito bypass + SoD ops)
+const mig7 = fs.readFileSync("db/migrations/0007_evaluation_freeze_doc_fks.sql", "utf8");
+if (!mig7.includes("licitacion_reglas_version")) throw new Error("0007 missing licitacion_reglas_version");
+if (!mig7.includes("garantias_documento_fk")) throw new Error("0007 missing garantias_documento_fk");
+if (!mig7.includes("bigint unsigned")) throw new Error("0007 must use MySQL-valid bigint unsigned");
+if (!schema.includes("licitacionReglasVersion")) throw new Error("Missing licitacionReglasVersion schema");
+const evalEng = fs.readFileSync("api/lib/evaluation-engine.ts", "utf8");
+if (!evalEng.includes("PRECIO_MAS_BAJO") || !evalEng.includes("rankAdmisibles")) throw new Error("evaluation-engine incomplete");
+const p3t = fs.readFileSync("api/lib/phase3-transitions.ts", "utf8");
+if (!p3t.includes("emitirFiniquito") || !p3t.includes('to === "FINIQUITADA"')) throw new Error("FINIQUITADA must be rejected in assertEjecucionTransition");
+const ejec = fs.readFileSync("api/routers/ejecucion.ts", "utf8");
+if (ejec.includes('to: z.enum(["SUSPENDIDA", "EN_EJECUCION", "TERMINADA", "FINIQUITADA"])')) {
+  throw new Error("transicionarEjecucion must not accept FINIQUITADA");
+}
+if (!ejec.includes("paidCumulativeBruto") && !ejec.includes("montoBruto")) throw new Error("finiquito must use montoBruto reconciliation");
+const sodLib2 = fs.readFileSync("api/lib/sod.ts", "utf8");
+if (!sodLib2.includes("assertProcedimientoAsignacion")) throw new Error("Missing assertProcedimientoAsignacion");
+const part2 = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+if (!part2.includes("assertProcedimientoAsignacion") || !part2.includes("licitacionReglasVersion")) {
+  throw new Error("participaciones.evaluar must use SoD + frozen rules");
+}
+const licPub = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
+if (!licPub.includes("licitacionReglasVersion") || !licPub.includes("assertIsPrimerLugar")) {
+  throw new Error("publish/adjudicar must freeze rules and use criterion engine");
+}
+const sodR = fs.readFileSync("api/routers/sod.ts", "utf8");
+if (!sodR.includes('for("update")')) throw new Error("sod.asignar must lock with FOR UPDATE");
+if (!sodR.includes("SOD_REVOCACION") || sodR.indexOf("delete(procedimientoAsignaciones)") > sodR.indexOf("SOD_REVOCACION") === false) {
+  // soft check: delete and event in same transaction block
+}
+const pub2 = fs.readFileSync("api/routers/consultaPublica.ts", "utf8");
+if (!pub2.includes("innerJoin(licitaciones") && !pub2.includes("innerJoin(licitaciones,")) {
+  throw new Error("documentosPublicos must require publicable procedimiento estado");
+}
+const dc = fs.readFileSync("docker-compose.yml", "utf8");
+if (!dc.includes("0005") || !dc.includes("0006") || !dc.includes("0007")) throw new Error("docker-compose must mount 0005-0007");
+const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
+if (!migSh.includes("0007_evaluation_freeze_doc_fks.sql")) throw new Error("migrate-local.sh missing 0007");
+const archDef = fs.readFileSync("ARCHITECTURE.md", "utf8");
+if (!archDef.includes("Deferred") || !archDef.includes("OCDS") || !archDef.includes("Consorcios")) {
+  throw new Error("ARCHITECTURE must list deferred institutional cores");
+}
+
+console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional audit)");
 

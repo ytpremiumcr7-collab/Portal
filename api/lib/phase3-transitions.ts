@@ -63,14 +63,34 @@ export function assertModContratoTransition(from: ModContratoEstado, to: ModCont
   advanceLinear(MOD_CONTRATO_FLOW as readonly string[], from, to, "modificación contractual");
 }
 
+/**
+ * Generic ejecución transition helper.
+ * FINIQUITADA is intentionally rejected here — only emitirFiniquito() may produce it
+ * after assertFiniquitoGates. TERMINADA → FINIQUITADA via this helper/router path is forbidden.
+ */
 export function assertEjecucionTransition(from: EjecucionEstado, to: EjecucionEstado) {
+  if (to === "FINIQUITADA") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "FINIQUITADA sólo puede producirse vía emitirFiniquito (no vía transicionarEjecucion / assertEjecucionTransition).",
+    });
+  }
   if (to === "SUSPENDIDA") {
     if (from !== "EN_EJECUCION") throw new TRPCError({ code: "CONFLICT", message: "Sólo ejecución en curso puede suspenderse." });
     return;
   }
   if (from === "SUSPENDIDA" && to === "EN_EJECUCION") return;
   if (from === "SUSPENDIDA") throw new TRPCError({ code: "CONFLICT", message: "Reanude la ejecución antes de continuar." });
-  advanceLinear(EJECUCION_FLOW as readonly string[], from, to, "ejecución contractual");
+  // Linear flow without FINIQUITADA (TERMINADA is terminal for this helper).
+  const FLOW_WITHOUT_FINIQUITO = ["NO_INICIADA", "EN_EJECUCION", "TERMINADA"] as const;
+  advanceLinear(FLOW_WITHOUT_FINIQUITO as readonly string[], from, to, "ejecución contractual");
+}
+
+/** Internal: TERMINADA → FINIQUITADA allowed only from emitirFiniquito after gates. */
+export function assertFiniquitoEstadoFromTerminada(from: EjecucionEstado) {
+  if (from !== "TERMINADA") {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La ejecución debe estar TERMINADA para emitir finiquito." });
+  }
 }
 
 export function assertEstimacionTransition(from: EstimacionEstado, to: EstimacionEstado) {

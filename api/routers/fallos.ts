@@ -3,12 +3,14 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, convocanteQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { fallos, dictamenes, licitaciones } from "@db/schema";
+import { fallos, dictamenes, licitaciones, participaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { assertFalloTransition, assertFalloRequiresDictamen } from "../lib/phase2-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { assertProcedimientoAsignacion } from "../lib/sod";
+import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -87,6 +89,15 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
   const current = await db.query.fallos.findFirst({ where: and(eq(fallos.id, id), eq(fallos.tenantId, ctx.user.tenantId)) });
   if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Fallo no encontrado." });
   assertFalloTransition(current.estado as any, next as any);
+  if (next === "APROBADO" || next === "PUBLICADO") {
+    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "autorizador_fallo");
+  }
+  if (next === "PUBLICADO") {
+    const offers = await db.select({ id: participaciones.id, estadoEvaluacion: participaciones.estadoEvaluacion })
+      .from(participaciones)
+      .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, current.licitacionId)));
+    assertEvaluacionesCompletas(offers);
+  }
   await db.transaction(async (tx) => {
     const result = await tx.update(fallos).set({ ...patch, estado: next } as any).where(and(eq(fallos.id, id), eq(fallos.tenantId, ctx.user.tenantId), eq(fallos.estado, current.estado)));
     if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "El fallo cambió de estado." });
