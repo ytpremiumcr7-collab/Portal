@@ -5,7 +5,7 @@ import { createRouter, adminQuery, convocanteQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { expedienteRequirements, expedientes } from "@db/schema";
 import { pageInput, pageResult } from "../lib/pagination";
-import { assertExpediente, assertExpedienteComplete, findExpedienteByLicitacion, appendExpedienteEvent, verifyExpedienteEvidenceChain, refreshRequirementStatuses } from "../lib/expediente";
+import { assertExpediente, assertExpedienteComplete, findExpedienteByLicitacion, appendExpedienteEvent, verifyExpedienteEvidenceChain } from "../lib/expediente";
 import { ctxForAudit } from "../middleware";
 import { writeAudit } from "../lib/security";
 

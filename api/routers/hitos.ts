@@ -2,7 +2,7 @@ import { z } from "zod";
 import { and, eq, count, desc } from "drizzle-orm";
 import { createRouter, convocanteQuery, adminQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { hitos, licitaciones } from "@db/schema";
+import { hitos } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertLicitacionExists } from "../lib/domain";

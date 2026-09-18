@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { eq, desc, like, and, count, asc, sql } from "drizzle-orm";
-import { createRouter, convocanteQuery, adminQuery, authedQuery, proveedorQuery, ctxForAudit } from "../middleware";
+import { createRouter, convocanteQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos } from "@db/schema";
 import { TRPCError } from "@trpc/server";
@@ -67,7 +67,7 @@ export const licitacionesRouter = createRouter({
     let createdId = 0; let codigo = "";
     await db.transaction(async tx => {
       codigo = await nextLicitacionCode(ctx.user.tenantId, tx);
-      const result = await tx.insert(licitaciones).values({ tenantId: ctx.user.tenantId, codigo, titulo: input.titulo, objeto: input.objeto, descripcionDetallada: input.descripcionDetallada ?? null, entidadId: input.entidadId, categoriaId: input.categoriaId, convocanteId, tipoLicitacion: input.tipoLicitacion, tipoContratacion: input.tipoContratacion, montoPresupuestado: input.montoPresupuestado, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION", fechaPublicacion: input.fechaPublicacion, fechaCierre: input.fechaCierre, fechaApertura: input.fechaApertura, criterioEvaluacion: input.criterioEvaluacion, ponderacionTecnica: input.ponderacionTecnica, ponderacionEconomica: input.ponderacionEconomica, rubricaTecnica: input.rubricaTecnica ?? null, modoEvaluacion: input.modoEvaluacion });
+      const result = await tx.insert(licitaciones).values({ tenantId: ctx.user.tenantId, codigo, titulo: input.titulo, objeto: input.objeto, descripcionDetallada: input.descripcionDetallada ?? null, entidadId: input.entidadId, categoriaId: input.categoriaId, convocanteId, tipoLicitacion: input.tipoLicitacion, tipoContratacion: input.tipoContratacion, montoPresupuestado: input.montoPresupuestado, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION", fechaPublicacion: input.fechaPublicacion ? new Date(input.fechaPublicacion) : null, fechaCierre: input.fechaCierre ? new Date(input.fechaCierre) : null, fechaApertura: input.fechaApertura ? new Date(input.fechaApertura) : null, criterioEvaluacion: input.criterioEvaluacion, ponderacionTecnica: input.ponderacionTecnica, ponderacionEconomica: input.ponderacionEconomica, rubricaTecnica: input.rubricaTecnica ?? null, modoEvaluacion: input.modoEvaluacion });
       createdId = Number(result[0].insertId);
       await createExpedienteForLicitacion(tx, ctx, { ...input, id: createdId, convocanteId, codigo, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION" } as any);
     });

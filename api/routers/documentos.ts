@@ -6,7 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRouter, convocanteQuery, authedQuery, adminQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { documentos, proveedores, licitaciones, expedientes, expedienteRequirements } from "@db/schema";
+import { documentos, proveedores, expedientes } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementStatuses } from "../lib/expediente";

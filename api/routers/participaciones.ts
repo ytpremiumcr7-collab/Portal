@@ -2,7 +2,7 @@ import { z } from "zod";
 import { eq, desc, and, count, asc } from "drizzle-orm";
 import { createRouter, convocanteQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { participaciones, licitaciones, proveedores } from "@db/schema";
+import { participaciones, proveedores } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertLicitacionExists, validateRubric } from "../lib/domain";
 import { assertPositiveDays, assertScore } from "../lib/security";

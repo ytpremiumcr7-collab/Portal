@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../queries/connection";
-import { expedienteEvents, expedienteRequirements, expedientes, documentos, hitos, licitaciones, users } from "@db/schema";
+import { expedienteEvents, expedienteRequirements, expedientes, documentos, licitaciones } from "@db/schema";
 import type { TrpcContext } from "../context";
 
 export const EXPEDIENTE_STATES = ["INTEGRACION", "REVISION_JURIDICA", "APROBADO", "OBSERVADO", "CERRADO", "ARCHIVADO"] as const;

@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { procedimientoEventos, procedimientoPlazos, licitaciones } from "@db/schema";
+import { procedimientoEventos, procedimientoPlazos } from "@db/schema";
 import { findExpedienteByLicitacion } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
 import { assertLicitacionExists } from "../lib/domain";

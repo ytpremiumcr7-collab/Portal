@@ -36,7 +36,7 @@ export default function Expedientes() {
           </div>
         </div>)}
       </div>
-      <div className="flex justify-between mt-5"><Button disabled={page<=1} variant="outline" onClick={()=>setPage(p=>p-1)}>Anterior</Button><span className="text-sm text-slate-400">Página {q.data?.page ?? page} de {q.data?.totalPages ?? 1}</span><Button disabled={!q.data || page >= q.data.totalPages} variant="outline" onClick={()=>setPage(p=>p+1)}>Siguiente</Button></div>
+      <div className="flex justify-between mt-5"><Button disabled={page<=1} variant="outline" onClick={()=>setPage(p=>p-1)}>Anterior</Button><span className="text-sm text-slate-400">Página {q.data?.page ?? page} de {q.data?.pageCount ?? 1}</span><Button disabled={!q.data || page >= q.data.pageCount} variant="outline" onClick={()=>setPage(p=>p+1)}>Siguiente</Button></div>
     </CardContent></Card>
     <p className="text-xs text-slate-500">La revisión jurídica representa control interno del expediente; no sustituye la determinación jurídica de la autoridad competente ni la firma electrónica que se integrará en una fase posterior.</p>
   </div>;

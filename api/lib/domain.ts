@@ -1,8 +1,8 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq, asc, desc, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, asc, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { findExpedienteByLicitacion } from "./expediente";
-import { licitaciones, licitacionSequences, documentos, hitos, participaciones, proveedores, entidades, categorias, alertasSeguridad, users } from "@db/schema";
+import { licitaciones, licitacionSequences, documentos, hitos, participaciones, entidades, categorias, users } from "@db/schema";
 
 export const MEXICO_STATES = [
   "Aguascalientes","Baja California","Baja California Sur","Campeche","Coahuila","Colima","Chiapas","Chihuahua","Ciudad de México","Durango","Guanajuato","Guerrero","Hidalgo","Jalisco","México","Michoacán","Morelos","Nayarit","Nuevo León","Oaxaca","Puebla","Querétaro","Quintana Roo","San Luis Potosí","Sinaloa","Sonora","Tabasco","Tamaulipas","Tlaxcala","Veracruz","Yucatán","Zacatecas",
@@ -76,9 +76,9 @@ export async function assertLicitacionReadyForPublish(tenantId: number, id: numb
   if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La licitación debe tener expediente electrónico." });
   if (expediente.estado !== "APROBADO") throw new TRPCError({ code: "PRECONDITION_FAILED", message: `El expediente debe estar APROBADO por revisión jurídica antes de publicar. Estado actual: ${expediente.estado}.` });
   const docs = await db.query.documentos.findMany({ where: and(eq(documentos.tenantId, tenantId), eq(documentos.licitacionId, id), eq(documentos.estado, "APROBADO"), eq(documentos.esVersionVigente, true)) });
-  const required = new Set(["CONVOCATORIA", "PLIEGO_TECNICO", "PLIEGO_ADMINISTRATIVO"]);
+  const required = ["CONVOCATORIA", "PLIEGO_TECNICO", "PLIEGO_ADMINISTRATIVO"] as const;
   const present = new Set(docs.map(d => d.tipo));
-  const missing = [...required].filter(x => !present.has(x));
+  const missing = required.filter((x) => !present.has(x));
   if (missing.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Expediente incompleto. Faltan documentos aprobados: ${missing.join(", ")}.` });
   const clarification = await db.query.hitos.findFirst({ where: and(eq(hitos.tenantId, tenantId), eq(hitos.licitacionId, id), eq(hitos.tipo, "JUNTA_ACLARACIONES"), ne(hitos.estado, "CANCELADO")) });
   if (!clarification) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Debe existir un hito de Junta de Aclaraciones antes de publicar." });

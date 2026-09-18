@@ -3,7 +3,7 @@ import { and, count, desc, eq, sql } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import {
-  licitaciones, fallos, contratos, documentos, proveedoresImpedidos, sanciones, entidades, proveedores,
+  licitaciones, fallos, contratos, documentos, proveedoresImpedidos, proveedores,
 } from "@db/schema";
 import { pageInput, pageResult } from "../lib/pagination";
 

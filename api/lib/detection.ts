@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
-import { alertasSeguridad, licitaciones, participaciones, proveedores } from "@db/schema";
+import { alertasSeguridad, licitaciones, proveedores } from "@db/schema";
 
 async function createAlert(tenantId:number,data:{tipo:any;severidad:any;score:number;regla:string;evidencia:string;licitacionId?:number;proveedorId?:number}){
  const db=getDb();

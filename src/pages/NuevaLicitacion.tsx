@@ -13,7 +13,7 @@ export default function NuevaLicitacion() {
   const navigate = useNavigate();
   const utils = trpc.useUtils();
 
-  const { data: entidades } = trpc.entidades.list.useQuery();
+  const { data: entidadesPage } = trpc.entidades.list.useQuery();
   const { data: categoriasPage } = trpc.categorias.list.useQuery();
 
   const [form, setForm] = useState({
@@ -54,7 +54,6 @@ export default function NuevaLicitacion() {
       tipoLicitacion: form.tipoLicitacion,
       tipoContratacion: form.tipoContratacion,
       montoPresupuestado: form.montoPresupuestado,
-      moneda: form.moneda,
       fechaPublicacion: form.fechaPublicacion || undefined,
       fechaCierre: form.fechaCierre || undefined,
       fechaApertura: form.fechaApertura || undefined,

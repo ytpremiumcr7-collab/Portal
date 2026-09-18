@@ -10,7 +10,9 @@ import {
 } from "lucide-react";
 import { Link } from "react-router";
 
-const estados = [
+type LicEstado = "BORRADOR" | "CONSULTAS" | "PUBLICADA" | "EN_EVALUACION" | "ADJUDICADA" | "DESIERTA" | "CANCELADA" | "FINALIZADA" | "ARCHIVADA";
+
+const estados: Array<{ value: LicEstado | ""; label: string }> = [
   { value: "", label: "Todos" },
   { value: "BORRADOR", label: "Borrador" },
   { value: "PUBLICADA", label: "Publicada" },
@@ -23,7 +25,7 @@ const estados = [
 export default function Licitaciones() {
   const [page,setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [estado, setEstado] = useState("");
+  const [estado, setEstado] = useState<LicEstado | "">("");
   const utils = trpc.useUtils();
 
   const { data: licitacionesPage, isLoading } = trpc.licitaciones.list.useQuery(
@@ -82,7 +84,7 @@ export default function Licitaciones() {
                 className="pl-10 bg-slate-700 border-slate-600 text-white"
               />
             </div>
-            <Select value={estado} onValueChange={setEstado}>
+            <Select value={estado} onValueChange={(v) => setEstado(v as LicEstado | "")}>
               <SelectTrigger className="w-full sm:w-48 bg-slate-700 border-slate-600 text-white">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
@@ -142,7 +144,7 @@ export default function Licitaciones() {
                           {lic.estado === "BORRADOR" && (
                             <Button
                               variant="ghost" size="icon" className="h-8 w-8 text-emerald-400 hover:text-emerald-300"
-                              onClick={() => publicarMutation.mutate({ id: lic.id })}
+                              onClick={() => { const motivo = window.prompt("Motivo de publicación"); if (motivo) publicarMutation.mutate({ id: lic.id, motivo }); }}
                               title="Publicar"
                             >
                               <CheckCircle className="w-4 h-4" />

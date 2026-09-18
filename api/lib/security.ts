@@ -1,5 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
+import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual, type BinaryLike, type ScryptOptions } from "node:crypto";
 import * as cookie from "cookie";
 import { TRPCError } from "@trpc/server";
 import { eq, and, isNull, gt } from "drizzle-orm";
@@ -7,7 +6,15 @@ import { getDb } from "../queries/connection";
 import { auditLog, sessions, users } from "@db/schema";
 import { Session, ErrorMessages } from "@contracts/constants";
 
-const scrypt = promisify(scryptCb);
+/** Promisified scrypt that keeps the options overload (@types/node + util.promisify only sees the 3-arg form). */
+function scrypt(password: BinaryLike, salt: BinaryLike, keylen: number, options: ScryptOptions): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scryptCb(password, salt, keylen, options, (err, derivedKey) => {
+      if (err) reject(err);
+      else resolve(derivedKey);
+    });
+  });
+}
 const PASSWORD_N = 16384;
 const PASSWORD_R = 8;
 const PASSWORD_P = 1;
@@ -35,11 +42,11 @@ export function hashToken(token: string) {
 
 export async function hashPassword(password: string) {
   const salt = randomBytes(16);
-  const derived = (await scrypt(password, salt, 64, {
+  const derived = await scrypt(password, salt, 64, {
     N: PASSWORD_N,
     r: PASSWORD_R,
     p: PASSWORD_P,
-  })) as Buffer;
+  });
   return `scrypt$${PASSWORD_N}$${PASSWORD_R}$${PASSWORD_P}$${salt.toString("hex")}$${derived.toString("hex")}`;
 }
 
@@ -47,9 +54,9 @@ export async function verifyPassword(password: string, encoded: string) {
   const parts = encoded.split("$");
   if (parts.length !== 6 || parts[0] !== "scrypt") return false;
   const [, n, r, p, saltHex, hashHex] = parts;
-  const derived = (await scrypt(password, Buffer.from(saltHex, "hex"), 64, {
+  const derived = await scrypt(password, Buffer.from(saltHex, "hex"), 64, {
     N: Number(n), r: Number(r), p: Number(p),
-  })) as Buffer;
+  });
   const expected = Buffer.from(hashHex, "hex");
   return expected.length === derived.length && timingSafeEqual(expected, derived);
 }

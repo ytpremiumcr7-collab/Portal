@@ -10,7 +10,6 @@ import { assertContratoTransition, assertContratoRequiresAdjudicacion } from "..
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 
-const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
 
 export const contratosRouter = createRouter({
