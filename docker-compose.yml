@@ -1,0 +1,26 @@
+services:
+  mysql:
+    image: mariadb:11.8
+    container_name: ares-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ares
+      MYSQL_USER: ares
+      MYSQL_PASSWORD: ares_dev_local
+      MYSQL_ROOT_PASSWORD: ares_root_local
+    ports:
+      - "3306:3306"
+    volumes:
+      - ares_mysql_data:/var/lib/mysql
+      - ./db/migrations/0001_ares_mexico_baseline.sql:/docker-entrypoint-initdb.d/01.sql:ro
+      - ./db/migrations/0002_phase1_expediente.sql:/docker-entrypoint-initdb.d/02.sql:ro
+      - ./db/migrations/0003_phase2_dominios_transaccionales.sql:/docker-entrypoint-initdb.d/03.sql:ro
+      - ./db/migrations/0004_phase3_ciclo_completo.sql:/docker-entrypoint-initdb.d/04.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ares_mysql_data:

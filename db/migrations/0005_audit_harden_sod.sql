@@ -2,12 +2,12 @@
 -- presentar_pago is a catalog capability (varchar) — no DDL required for it.
 
 CREATE TABLE IF NOT EXISTS `capability_incompatibilidades` (
-  `id` serial AUTO_INCREMENT NOT NULL,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `capability_a` varchar(64) NOT NULL,
   `capability_b` varchar(64) NOT NULL,
   `motivo` text,
-  `activa` boolean NOT NULL DEFAULT true,
-  `created_at` timestamp NOT NULL DEFAULT (now()),
-  CONSTRAINT `capability_incompatibilidades_id` PRIMARY KEY(`id`),
-  CONSTRAINT `cap_incomp_pair_uq` UNIQUE(`capability_a`,`capability_b`)
-);
+  `activa` tinyint(1) NOT NULL DEFAULT 1,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `cap_incomp_pair_uq` (`capability_a`,`capability_b`)
+) ENGINE=InnoDB;
