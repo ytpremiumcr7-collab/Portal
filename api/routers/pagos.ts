@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -25,7 +25,8 @@ export const pagosRouter = createRouter({
     return pageResult(items, Number(totalRows[0]?.total ?? 0), page, pageSize);
   }),
 
-  presentar: capabilityQuery("aprobar_pago").input(z.object({
+  /** Present / create estimation — segregated from review/authorize/pay (aprobar_pago). */
+  presentar: capabilityQuery("presentar_pago").input(z.object({
     contratoId: z.number().int().positive(), folio: z.string().trim().min(3).max(80),
     numero: z.number().int().positive(), montoBruto: money, retencion: money.default("0.00"),
     motivo: z.string().trim().min(3),
@@ -35,10 +36,33 @@ export const pagosRouter = createRouter({
     const neto = (Number(input.montoBruto) - Number(input.retencion)).toFixed(2);
     if (Number(neto) < 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Retención excede bruto." });
     const db = getDb();
-    const contrato = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.contratoId), eq(contratos.tenantId, ctx.user.tenantId)) });
-    if (!contrato || !["VIGENTE", "FORMALIZADO"].includes(contrato.estado)) throw new TRPCError({ code: "CONFLICT", message: "Contrato no admite estimaciones." });
     let id = 0;
     await db.transaction(async (tx) => {
+      const locked = await tx.select({
+        id: contratos.id, estado: contratos.estado, monto: contratos.monto, expedienteId: contratos.expedienteId,
+      }).from(contratos)
+        .where(and(eq(contratos.id, input.contratoId), eq(contratos.tenantId, ctx.user.tenantId)))
+        .for("update")
+        .limit(1);
+      const contrato = locked[0];
+      if (!contrato || !["VIGENTE", "FORMALIZADO"].includes(contrato.estado)) {
+        throw new TRPCError({ code: "CONFLICT", message: "Contrato no admite estimaciones." });
+      }
+      // Cumulative sum of non-rejected estimaciones must not exceed contrato.monto
+      const sumRows = await tx.select({
+        total: sql<string>`COALESCE(SUM(${estimacionesPago.montoNeto}), 0)`,
+      }).from(estimacionesPago).where(and(
+        eq(estimacionesPago.tenantId, ctx.user.tenantId),
+        eq(estimacionesPago.contratoId, input.contratoId),
+        ne(estimacionesPago.estado, "RECHAZADA"),
+      ));
+      const acumulado = Number(sumRows[0]?.total ?? 0);
+      if (acumulado + Number(neto) > Number(contrato.monto) + 1e-9) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Suma de estimaciones (${(acumulado + Number(neto)).toFixed(2)}) excede monto del contrato (${contrato.monto}).`,
+        });
+      }
       const result = await tx.insert(estimacionesPago).values({
         tenantId: ctx.user.tenantId, contratoId: input.contratoId, folio: input.folio, numero: input.numero,
         montoBruto: input.montoBruto, retencion: input.retencion, montoNeto: neto, estado: "PRESENTADA", presentadaPor: ctx.user.id,

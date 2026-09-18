@@ -141,11 +141,18 @@ export const planeacionRouter = createRouter({
     const cur = await db.query.suficienciasPresupuestarias.findFirst({ where: and(eq(suficienciasPresupuestarias.id, input.id), eq(suficienciasPresupuestarias.tenantId, ctx.user.tenantId)) });
     if (!cur || cur.estado !== "SOLICITADA") throw new TRPCError({ code: "CONFLICT", message: "Suficiencia no solicitada." });
     await db.transaction(async (tx) => {
-      await tx.update(suficienciasPresupuestarias).set({ estado: "OTORGADA", otorgadaPor: ctx.user.id, otorgadaAt: new Date() }).where(and(eq(suficienciasPresupuestarias.id, input.id), eq(suficienciasPresupuestarias.tenantId, ctx.user.tenantId)));
-      const partida = await tx.query.partidasPresupuestarias.findFirst({ where: and(eq(partidasPresupuestarias.id, cur.partidaId), eq(partidasPresupuestarias.tenantId, ctx.user.tenantId)) });
+      // Lock partida row before commit to prevent concurrent over-commitment.
+      const locked = await tx.select().from(partidasPresupuestarias)
+        .where(and(eq(partidasPresupuestarias.id, cur.partidaId), eq(partidasPresupuestarias.tenantId, ctx.user.tenantId)))
+        .for("update")
+        .limit(1);
+      const partida = locked[0];
       if (!partida) throw new TRPCError({ code: "NOT_FOUND", message: "Partida no encontrada." });
       const disponible = Number(partida.montoAsignado) - Number(partida.montoComprometido);
       if (Number(cur.monto) > disponible) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Disponibilidad presupuestaria insuficiente." });
+      const upd = await tx.update(suficienciasPresupuestarias).set({ estado: "OTORGADA", otorgadaPor: ctx.user.id, otorgadaAt: new Date() })
+        .where(and(eq(suficienciasPresupuestarias.id, input.id), eq(suficienciasPresupuestarias.tenantId, ctx.user.tenantId), eq(suficienciasPresupuestarias.estado, "SOLICITADA")));
+      if (Number(upd[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La suficiencia cambió de estado." });
       await tx.update(partidasPresupuestarias).set({ montoComprometido: String(Number(partida.montoComprometido) + Number(cur.monto)) } as any)
         .where(and(eq(partidasPresupuestarias.id, partida.id), eq(partidasPresupuestarias.tenantId, ctx.user.tenantId)));
     });

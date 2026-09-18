@@ -4,7 +4,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { aperturas, aperturaRegistros, participaciones, licitaciones } from "@db/schema";
+import { aperturas, aperturaRegistros, participaciones, licitaciones, documentos } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { assertAperturaTransition } from "../lib/phase2-transitions";
@@ -66,7 +66,19 @@ export const aperturasRouter = createRouter({
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
     assertAperturaTransition(apertura.estado as any, "SELLADA");
     const offers = await db.query.participaciones.findMany({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, apertura.licitacionId)) });
-    const selloHash = createHash("sha256").update(JSON.stringify(offers.map(o => ({ id: o.id, proveedorId: o.proveedorId, monto: o.montoOferta })).sort((a, b) => a.id - b.id))).digest("hex");
+    // Include document sha256s / offer document hashes in seal payload where available.
+    const docs = await db.query.documentos.findMany({
+      where: and(
+        eq(documentos.tenantId, ctx.user.tenantId),
+        eq(documentos.licitacionId, apertura.licitacionId),
+        eq(documentos.esVersionVigente, true),
+      ),
+    });
+    const sealPayload = {
+      offers: offers.map(o => ({ id: o.id, proveedorId: o.proveedorId, monto: o.montoOferta })).sort((a, b) => a.id - b.id),
+      documentHashes: docs.map(d => ({ id: d.id, sha256: d.sha256, tipo: d.tipo, proveedorId: d.proveedorId })).sort((a, b) => a.id - b.id),
+    };
+    const selloHash = createHash("sha256").update(JSON.stringify(sealPayload)).digest("hex");
     return transition(ctx, input.id, "SELLADA", input.motivo, { fechaSellado: new Date(), selloHash });
   }),
   abrir: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {

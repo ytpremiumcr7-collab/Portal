@@ -3,7 +3,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { notificaciones, notificacionDestinatarios, notificacionTemplates } from "@db/schema";
+import { notificaciones, notificacionDestinatarios, notificacionTemplates, proveedores } from "@db/schema";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 
@@ -89,6 +89,18 @@ export const notificacionesRouter = createRouter({
       where: and(eq(notificacionDestinatarios.id, input.destinatarioId), eq(notificacionDestinatarios.tenantId, ctx.user.tenantId)),
     });
     if (!dest) throw new TRPCError({ code: "NOT_FOUND", message: "Destinatario no encontrado." });
+    // Destinatario must belong to the authenticated user (userId, email, or linked proveedor).
+    let owns = dest.userId != null && dest.userId === ctx.user.id;
+    if (!owns && dest.email && dest.email.toLowerCase() === (ctx.user.email ?? "").toLowerCase()) owns = true;
+    if (!owns && dest.proveedorId != null) {
+      const prov = await db.query.proveedores.findFirst({
+        where: and(eq(proveedores.id, dest.proveedorId), eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.usuarioId, ctx.user.id)),
+      });
+      if (prov) owns = true;
+    }
+    if (!owns && ctx.user.role !== "admin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "No puede acusar recibo de una notificación ajena." });
+    }
     await db.update(notificacionDestinatarios).set({ deliveryStatus: "ACKNOWLEDGED", acknowledgedAt: new Date() })
       .where(and(eq(notificacionDestinatarios.id, input.destinatarioId), eq(notificacionDestinatarios.tenantId, ctx.user.tenantId)));
     await db.update(notificaciones).set({ estado: "ACKNOWLEDGED" })

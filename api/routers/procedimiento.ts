@@ -22,21 +22,39 @@ export const procedimientoRouter = createRouter({
     });
   }),
 
+  /**
+   * Softened: only non-domain operational note tipos allowed.
+   * Domain acts (publicar, adjudicación, fallo, etc.) must use their dedicated routers — arbitrary status spoofing rejected.
+   */
   registrarEvento: capabilityQuery("crear_procedimiento").input(z.object({
     licitacionId: z.number().int().positive(),
-    tipo: z.string().trim().min(2).max(80),
+    tipo: z.enum([
+      "NOTA_OPERATIVA",
+      "RECORDATORIO",
+      "OBSERVACION_INTERNA",
+      "BITACORA",
+      "COMUNICACION_INTERNA",
+      "SEGUIMIENTO_PLAZO",
+    ]),
     estadoAnterior: z.string().trim().max(40).optional(),
     estadoNuevo: z.string().trim().max(40).optional(),
     plazoLimite: z.string().datetime().optional(),
     motivo: z.string().trim().min(3),
     payload: z.record(z.string(), z.unknown()).optional(),
   })).mutation(async ({ input, ctx }) => {
+    // Reject spoofed domain-state mutations via this generic channel.
+    if (input.estadoNuevo || input.estadoAnterior) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "registrarEvento no puede alterar estado de dominio; use el router del acto correspondiente. Sólo notas operativas.",
+      });
+    }
     await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
     const db = getDb();
     const result = await db.insert(procedimientoEventos).values({
       tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, expedienteId: expediente?.id ?? null,
-      tipo: input.tipo, estadoAnterior: input.estadoAnterior ?? null, estadoNuevo: input.estadoNuevo ?? null,
+      tipo: input.tipo, estadoAnterior: null, estadoNuevo: null,
       plazoLimite: input.plazoLimite ? new Date(input.plazoLimite) : null,
       actorUserId: ctx.user.id, motivo: input.motivo,
       payload: input.payload ? JSON.stringify(input.payload) : null,

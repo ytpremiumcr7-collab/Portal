@@ -13,7 +13,7 @@ export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capa
   licitante: [
     "crear_procedimiento", "publicar", "evaluar_tecnico", "evaluar_economico",
     "aprobar_juridico", "emitir_dictamen", "autorizar_fallo", "formalizar_contrato",
-    "aprobar_pago", "resolver_incidencia", "administrar_planeacion", "investigar_mercado",
+    "presentar_pago", "aprobar_pago", "resolver_incidencia", "administrar_planeacion", "investigar_mercado",
     "administrar_ejecucion", "resolver_inconformidad", "notificar",
   ],
   proveedor: ["notificar"],
@@ -49,4 +49,25 @@ export async function assertCapability(user: NonNullable<TrpcContext["user"]>, .
 
 export function isCapability(value: string): value is Capability {
   return (CAPABILITIES as readonly string[]).includes(value);
+}
+
+/** Soft SoD check against capability_incompatibilidades stub (no-op when table empty). */
+export async function assertCapabilityCompatibility(_user: NonNullable<TrpcContext["user"]>, caps: Set<Capability>) {
+  try {
+    const { capabilityIncompatibilidades } = await import("@db/schema");
+    const rows = await getDb().select().from(capabilityIncompatibilidades).where(eq(capabilityIncompatibilidades.activa, true));
+    for (const row of rows) {
+      const a = row.capabilityA as Capability;
+      const b = row.capabilityB as Capability;
+      if (caps.has(a) && caps.has(b)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `Segregación de funciones: «${a}» es incompatible con «${b}».`,
+        });
+      }
+    }
+  } catch (e) {
+    if (e instanceof TRPCError) throw e;
+    // Table may not exist yet — soft fail open for stub.
+  }
 }

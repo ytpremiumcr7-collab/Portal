@@ -85,10 +85,14 @@ export async function authenticateRequest(headers: Headers) {
       isNull(sessions.revokedAt),
       gt(sessions.expiresAt, new Date()),
     ),
-    with: { user: true },
+    with: { user: { with: { tenant: true } } },
   });
   if (!row?.user || !row.user.activo) return null;
-  return row.user;
+  const userRow = row.user as typeof row.user & { tenant?: { activa: boolean; deletedAt: Date | null } | null };
+  const tenant = userRow.tenant;
+  if (tenant && (!tenant.activa || tenant.deletedAt != null)) return null;
+  const { tenant: _t, ...user } = userRow as typeof userRow & { tenant?: unknown };
+  return user as typeof users.$inferSelect;
 }
 
 export function requireRoles(user: typeof users.$inferSelect, roles: Array<typeof users.$inferSelect.role>) {

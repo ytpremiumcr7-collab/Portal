@@ -698,11 +698,24 @@ export type Garantia = typeof garantias.$inferSelect;
 export const CAPABILITIES = [
   "crear_procedimiento", "publicar", "evaluar_tecnico", "evaluar_economico",
   "aprobar_juridico", "emitir_dictamen", "autorizar_fallo", "formalizar_contrato",
-  "aprobar_pago", "resolver_incidencia", "administrar_sancion", "auditar",
+  "presentar_pago", "aprobar_pago", "resolver_incidencia", "administrar_sancion", "auditar",
   "administrar_planeacion", "investigar_mercado", "administrar_ejecucion",
   "resolver_inconformidad", "notificar", "consulta_publica_admin",
 ] as const;
 export type Capability = typeof CAPABILITIES[number];
+
+
+/** Stub for future segregation-of-duties policy (pairs of mutually exclusive capabilities). */
+export const capabilityIncompatibilidades = mysqlTable("capability_incompatibilidades", {
+  id: serial("id").primaryKey(),
+  capabilityA: varchar("capability_a", { length: 64 }).notNull(),
+  capabilityB: varchar("capability_b", { length: 64 }).notNull(),
+  motivo: text("motivo"),
+  activa: boolean("activa").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cap_incomp_pair_uq").on(t.capabilityA, t.capabilityB),
+]);
 
 export const userCapabilities = mysqlTable("user_capabilities", {
   id: serial("id").primaryKey(),

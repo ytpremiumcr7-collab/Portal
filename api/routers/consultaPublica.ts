@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql, or, isNull } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import {
@@ -83,7 +83,13 @@ export const consultaPublicaRouter = createRouter({
     pageSize: z.number().int().positive().max(50).optional(),
   }).optional()).query(async ({ input }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize ?? 20);
-    const conditions = [eq(proveedoresImpedidos.activo, true)];
+    const today = new Date().toISOString().slice(0, 10);
+    // Match participación gate: activo + vigenciaDesde/Hasta window (not activo alone).
+    const conditions = [
+      eq(proveedoresImpedidos.activo, true),
+      sql`${proveedoresImpedidos.vigenteDesde} <= ${today}`,
+      or(isNull(proveedoresImpedidos.vigenteHasta), sql`${proveedoresImpedidos.vigenteHasta} >= ${today}`),
+    ];
     if (input?.tenantId) conditions.push(eq(proveedoresImpedidos.tenantId, input.tenantId));
     const where = and(...conditions);
     const db = getDb();
@@ -109,7 +115,12 @@ export const consultaPublicaRouter = createRouter({
     pageSize: z.number().int().positive().max(50).optional(),
   }).optional()).query(async ({ input }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize ?? 20);
-    const conditions = [eq(documentos.esPublico, true), eq(documentos.esVersionVigente, true)];
+    // Public docs require APROBADO + esPublico + vigente (publishable phases preferred via procedimientos filter when listing procs).
+    const conditions = [
+      eq(documentos.esPublico, true),
+      eq(documentos.esVersionVigente, true),
+      eq(documentos.estado, "APROBADO"),
+    ];
     if (input?.tenantId) conditions.push(eq(documentos.tenantId, input.tenantId));
     if (input?.licitacionId) conditions.push(eq(documentos.licitacionId, input.licitacionId));
     const where = and(...conditions);
@@ -130,7 +141,13 @@ export const consultaPublicaRouter = createRouter({
     const tenantFilter = input?.tenantId ? eq(licitaciones.tenantId, input.tenantId) : undefined;
     const [pubs] = await db.select({ total: count() }).from(licitaciones).where(and(eq(licitaciones.estado, "PUBLICADA"), tenantFilter));
     const [adjs] = await db.select({ total: count() }).from(fallos).where(and(eq(fallos.estado, "PUBLICADO"), input?.tenantId ? eq(fallos.tenantId, input.tenantId) : undefined));
-    const [imps] = await db.select({ total: count() }).from(proveedoresImpedidos).where(and(eq(proveedoresImpedidos.activo, true), input?.tenantId ? eq(proveedoresImpedidos.tenantId, input.tenantId) : undefined));
+    const today = new Date().toISOString().slice(0, 10);
+    const [imps] = await db.select({ total: count() }).from(proveedoresImpedidos).where(and(
+      eq(proveedoresImpedidos.activo, true),
+      sql`${proveedoresImpedidos.vigenteDesde} <= ${today}`,
+      or(isNull(proveedoresImpedidos.vigenteHasta), sql`${proveedoresImpedidos.vigenteHasta} >= ${today}`),
+      input?.tenantId ? eq(proveedoresImpedidos.tenantId, input.tenantId) : undefined,
+    ));
     return {
       procedimientosPublicados: Number(pubs?.total ?? 0),
       adjudicacionesPublicadas: Number(adjs?.total ?? 0),

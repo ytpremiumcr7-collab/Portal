@@ -122,15 +122,31 @@ export const ejecucionRouter = createRouter({
   }),
 
   registrarAvance: capabilityQuery("administrar_ejecucion").input(z.object({
-    contratoId: z.number().int().positive(), porcentajeAvance: z.number().min(0).max(100), motivo: z.string().trim().min(3),
+    contratoId: z.number().int().positive(),
+    porcentajeAvance: z.number().min(0).max(100),
+    /** Explicit governed rectificación — required to decrease porcentaje. */
+    rectificacion: z.boolean().default(false),
+    motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const ejec = await db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.tenantId, ctx.user.tenantId), eq(ejecucionesContractuales.contratoId, input.contratoId)) });
     if (!ejec || ejec.estado !== "EN_EJECUCION") throw new TRPCError({ code: "CONFLICT", message: "Ejecución no está en curso." });
+    const actual = Number(ejec.porcentajeAvance ?? 0);
+    if (input.porcentajeAvance < actual && !input.rectificacion) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El porcentaje de avance no puede disminuir (${actual} → ${input.porcentajeAvance}) sin flag de rectificación gobernada.`,
+      });
+    }
     const contrato = await contratoOrThrow(ctx.user.tenantId, input.contratoId);
     await db.transaction(async (tx) => {
       await tx.update(ejecucionesContractuales).set({ porcentajeAvance: String(input.porcentajeAvance) } as any).where(and(eq(ejecucionesContractuales.id, ejec.id), eq(ejecucionesContractuales.tenantId, ctx.user.tenantId)));
-      await appendExpedienteEvent(tx, ctx, { expedienteId: contrato.expedienteId, tipo: "EJECUCION_AVANCE", estadoAnterior: ejec.estado, estadoNuevo: ejec.estado, motivo: input.motivo, payload: { porcentajeAvance: input.porcentajeAvance } });
+      await appendExpedienteEvent(tx, ctx, {
+        expedienteId: contrato.expedienteId,
+        tipo: input.rectificacion && input.porcentajeAvance < actual ? "EJECUCION_AVANCE_RECTIFICACION" : "EJECUCION_AVANCE",
+        estadoAnterior: ejec.estado, estadoNuevo: ejec.estado, motivo: input.motivo,
+        payload: { porcentajeAvance: input.porcentajeAvance, anterior: actual, rectificacion: !!input.rectificacion },
+      });
     });
     return db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.id, ejec.id), eq(ejecucionesContractuales.tenantId, ctx.user.tenantId)) });
   }),
@@ -161,12 +177,25 @@ export const ejecucionRouter = createRouter({
     const db = getDb();
     const ejec = await db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.tenantId, ctx.user.tenantId), eq(ejecucionesContractuales.contratoId, input.contratoId)) });
     if (!ejec) throw new TRPCError({ code: "NOT_FOUND", message: "Inicie la ejecución primero." });
+    if (ejec.estado !== "EN_EJECUCION") throw new TRPCError({ code: "CONFLICT", message: "Sólo se crean entregables en EN_EJECUCION." });
     const result = await db.insert(entregables).values({
       tenantId: ctx.user.tenantId, ejecucionId: ejec.id, contratoId: input.contratoId,
       descripcion: input.descripcion, fechaProgramada: (input.fechaProgramada ?? null) as any, estado: "PENDIENTE",
     } as any);
     const id = Number(result[0].insertId);
     return db.query.entregables.findFirst({ where: and(eq(entregables.id, id), eq(entregables.tenantId, ctx.user.tenantId)) });
+  }),
+
+  marcarEntregado: capabilityQuery("administrar_ejecucion").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const cur = await db.query.entregables.findFirst({ where: and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)) });
+    if (!cur || cur.estado !== "PENDIENTE") throw new TRPCError({ code: "CONFLICT", message: "Sólo PENDIENTE → ENTREGADO." });
+    const contrato = await contratoOrThrow(ctx.user.tenantId, cur.contratoId);
+    await db.transaction(async (tx) => {
+      await tx.update(entregables).set({ estado: "ENTREGADO" }).where(and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)));
+      await appendExpedienteEvent(tx, ctx, { expedienteId: contrato.expedienteId, tipo: "ENTREGABLE_ENTREGADO", estadoAnterior: "PENDIENTE", estadoNuevo: "ENTREGADO", motivo: input.motivo, payload: { entregableId: input.id } });
+    });
+    return db.query.entregables.findFirst({ where: and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)) });
   }),
 
   aceptarEntregable: capabilityQuery("administrar_ejecucion").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {

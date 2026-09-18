@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -101,6 +101,14 @@ export const investigacionMercadoRouter = createRouter({
     const db = getDb();
     const inv = await db.query.investigacionesMercado.findFirst({ where: and(eq(investigacionesMercado.id, input.investigacionId), eq(investigacionesMercado.tenantId, ctx.user.tenantId)) });
     if (!inv || inv.estado !== "EN_CONSULTA") throw new TRPCError({ code: "CONFLICT", message: "Sólo en consulta se registran cotizaciones (≠ oferta de participación)." });
+    const consultado = await db.query.proveedoresConsultados.findFirst({
+      where: and(
+        eq(proveedoresConsultados.id, input.proveedorConsultadoId),
+        eq(proveedoresConsultados.tenantId, ctx.user.tenantId),
+        eq(proveedoresConsultados.investigacionId, input.investigacionId),
+      ),
+    });
+    if (!consultado) throw new TRPCError({ code: "BAD_REQUEST", message: "proveedorConsultadoId no pertenece a esta investigación." });
     const result = await db.insert(cotizacionesMercado).values({
       tenantId: ctx.user.tenantId, investigacionId: input.investigacionId,
       proveedorConsultadoId: input.proveedorConsultadoId, monto: input.monto, moneda: "MXN",
@@ -110,16 +118,21 @@ export const investigacionMercadoRouter = createRouter({
     return db.query.cotizacionesMercado.findFirst({ where: and(eq(cotizacionesMercado.id, id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)) });
   }),
 
+  // Aggregates only VALIDADA + RECIBIDA (excludes DESCARTADA). Documented: RECIBIDA included until explicit validation workflow closes them.
   comparativo: authedQuery.input(z.object({ investigacionId: z.number().int().positive() })).query(async ({ input, ctx }) => {
     const db = getDb();
     const cotizaciones = await db.query.cotizacionesMercado.findMany({
-      where: and(eq(cotizacionesMercado.tenantId, ctx.user.tenantId), eq(cotizacionesMercado.investigacionId, input.investigacionId)),
+      where: and(
+        eq(cotizacionesMercado.tenantId, ctx.user.tenantId),
+        eq(cotizacionesMercado.investigacionId, input.investigacionId),
+        inArray(cotizacionesMercado.estado, ["VALIDADA", "RECIBIDA"]),
+      ),
       orderBy: [desc(cotizacionesMercado.monto)],
     });
     const montos = cotizaciones.map((c) => Number(c.monto)).filter((n) => Number.isFinite(n));
     const min = montos.length ? Math.min(...montos) : null;
     const max = montos.length ? Math.max(...montos) : null;
     const avg = montos.length ? montos.reduce((a, b) => a + b, 0) / montos.length : null;
-    return { cotizaciones, min, max, avg, count: montos.length };
+    return { cotizaciones, min, max, avg, count: montos.length, incluidos: ["VALIDADA", "RECIBIDA"] as const, excluidos: ["DESCARTADA"] as const };
   }),
 });
