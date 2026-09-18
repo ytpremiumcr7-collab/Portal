@@ -3,12 +3,14 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { contratos, fallos, licitaciones } from "@db/schema";
+import { contratos, fallos, licitaciones, documentos, garantias } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { assertContratoTransition, assertContratoRequiresAdjudicacion } from "../lib/phase2-transitions";
+import { assertGarantiasRequeridasActivas } from "../lib/garantia-gates";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { tryNotifyEvent } from "../lib/notify-hook";
 
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
 
@@ -74,21 +76,84 @@ export const contratosRouter = createRouter({
     return created;
   }),
 
-  formalizar: convocanteQuery.input(z.object({ id: z.number().int().positive(), fechaFirma: dateMx, motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
-    return transition(ctx, input.id, "FORMALIZADO", input.motivo, { fechaFirma: input.fechaFirma, formalizadoPor: ctx.user.id });
+  formalizar: convocanteQuery.input(z.object({
+    id: z.number().int().positive(),
+    fechaFirma: dateMx,
+    documentoContratoId: z.number().int().positive(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+    const doc = await db.query.documentos.findFirst({
+      where: and(eq(documentos.id, input.documentoContratoId), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)),
+    });
+    if (!doc || doc.tipo !== "CONTRATO" || doc.estado !== "APROBADO") {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Formalizar requiere evidencia documental: documento tipo CONTRATO APROBADO/vigente.",
+      });
+    }
+    if (doc.licitacionId && Number(doc.licitacionId) !== Number(current.licitacionId)) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El documento contractual no corresponde a la licitación del contrato." });
+    }
+    const updated = await transition(ctx, input.id, "FORMALIZADO", input.motivo, {
+      fechaFirma: input.fechaFirma, formalizadoPor: ctx.user.id, documentoContratoId: input.documentoContratoId,
+    });
+    await tryNotifyEvent({
+      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, codigoEvento: "CONTRATO_FORMALIZADO",
+      asunto: `Contrato formalizado ${current.folio}`, cuerpo: `Se formalizó el contrato ${current.folio}.`,
+      entidadRef: "contratos", entidadId: current.id, licitacionId: current.licitacionId, proveedorId: current.proveedorId,
+    });
+    return updated;
   }),
+
   ponerVigente: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+    const gars = await db.query.garantias.findMany({
+      where: and(eq(garantias.tenantId, ctx.user.tenantId), eq(garantias.contratoId, input.id)),
+    });
+    assertGarantiasRequeridasActivas(gars.map((g) => ({ estado: g.estado })));
     return transition(ctx, input.id, "VIGENTE", input.motivo, {});
   }),
+
   terminar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "TERMINADO", input.motivo, {});
   }),
-  rescindir: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
-    return transition(ctx, input.id, "RESCINDIDO", input.motivo, {});
+
+  rescindir: convocanteQuery.input(z.object({
+    id: z.number().int().positive(),
+    causa: z.string().trim().min(10),
+    resolucion: z.string().trim().min(10),
+    documentoRescisionId: z.number().int().positive().optional(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+    if (input.documentoRescisionId) {
+      const doc = await db.query.documentos.findFirst({
+        where: and(eq(documentos.id, input.documentoRescisionId), eq(documentos.tenantId, ctx.user.tenantId)),
+      });
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Documento de rescisión no encontrado." });
+    }
+    const updated = await transition(ctx, input.id, "RESCINDIDO", input.motivo, {
+      causaRescision: input.causa,
+      resolucionRescision: input.resolucion,
+      documentoRescisionId: input.documentoRescisionId ?? null,
+    }, { causa: input.causa, resolucion: input.resolucion, documentoRescisionId: input.documentoRescisionId ?? null });
+    await tryNotifyEvent({
+      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, codigoEvento: "CONTRATO_FORMALIZADO",
+      asunto: `Contrato rescindido ${current.folio}`, cuerpo: `Rescisión: ${input.causa}`,
+      entidadRef: "contratos", entidadId: current.id, licitacionId: current.licitacionId, proveedorId: current.proveedorId,
+    });
+    return updated;
   }),
 });
 
-async function transition(ctx: any, id: number, next: string, motivo: string, patch: Record<string, unknown>) {
+async function transition(ctx: any, id: number, next: string, motivo: string, patch: Record<string, unknown>, extraPayload: Record<string, unknown> = {}) {
   const db = getDb();
   const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, id), eq(contratos.tenantId, ctx.user.tenantId)) });
   if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
@@ -96,7 +161,7 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
   await db.transaction(async (tx) => {
     const result = await tx.update(contratos).set({ ...patch, estado: next } as any).where(and(eq(contratos.id, id), eq(contratos.tenantId, ctx.user.tenantId), eq(contratos.estado, current.estado)));
     if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "El contrato cambió de estado." });
-    await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId, tipo: `CONTRATO_${next}`, estadoAnterior: current.estado, estadoNuevo: next, motivo, payload: { contratoId: id } });
+    await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId, tipo: `CONTRATO_${next}`, estadoAnterior: current.estado, estadoNuevo: next, motivo, payload: { contratoId: id, ...extraPayload } });
   });
   const updated = await db.query.contratos.findFirst({ where: and(eq(contratos.id, id), eq(contratos.tenantId, ctx.user.tenantId)) });
   await writeAudit({ ctx: ctxForAudit(ctx), accion: "TRANSICION", entidad: "contratos", entidadId: id, valorAnterior: current, valorNuevo: updated, motivo });

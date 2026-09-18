@@ -96,4 +96,39 @@ if (!arch3.includes("ALERTA ≠") && !arch3.includes("ALERTA !=")) {
   throw new Error("ARCHITECTURE must document ALERTA ≠ SANCIÓN explicitly");
 }
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3)");
+// P1 harden + SoD (0006)
+const mig6 = fs.readFileSync("db/migrations/0006_sod_procedimiento.sql", "utf8");
+if (!mig6.includes("procedimiento_asignaciones")) throw new Error("0006 missing procedimiento_asignaciones");
+if (!mig6.includes("bigint unsigned")) throw new Error("0006 must use MySQL-valid bigint unsigned");
+if (!mig6.includes("capability_incompatibilidades")) throw new Error("0006 must seed capability incompatibilities");
+if (!schema.includes("procedimientoAsignaciones")) throw new Error("Missing procedimientoAsignaciones schema");
+if (!schema.includes("investigar_sancion")) throw new Error("Missing investigar_sancion capability");
+const sodLib = fs.readFileSync("api/lib/sod.ts", "utf8");
+if (!sodLib.includes("assertNoRoleConflict")) throw new Error("SoD helpers missing assertNoRoleConflict");
+const oferta = fs.readFileSync("api/lib/oferta-completa.ts", "utf8");
+if (!oferta.includes("OFERTA_TECNICA")) throw new Error("oferta-completa missing OFERTA_TECNICA");
+const fini = fs.readFileSync("api/lib/finiquito-gates.ts", "utf8");
+if (!fini.includes("assertFiniquitoGates")) throw new Error("finiquito gates missing");
+const caps2 = fs.readFileSync("api/lib/capabilities.ts", "utf8");
+{
+  const m = caps2.match(/licitante:\s*\[([\s\S]*?)\],\s*\n\s*proveedor:/);
+  if (!m) throw new Error("Could not parse licitante ROLE_CAPABILITIES");
+  if (m[1].includes("autorizar_fallo") || m[1].includes("aprobar_pago") || m[1].includes("administrar_sancion")) {
+    throw new Error("licitante default still grants full ops — tighten base set");
+  }
+}
+const envLib = fs.readFileSync("api/lib/env.ts", "utf8");
+if (!envLib.includes("allowPublicRegister")) throw new Error("env missing allowPublicRegister");
+const auth = fs.readFileSync("api/auth-router.ts", "utf8");
+if (!auth.includes("allowPublicRegister")) throw new Error("auth.register not gated by allowPublicRegister");
+const archP1 = fs.readFileSync("ARCHITECTURE.md", "utf8");
+if (!archP1.includes("SoD") && !archP1.toLowerCase().includes("segregat")) throw new Error("ARCHITECTURE missing SoD");
+if (!archP1.toLowerCase().includes("no-demo") && !archP1.includes("no runtime")) throw new Error("ARCHITECTURE missing no-demo policy");
+const localRun = fs.readFileSync("LOCAL_RUN.md", "utf8");
+if (/demo stack/i.test(localRun) || /modo demo/i.test(localRun)) throw new Error("LOCAL_RUN still frames product as demo");
+if (fs.readdirSync(".").some(f => f.startsWith("DEMO_"))) throw new Error("DEMO_* artifact present");
+const routerIdx2 = fs.readFileSync("api/router.ts", "utf8");
+if (!routerIdx2.includes("sodRouter")) throw new Error("sod router not registered");
+
+console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD)");
+

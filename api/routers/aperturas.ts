@@ -10,6 +10,7 @@ import { assertLicitacionExists } from "../lib/domain";
 import { assertAperturaTransition } from "../lib/phase2-transitions";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { assertOfertasDocumentalesCompletas } from "../lib/oferta-completa";
 
 export const aperturasRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -90,6 +91,14 @@ export const aperturasRouter = createRouter({
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
     assertAperturaTransition(apertura.estado as any, "REGISTRADA");
     const offers = await db.query.participaciones.findMany({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, apertura.licitacionId)) });
+    const docs = await db.query.documentos.findMany({
+      where: and(eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.licitacionId, apertura.licitacionId), eq(documentos.esVersionVigente, true)),
+    });
+    // P1: bare participación ≠ complete proposal; require OFERTA_TECNICA + OFERTA_ECONOMICA APROBADO/vigente.
+    assertOfertasDocumentalesCompletas(
+      offers.map((o) => ({ id: o.id, proveedorId: o.proveedorId })),
+      docs.map((d) => ({ tipo: d.tipo, proveedorId: d.proveedorId, estado: d.estado, esVersionVigente: d.esVersionVigente })),
+    );
     await db.transaction(async (tx) => {
       for (const o of offers) {
         await tx.insert(aperturaRegistros).values({

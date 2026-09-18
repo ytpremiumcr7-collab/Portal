@@ -130,3 +130,44 @@ export function assertSuficienciaParaVincular(suficienciaEstado: string | null |
     });
   }
 }
+
+
+export const INV_SANCION_FLOW = ["ABIERTA", "EN_TRAMITE"] as const;
+export type InvSancionEstado = typeof INV_SANCION_FLOW[number] | "CERRADA_SIN_SANCION" | "DERIVADA_SANCION";
+
+export function assertInvestigacionSancionTransition(from: InvSancionEstado, to: InvSancionEstado) {
+  if (to === "CERRADA_SIN_SANCION" || to === "DERIVADA_SANCION") {
+    if (!["ABIERTA", "EN_TRAMITE"].includes(from)) {
+      throw new TRPCError({ code: "CONFLICT", message: `No se puede cerrar investigación desde ${from}.` });
+    }
+    return;
+  }
+  if (from === "CERRADA_SIN_SANCION" || from === "DERIVADA_SANCION") {
+    throw new TRPCError({ code: "CONFLICT", message: `Investigación en estado terminal ${from}.` });
+  }
+  advanceLinear(INV_SANCION_FLOW as readonly string[], from, to, "investigación sanción");
+}
+
+/** Canonical impedimento active = within vigencia window (not activo flag alone). */
+export function isImpedimentoVigenteEnFecha(input: {
+  activo: boolean;
+  vigenteDesde: string | Date;
+  vigenteHasta: string | Date | null | undefined;
+  asOf?: string | Date;
+}): boolean {
+  const today = String(input.asOf ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const desde = String(input.vigenteDesde).slice(0, 10);
+  const hasta = input.vigenteHasta == null ? null : String(input.vigenteHasta).slice(0, 10);
+  if (desde > today) return false;
+  if (hasta != null && hasta < today) return false;
+  // Canonical: window wins; activo should be synced from window by helper/job.
+  return true;
+}
+
+export function canonicalImpedimentoActivo(input: {
+  vigenteDesde: string | Date;
+  vigenteHasta: string | Date | null | undefined;
+  asOf?: string | Date;
+}): boolean {
+  return isImpedimentoVigenteEnFecha({ ...input, activo: true });
+}

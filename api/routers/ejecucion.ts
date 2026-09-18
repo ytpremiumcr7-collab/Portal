@@ -1,15 +1,17 @@
 import { z } from "zod";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import {
   modificacionesContractuales, ejecucionesContractuales, entregables, finiquitos, contratos, licitaciones,
+  incidencias, estimacionesPago, garantias,
 } from "@db/schema";
 import { assertModContratoTransition, assertEjecucionTransition } from "../lib/phase3-transitions";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { assertFiniquitoGates, FINIQUITO_CRITICAL_INCIDENCIA_ESTADOS, FINIQUITO_PENDING_ESTIMACION_ESTADOS, FINIQUITO_PENDING_ENTREGABLE_ESTADOS, FINIQUITO_BLOCKING_GARANTIA_ESTADOS } from "../lib/finiquito-gates";
 
 const money = z.string().regex(/^-?\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -219,6 +221,37 @@ export const ejecucionRouter = createRouter({
     const ejec = await db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.tenantId, ctx.user.tenantId), eq(ejecucionesContractuales.contratoId, input.contratoId)) });
     if (!ejec || ejec.estado !== "TERMINADA") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La ejecución debe estar TERMINADA." });
     const contrato = await contratoOrThrow(ctx.user.tenantId, input.contratoId);
+
+    const crit = await db.select({ total: count() }).from(incidencias).where(and(
+      eq(incidencias.tenantId, ctx.user.tenantId), eq(incidencias.contratoId, input.contratoId),
+      inArray(incidencias.estado, [...FINIQUITO_CRITICAL_INCIDENCIA_ESTADOS] as any),
+      // treat MEDIA/ALTA/CRITICA if severity column exists — open critical by estado alone as P1 baseline
+    ));
+    const pendEst = await db.select({ total: count() }).from(estimacionesPago).where(and(
+      eq(estimacionesPago.tenantId, ctx.user.tenantId), eq(estimacionesPago.contratoId, input.contratoId),
+      inArray(estimacionesPago.estado, [...FINIQUITO_PENDING_ESTIMACION_ESTADOS] as any),
+    ));
+    const pendEnt = await db.select({ total: count() }).from(entregables).where(and(
+      eq(entregables.tenantId, ctx.user.tenantId), eq(entregables.contratoId, input.contratoId),
+      inArray(entregables.estado, [...FINIQUITO_PENDING_ENTREGABLE_ESTADOS] as any),
+    ));
+    const paidRows = await db.select({ total: sql<string>`COALESCE(SUM(${estimacionesPago.montoNeto}), 0)` }).from(estimacionesPago).where(and(
+      eq(estimacionesPago.tenantId, ctx.user.tenantId), eq(estimacionesPago.contratoId, input.contratoId),
+      eq(estimacionesPago.estado, "PAGADA"),
+    ));
+    const blockGar = await db.select({ total: count() }).from(garantias).where(and(
+      eq(garantias.tenantId, ctx.user.tenantId), eq(garantias.contratoId, input.contratoId),
+      inArray(garantias.estado, [...FINIQUITO_BLOCKING_GARANTIA_ESTADOS] as any),
+    ));
+    assertFiniquitoGates({
+      criticalIncidenciasOpen: Number(crit[0]?.total ?? 0),
+      pendingEstimaciones: Number(pendEst[0]?.total ?? 0),
+      pendingEntregables: Number(pendEnt[0]?.total ?? 0),
+      paidCumulative: Number(paidRows[0]?.total ?? 0),
+      contratoMonto: Number(contrato.monto),
+      blockingGarantias: Number(blockGar[0]?.total ?? 0),
+    });
+
     let id = 0;
     await db.transaction(async (tx) => {
       const result = await tx.insert(finiquitos).values({

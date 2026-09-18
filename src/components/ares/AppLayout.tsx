@@ -25,6 +25,7 @@ import {
   FileWarning,
   Bell,
   Globe,
+  SplitSquareVertical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -54,6 +55,7 @@ const navItems = [
   { path: "/consulta-publica", label: "Consulta pública", icon: Globe, roles: ["admin","licitante","proveedor"] },
   { path: "/alertas", label: "Alertas", icon: AlertTriangle, roles: ["admin","licitante"] },
   { path: "/auditoria", label: "Bitácora", icon: Shield, roles: ["admin"] },
+  { path: "/sod", label: "SoD / roles", icon: SplitSquareVertical, roles: ["admin"] },
   { path: "/usuarios", label: "Usuarios", icon: Users, roles: ["admin"] },
 ];
 

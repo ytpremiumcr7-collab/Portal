@@ -8,10 +8,14 @@ export default function Contratos() {
   const [page, setPage] = useState(1);
   const [lic, setLic] = useState("");
   const [folio, setFolio] = useState("");
+  const [docId, setDocId] = useState("");
+  const [causa, setCausa] = useState("");
+  const [resolucion, setResolucion] = useState("");
   const list = trpc.contratos.list.useQuery({ page, pageSize: 20 });
   const crear = trpc.contratos.crear.useMutation({ onSuccess: () => list.refetch() });
   const formalizar = trpc.contratos.formalizar.useMutation({ onSuccess: () => list.refetch() });
   const vigente = trpc.contratos.ponerVigente.useMutation({ onSuccess: () => list.refetch() });
+  const rescindir = trpc.contratos.rescindir.useMutation({ onSuccess: () => list.refetch() });
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white">Contratos</h2>
@@ -21,6 +25,14 @@ export default function Contratos() {
           <Input placeholder="ID licitación adjudicada" value={lic} onChange={e => setLic(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
           <Input placeholder="Folio contrato" value={folio} onChange={e => setFolio(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
           <Button className="bg-amber-600" disabled={!lic || !folio || crear.isPending} onClick={() => crear.mutate({ licitacionId: Number(lic), folio, motivo: "Formalización contractual post-adjudicación" })}>Crear</Button>
+        </CardContent>
+      </Card>
+      <Card className="border-slate-700 bg-slate-800/50">
+        <CardHeader><CardTitle className="text-white">Evidencia / rescisión</CardTitle></CardHeader>
+        <CardContent className="flex gap-3 flex-wrap">
+          <Input placeholder="Documento CONTRATO ID (formalizar)" value={docId} onChange={e => setDocId(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
+          <Input placeholder="Causa rescisión" value={causa} onChange={e => setCausa(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-sm" />
+          <Input placeholder="Resolución rescisión" value={resolucion} onChange={e => setResolucion(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-sm" />
         </CardContent>
       </Card>
       <Card className="border-slate-700 bg-slate-800/50">
@@ -40,9 +52,11 @@ export default function Contratos() {
                   <td className="p-3 text-sm text-white">{c.licitacionId}</td>
                   <td className="p-3 text-sm text-white">${c.monto}</td>
                   <td className="p-3 text-xs text-slate-300">{c.estado}</td>
-                  <td className="p-3 text-right flex justify-end gap-2">
-                    {c.estado === "BORRADOR" && <Button size="sm" onClick={() => formalizar.mutate({ id: c.id, fechaFirma: new Date().toISOString().slice(0, 10), motivo: "Firma del contrato" })}>Formalizar</Button>}
+                  <td className="p-3 text-right flex justify-end gap-2 flex-wrap">
+                    {c.estado === "BORRADOR" && <Button size="sm" disabled={!docId} onClick={() => formalizar.mutate({ id: c.id, fechaFirma: new Date().toISOString().slice(0, 10), documentoContratoId: Number(docId), motivo: "Firma del contrato" })}>Formalizar</Button>}
                     {c.estado === "FORMALIZADO" && <Button size="sm" onClick={() => vigente.mutate({ id: c.id, motivo: "Inicio de vigencia" })}>Poner vigente</Button>}
+                    {["FORMALIZADO","VIGENTE"].includes(c.estado) && <Button size="sm" variant="outline" disabled={causa.length < 10 || resolucion.length < 10}
+                      onClick={() => rescindir.mutate({ id: c.id, causa, resolucion, motivo: "Rescisión contractual" })}>Rescindir</Button>}
                   </td>
                 </tr>
               ))}

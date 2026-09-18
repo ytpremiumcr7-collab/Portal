@@ -6,7 +6,7 @@ import {
   aclaracionesJuntas, aclaracionesPreguntas, aclaracionesRespuestas,
   aperturas, aperturaRegistros, dictamenes, dictamenFirmantes, fallos,
   contratos, garantias,
-  userCapabilities, programasAnuales, partidasPresupuestarias, necesidades,
+  userCapabilities, procedimientoAsignaciones, programasAnuales, partidasPresupuestarias, necesidades,
   suficienciasPresupuestarias, estrategiasProcedimiento,
   investigacionesMercado, proveedoresConsultados, cotizacionesMercado,
   procedimientoEventos, procedimientoPlazos,
@@ -303,4 +303,10 @@ export const notificacionesRelations = relations(notificaciones, ({ one, many })
 
 export const notificacionDestinatariosRelations = relations(notificacionDestinatarios, ({ one }) => ({
   notificacion: one(notificaciones, { fields: [notificacionDestinatarios.notificacionId], references: [notificaciones.id] }),
+}));
+
+export const procedimientoAsignacionesRelations = relations(procedimientoAsignaciones, ({ one }) => ({
+  tenant: one(tenants, { fields: [procedimientoAsignaciones.tenantId], references: [tenants.id] }),
+  licitacion: one(licitaciones, { fields: [procedimientoAsignaciones.licitacionId], references: [licitaciones.id] }),
+  user: one(users, { fields: [procedimientoAsignaciones.userId], references: [users.id] }),
 }));

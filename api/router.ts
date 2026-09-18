@@ -28,6 +28,7 @@ import { inconformidadesRouter } from "./routers/inconformidades";
 import { notificacionesRouter } from "./routers/notificaciones";
 import { consultaPublicaRouter } from "./routers/consultaPublica";
 import { capabilitiesRouter } from "./routers/capabilities";
+import { sodRouter } from "./routers/sod";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -60,6 +61,7 @@ export const appRouter = createRouter({
   notificaciones: notificacionesRouter,
   consultaPublica: consultaPublicaRouter,
   capabilities: capabilitiesRouter,
+  sod: sodRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -7,6 +7,7 @@ import { tenants, users, proveedores } from "@db/schema";
 import { createSession, clearSessionCookie, hashPassword, verifyPassword, revokeSession, setSessionCookie, writeAudit } from "./lib/security";
 import { pageInput, pageResult } from "./lib/pagination";
 import { TRPCError } from "@trpc/server";
+import { env } from "./lib/env";
 
 const rfcMx = z.string().trim().toUpperCase().regex(/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3}$/i, "RFC mexicano inválido.");
 const strongPassword = z.string().min(12, "La contraseña debe tener al menos 12 caracteres.");
@@ -21,6 +22,12 @@ export const authRouter = createRouter({
     email: z.string().email().transform(v => v.toLowerCase().trim()),
     password: strongPassword,
   })).mutation(async ({ input, ctx }) => {
+    if (!env.allowPublicRegister) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "El registro público de organizaciones está deshabilitado. Use una invitación o contacte al administrador (ARES_ALLOW_PUBLIC_REGISTER).",
+      });
+    }
     const db = getDb();
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, input.email)).limit(1);
     if (existing.length) throw new TRPCError({ code: "CONFLICT", message: "El correo ya está registrado." });

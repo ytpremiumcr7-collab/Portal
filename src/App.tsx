@@ -32,6 +32,7 @@ import Sanciones from "@/pages/Sanciones";
 import Inconformidades from "@/pages/Inconformidades";
 import Notificaciones from "@/pages/Notificaciones";
 import ConsultaPublica from "@/pages/ConsultaPublica";
+import SoD from "@/pages/SoD";
 
 function RoleGate({ roles, children }: { roles: Array<"admin" | "licitante" | "proveedor">; children: React.ReactNode }) {
   const { user, isLoading } = useAuth({ redirectOnUnauthenticated: true });
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="/inconformidades" element={<RoleGate roles={["admin","licitante","proveedor"]}><Inconformidades /></RoleGate>} />
             <Route path="/notificaciones" element={<RoleGate roles={["admin","licitante"]}><Notificaciones /></RoleGate>} />
             <Route path="/auditoria" element={<RoleGate roles={["admin"]}><Auditoria /></RoleGate>} />
+            <Route path="/sod" element={<RoleGate roles={["admin"]}><SoD /></RoleGate>} />
             <Route path="/usuarios" element={<RoleGate roles={["admin"]}><Usuarios /></RoleGate>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

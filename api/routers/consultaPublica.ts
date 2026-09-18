@@ -14,12 +14,16 @@ import { pageInput, pageResult } from "../lib/pagination";
 export const consultaPublicaRouter = createRouter({
   procedimientos: publicQuery.input(z.object({
     tenantId: z.number().int().positive().optional(),
+    q: z.string().trim().min(1).max(120).optional(),
+    estado: z.string().trim().min(2).max(40).optional(),
     page: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().max(50).optional(),
   }).optional()).query(async ({ input }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize ?? 20);
     const conditions = [sql`${licitaciones.estado} IN ('PUBLICADA','EN_EVALUACION','ADJUDICADA','FINALIZADA')`];
     if (input?.tenantId) conditions.push(eq(licitaciones.tenantId, input.tenantId));
+    if (input?.estado) conditions.push(eq(licitaciones.estado, input.estado as any));
+    if (input?.q) conditions.push(sql`(${licitaciones.codigo} LIKE ${"%" + input.q + "%"} OR ${licitaciones.titulo} LIKE ${"%" + input.q + "%"})`);
     const where = and(...conditions);
     const db = getDb();
     const [rows, totalRows] = await Promise.all([
@@ -134,6 +138,42 @@ export const consultaPublicaRouter = createRouter({
       db.select({ total: count() }).from(documentos).where(where),
     ]);
     return pageResult(rows, Number(totalRows[0]?.total ?? 0), page, pageSize);
+  }),
+
+
+  procedimientoDetalle: publicQuery.input(z.object({
+    id: z.number().int().positive(),
+    tenantId: z.number().int().positive().optional(),
+  })).query(async ({ input }) => {
+    const db = getDb();
+    const conditions = [
+      eq(licitaciones.id, input.id),
+      sql`${licitaciones.estado} IN ('PUBLICADA','EN_EVALUACION','ADJUDICADA','FINALIZADA')`,
+    ];
+    if (input.tenantId) conditions.push(eq(licitaciones.tenantId, input.tenantId));
+    const [proc] = await db.select({
+      id: licitaciones.id, tenantId: licitaciones.tenantId, codigo: licitaciones.codigo,
+      titulo: licitaciones.titulo, objeto: licitaciones.objeto, estado: licitaciones.estado, etapa: licitaciones.etapa,
+      tipoLicitacion: licitaciones.tipoLicitacion, tipoContratacion: licitaciones.tipoContratacion,
+      montoPresupuestado: licitaciones.montoPresupuestado, fechaPublicacion: licitaciones.fechaPublicacion,
+      fechaCierre: licitaciones.fechaCierre,
+    }).from(licitaciones).where(and(...conditions)).limit(1);
+    if (!proc) return null;
+    const docs = await db.select({
+      id: documentos.id, tipo: documentos.tipo, nombreArchivo: documentos.nombreArchivo, version: documentos.version,
+      fechaSubida: documentos.fechaSubida,
+    }).from(documentos).where(and(
+      eq(documentos.tenantId, proc.tenantId), eq(documentos.licitacionId, proc.id),
+      eq(documentos.esPublico, true), eq(documentos.esVersionVigente, true), eq(documentos.estado, "APROBADO"),
+    ));
+    const adj = await db.select({
+      id: fallos.id, proveedorGanadorId: fallos.proveedorGanadorId, montoAdjudicado: fallos.montoAdjudicado,
+      publicadoAt: fallos.publicadoAt,
+    }).from(fallos).where(and(eq(fallos.tenantId, proc.tenantId), eq(fallos.licitacionId, proc.id), eq(fallos.estado, "PUBLICADO"))).limit(1);
+    const ctr = await db.select({
+      id: contratos.id, folio: contratos.folio, estado: contratos.estado, monto: contratos.monto, fechaFirma: contratos.fechaFirma,
+    }).from(contratos).where(and(eq(contratos.tenantId, proc.tenantId), eq(contratos.licitacionId, proc.id))).limit(1);
+    return { procedimiento: proc, documentosPublicos: docs, adjudicacion: adj[0] ?? null, contrato: ctr[0] ?? null };
   }),
 
   resumen: publicQuery.input(z.object({ tenantId: z.number().int().positive().optional() }).optional()).query(async ({ input }) => {

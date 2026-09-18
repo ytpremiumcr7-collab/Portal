@@ -627,6 +627,10 @@ export const contratos = mysqlTable("contratos", {
   fechaFin: date("fecha_fin"),
   fechaFirma: date("fecha_firma"),
   formalizadoPor: bigint("formalizado_por", { mode: "number", unsigned: true }),
+  documentoContratoId: bigint("documento_contrato_id", { mode: "number", unsigned: true }),
+  causaRescision: text("causa_rescision"),
+  resolucionRescision: text("resolucion_rescision"),
+  documentoRescisionId: bigint("documento_rescision_id", { mode: "number", unsigned: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => [
@@ -654,6 +658,7 @@ export const garantias = mysqlTable("garantias", {
   moneda: mysqlEnum("moneda", ["MXN"]).default("MXN").notNull(),
   instrumento: varchar("instrumento", { length: 120 }),
   numeroPoliza: varchar("numero_poliza", { length: 80 }),
+  documentoId: bigint("documento_id", { mode: "number", unsigned: true }),
   fechaInicio: date("fecha_inicio"),
   fechaVencimiento: date("fecha_vencimiento"),
   presentadaAt: timestamp("presentada_at"),
@@ -698,14 +703,14 @@ export type Garantia = typeof garantias.$inferSelect;
 export const CAPABILITIES = [
   "crear_procedimiento", "publicar", "evaluar_tecnico", "evaluar_economico",
   "aprobar_juridico", "emitir_dictamen", "autorizar_fallo", "formalizar_contrato",
-  "presentar_pago", "aprobar_pago", "resolver_incidencia", "administrar_sancion", "auditar",
+  "presentar_pago", "aprobar_pago", "resolver_incidencia", "investigar_sancion", "administrar_sancion", "auditar",
   "administrar_planeacion", "investigar_mercado", "administrar_ejecucion",
   "resolver_inconformidad", "notificar", "consulta_publica_admin",
 ] as const;
 export type Capability = typeof CAPABILITIES[number];
 
 
-/** Stub for future segregation-of-duties policy (pairs of mutually exclusive capabilities). */
+/** Segregation-of-duties policy pairs (mutually exclusive capabilities). Seeded in 0006. */
 export const capabilityIncompatibilidades = mysqlTable("capability_incompatibilidades", {
   id: serial("id").primaryKey(),
   capabilityA: varchar("capability_a", { length: 64 }).notNull(),
@@ -715,6 +720,26 @@ export const capabilityIncompatibilidades = mysqlTable("capability_incompatibili
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   uniqueIndex("cap_incomp_pair_uq").on(t.capabilityA, t.capabilityB),
+]);
+
+export const procedimientoAsignaciones = mysqlTable("procedimiento_asignaciones", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  userId: bigint("user_id", { mode: "number", unsigned: true }).notNull(),
+  rol: varchar("rol", { length: 64 }).notNull(),
+  overrideSod: boolean("override_sod").default(false).notNull(),
+  justificacionOverride: text("justificacion_override"),
+  asignadoPor: bigint("asignado_por", { mode: "number", unsigned: true }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("proc_asig_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("proc_asig_uq").on(t.tenantId, t.licitacionId, t.userId, t.rol),
+  index("proc_asig_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "proc_asig_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "proc_asig_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "proc_asig_user_fk", columns: [t.tenantId, t.userId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  foreignKey({ name: "proc_asig_actor_fk", columns: [t.tenantId, t.asignadoPor], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
 ]);
 
 export const userCapabilities = mysqlTable("user_capabilities", {

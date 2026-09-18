@@ -2,21 +2,30 @@ import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { userCapabilities, type Capability, CAPABILITIES } from "@db/schema";
-// Catalog includes: crear_procedimiento, administrar_sancion, aprobar_pago, resolver_incidencia, auditar, …
+// Catalog (schema): crear_procedimiento, autorizar_fallo, presentar_pago, aprobar_pago,
+// investigar_sancion, administrar_sancion, resolver_incidencia, auditar, …
 import type { TrpcContext } from "../context";
+import { findCapabilityConflicts } from "./sod";
 
 export { CAPABILITIES, type Capability };
 
-/** Default capability grants by coarse role. Admin always has all. */
+/**
+ * Default capability grants by coarse role.
+ * Admin always has all.
+ * Licitante gets a SMALL base — ops capabilities are assigned deliberately
+ * (user_capabilities and/or procedimiento_asignaciones). One-person orgs
+ * can still grant both sides of an SoD pair with logged override.
+ */
 export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capability[]> = {
   admin: [...CAPABILITIES],
   licitante: [
-    "crear_procedimiento", "publicar", "evaluar_tecnico", "evaluar_economico",
-    "aprobar_juridico", "emitir_dictamen", "autorizar_fallo", "formalizar_contrato",
-    "presentar_pago", "aprobar_pago", "resolver_incidencia", "administrar_planeacion", "investigar_mercado",
-    "administrar_ejecucion", "resolver_inconformidad", "notificar",
+    "crear_procedimiento",
+    "publicar",
+    "administrar_planeacion",
+    "investigar_mercado",
+    "notificar",
   ],
-  proveedor: ["notificar"],
+  proveedor: ["presentar_pago", "notificar"],
 };
 
 export async function resolveCapabilities(user: NonNullable<TrpcContext["user"]>): Promise<Set<Capability>> {
@@ -51,23 +60,29 @@ export function isCapability(value: string): value is Capability {
   return (CAPABILITIES as readonly string[]).includes(value);
 }
 
-/** Soft SoD check against capability_incompatibilidades stub (no-op when table empty). */
-export async function assertCapabilityCompatibility(_user: NonNullable<TrpcContext["user"]>, caps: Set<Capability>) {
+/** Enforce capability_incompatibilidades when a user holds both sides (no override). */
+export async function assertCapabilityCompatibility(
+  _user: NonNullable<TrpcContext["user"]>,
+  caps: Set<Capability>,
+  opts?: { allowOverride?: boolean },
+) {
   try {
     const { capabilityIncompatibilidades } = await import("@db/schema");
     const rows = await getDb().select().from(capabilityIncompatibilidades).where(eq(capabilityIncompatibilidades.activa, true));
-    for (const row of rows) {
-      const a = row.capabilityA as Capability;
-      const b = row.capabilityB as Capability;
-      if (caps.has(a) && caps.has(b)) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: `Segregación de funciones: «${a}» es incompatible con «${b}».`,
-        });
-      }
+    const conflicts = findCapabilityConflicts(caps, rows.map((r) => ({
+      capabilityA: r.capabilityA,
+      capabilityB: r.capabilityB,
+      motivo: r.motivo,
+    })));
+    if (conflicts.length && !opts?.allowOverride) {
+      const c = conflicts[0];
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Segregación de funciones: «${c.a}» es incompatible con «${c.b}». ${c.motivo}`,
+      });
     }
   } catch (e) {
     if (e instanceof TRPCError) throw e;
-    // Table may not exist yet — soft fail open for stub.
+    // Table may not exist yet — soft fail open only on infrastructure errors.
   }
 }
