@@ -4,7 +4,7 @@ import { createRouter, convocanteQuery, adminQuery, authedQuery, proveedorQuery,
 import { getDb } from "../queries/connection";
 import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos } from "@db/schema";
 import { TRPCError } from "@trpc/server";
-import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric } from "../lib/domain";
+import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, toYmd} from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
 import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura } from "../lib/phase2-transitions";
 import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
@@ -108,7 +108,7 @@ export const licitacionesRouter = createRouter({
   publicar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionReadyForPublish(ctx.user.tenantId, input.id);
     const db = getDb();
-    const result = await db.update(licitaciones).set({ estado: "PUBLICADA", etapa: "CONVOCATORIA", fechaPublicacion: current.fechaPublicacion ?? new Date().toISOString().slice(0,10) }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "BORRADOR")));
+    const result = await db.update(licitaciones).set({ estado: "PUBLICADA", etapa: "CONVOCATORIA", fechaPublicacion: current.fechaPublicacion ?? new Date() }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "BORRADOR")));
     if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación cambió de estado antes de publicarse; vuelva a cargar el expediente." });
     const updated = await getByTenant(input.id, ctx.user.tenantId);
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
@@ -118,7 +118,7 @@ export const licitacionesRouter = createRouter({
   iniciarEvaluacion: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
     if (!['PUBLICADA','CONSULTAS'].includes(current.estado)) throw new TRPCError({ code: "CONFLICT", message: "Sólo una licitación publicada puede pasar a evaluación." });
-    if (current.fechaCierre && current.fechaCierre > new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La fecha de cierre aún no ha llegado." });
+    if (current.fechaCierre && (toYmd(current.fechaCierre) ?? "") > new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La fecha de cierre aún no ha llegado." });
     const db = getDb();
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.licitacionId, input.id)) });
     assertEvaluacionRequiresApertura(apertura?.estado);
@@ -167,7 +167,7 @@ export const licitacionesRouter = createRouter({
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
     await db.transaction(async tx => {
-      const result = await tx.update(licitaciones).set({ estado: "ADJUDICADA", etapa: "ADJUDICACION", proveedorGanadorId: provider.id, montoAdjudicado: input.montoAdjudicado, fechaAdjudicacion: new Date().toISOString().slice(0,10) }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "EN_EVALUACION")));
+      const result = await tx.update(licitaciones).set({ estado: "ADJUDICADA", etapa: "ADJUDICACION", proveedorGanadorId: provider.id, montoAdjudicado: input.montoAdjudicado, fechaAdjudicacion: new Date() }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "EN_EVALUACION")));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación ya fue adjudicada o cambió de estado por otro usuario." });
       await tx.update(participaciones).set({ estadoEvaluacion: "GANADORA", montoAdjudicadoFinal: input.montoAdjudicado }).where(and(eq(participaciones.id, offer.id), eq(participaciones.tenantId, ctx.user.tenantId)));
       await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: "ADJUDICACION", estadoAnterior: "EN_EVALUACION", estadoNuevo: "ADJUDICADA", motivo: input.motivo, payload: { licitacionId: input.id, proveedorGanadorId: provider.id, montoAdjudicado: input.montoAdjudicado, falloId: fallo!.id, dictamenId: dictamen!.id } });

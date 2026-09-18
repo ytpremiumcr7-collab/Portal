@@ -49,7 +49,7 @@ export const participacionesRouter = createRouter({
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
-    if (lic.fechaCierre && lic.fechaCierre < new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El periodo de presentación de ofertas ya cerró." });
+    if (lic.fechaCierre && (String(lic.fechaCierre instanceof Date ? lic.fechaCierre.toISOString().slice(0,10) : lic.fechaCierre).slice(0,10)) < new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El periodo de presentación de ofertas ya cerró." });
     if (Number(input.montoOferta) <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });

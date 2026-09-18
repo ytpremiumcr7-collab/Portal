@@ -10,11 +10,20 @@ export const MEXICO_STATES = [
 
 export const RFC_REGEX = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3}$/i;
 
-export function assertDateOrder(publicacion?: string | null, cierre?: string | null, apertura?: string | null) {
-  if (publicacion && cierre && cierre <= publicacion) throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de cierre debe ser estrictamente posterior a la fecha de publicación." });
-  if (publicacion && apertura && apertura < publicacion) throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de apertura no puede ser anterior a la fecha de publicación." });
-  if (cierre && apertura && apertura > cierre) throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de apertura no puede ser posterior a la fecha de cierre." });
+function toYmd(value?: string | Date | null): string | null {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
 }
+
+export function assertDateOrder(publicacion?: string | Date | null, cierre?: string | Date | null, apertura?: string | Date | null) {
+  const pub = toYmd(publicacion); const cie = toYmd(cierre); const ape = toYmd(apertura);
+  if (pub && cie && cie <= pub) throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de cierre debe ser estrictamente posterior a la fecha de publicación." });
+  if (pub && ape && ape < pub) throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de apertura no puede ser anterior a la fecha de publicación." });
+  if (cie && ape && ape > cie) throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de apertura no puede ser posterior a la fecha de cierre." });
+}
+
+export { toYmd };
 
 export function validateWeights(tecnica: string | number, economica: string | number) {
   const t = Number(tecnica);

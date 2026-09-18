@@ -86,14 +86,14 @@ export const documentosRouter = createRouter({
     const fullPath = path.resolve(process.env.ARES_STORAGE_PATH || "./storage", storageKey);
     await mkdir(path.dirname(fullPath), { recursive: true }); await writeFile(fullPath, buffer, { flag: "wx" });
     try {
-      const created = await db.transaction(async tx => {
+      const createdId = await db.transaction(async tx => {
         if (previous) await tx.update(documentos).set({ esVersionVigente: false, estado: "OBSOLETO" }).where(and(eq(documentos.id, previous.id), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)));
         const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: input.mimeType, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
         const id = Number(result[0].insertId);
         if (expediente) { await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: previous ? "NUEVA_VERSION_DOCUMENTAL" : "DOCUMENTO_AGREGADO", motivo: input.motivo ?? null, payload: { documentoId: id, tipo: input.tipo, version, sha256, previousVersionId: previous?.id ?? null } }); }
         return id;
       });
-      const created = await db.query.documentos.findFirst({ where: and(eq(documentos.id, created), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true, licitacion: true, proveedor: true, usuario: true } });
+      const created = await db.query.documentos.findFirst({ where: and(eq(documentos.id, createdId), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true, licitacion: true, proveedor: true, usuario: true } });
       if (expediente) await refreshRequirementStatuses(db, ctx.user.tenantId, expediente.id);
       await writeAudit({ ctx: ctxForAudit(ctx), accion: previous ? "NUEVA_VERSION" : "SUBIR", entidad: "documentos", entidadId: created?.id, valorNuevo: created, motivo: input.motivo });
       return created;
