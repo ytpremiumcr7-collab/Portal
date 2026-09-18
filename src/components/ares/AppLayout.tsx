@@ -61,9 +61,9 @@ const navItems = [
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, logout, isLoading } = useAuth({ redirectOnUnauthenticated: true });
-  if (isLoading || !user) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Validando sesión…</div>;
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  if (isLoading || !user) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Validando sesión…</div>;
 
   return (
     <div className="min-h-screen bg-slate-900 flex">

@@ -3,7 +3,7 @@ import * as cookie from "cookie";
 import { TRPCError } from "@trpc/server";
 import { eq, and, isNull, gt } from "drizzle-orm";
 import { getDb } from "../queries/connection";
-import { auditLog, sessions, users } from "@db/schema";
+import { auditLog, sessions, tenants, users } from "@db/schema";
 import { Session, ErrorMessages } from "@contracts/constants";
 
 /** Promisified scrypt that keeps the options overload (@types/node + util.promisify only sees the 3-arg form). */
@@ -79,20 +79,18 @@ export async function authenticateRequest(headers: Headers) {
   const cookies = cookie.parse(headers.get("cookie") || "");
   const token = cookies[Session.cookieName];
   if (!token) return null;
-  const row = await getDb().query.sessions.findFirst({
-    where: and(
-      eq(sessions.tokenHash, hashToken(token)),
-      isNull(sessions.revokedAt),
-      gt(sessions.expiresAt, new Date()),
-    ),
-    with: { user: { with: { tenant: true } } },
-  });
-  if (!row?.user || !row.user.activo) return null;
-  const userRow = row.user as typeof row.user & { tenant?: { activa: boolean; deletedAt: Date | null } | null };
-  const tenant = userRow.tenant;
+  const db = getDb();
+  const [row] = await db.select().from(sessions).where(and(
+    eq(sessions.tokenHash, hashToken(token)),
+    isNull(sessions.revokedAt),
+    gt(sessions.expiresAt, new Date()),
+  )).limit(1);
+  if (!row) return null;
+  const [user] = await db.select().from(users).where(and(eq(users.id, row.userId), eq(users.tenantId, row.tenantId))).limit(1);
+  if (!user?.activo) return null;
+  const [tenant] = await db.select({ activa: tenants.activa, deletedAt: tenants.deletedAt }).from(tenants).where(eq(tenants.id, user.tenantId)).limit(1);
   if (tenant && (!tenant.activa || tenant.deletedAt != null)) return null;
-  const { tenant: _t, ...user } = userRow as typeof userRow & { tenant?: unknown };
-  return user as typeof users.$inferSelect;
+  return user;
 }
 
 export function requireRoles(user: typeof users.$inferSelect, roles: Array<typeof users.$inferSelect.role>) {

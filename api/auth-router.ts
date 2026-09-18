@@ -13,7 +13,11 @@ const rfcMx = z.string().trim().toUpperCase().regex(/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]
 const strongPassword = z.string().min(12, "La contraseña debe tener al menos 12 caracteres.");
 
 export const authRouter = createRouter({
-  me: authedQuery.query(({ ctx }) => ctx.user),
+  me: authedQuery.query(({ ctx }) => {
+    const { passwordHash: _omit, ...safe } = ctx.user as typeof ctx.user & { passwordHash?: string | null };
+    void _omit;
+    return safe;
+  }),
 
   register: publicQuery.input(z.object({
     tenantNombre: z.string().trim().min(3).max(180),

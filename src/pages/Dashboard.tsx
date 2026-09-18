@@ -40,9 +40,9 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
 }
 
 export default function Dashboard() {
-  const { data: metrics, isLoading: mLoading } = trpc.dashboard.metrics.useQuery();
-  const { data: recentLics, isLoading: lLoading } = trpc.dashboard.recentLicitaciones.useQuery();
-  const { data: recentAlerts, isLoading: aLoading } = trpc.dashboard.recentAlertas.useQuery();
+  const { data: metrics, isLoading: mLoading, isError: mErr } = trpc.dashboard.metrics.useQuery();
+  const { data: recentLics, isLoading: lLoading, isError: lErr } = trpc.dashboard.recentLicitaciones.useQuery();
+  const { data: recentAlerts, isLoading: aLoading, isError: aErr } = trpc.dashboard.recentAlertas.useQuery();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("es-MX", {
@@ -74,6 +74,14 @@ export default function Dashboard() {
     };
     return variants[severidad] || "bg-slate-600 text-slate-200";
   };
+
+  if (mErr || lErr || aErr) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <p className="text-red-400">No se pudo cargar el dashboard. Revisa la sesión o recarga.</p>
+      </div>
+    );
+  }
 
   if (mLoading || lLoading || aLoading) {
     return (
