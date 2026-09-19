@@ -11,6 +11,9 @@ import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertProcedimientoAsignacion } from "../lib/sod";
 import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
+import { enqueueOutbox } from "../lib/outbox";
+import { proposiciones } from "@db/schema";
+import { assertProposicionesListasParaDictamen } from "../lib/proposicion";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -97,11 +100,34 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
       .from(participaciones)
       .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, current.licitacionId)));
     assertEvaluacionesCompletas(offers);
+    const props = await db.select({ id: proposiciones.id, estado: proposiciones.estado })
+      .from(proposiciones)
+      .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.licitacionId, current.licitacionId)));
+    if (props.length) assertProposicionesListasParaDictamen(props);
   }
   await db.transaction(async (tx) => {
     const result = await tx.update(fallos).set({ ...patch, estado: next } as any).where(and(eq(fallos.id, id), eq(fallos.tenantId, ctx.user.tenantId), eq(fallos.estado, current.estado)));
     if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "El fallo cambió de estado." });
     await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId, tipo: `FALLO_${next}`, estadoAnterior: current.estado, estadoNuevo: next, motivo, payload: { falloId: id } });
+    if (next === "PUBLICADO") {
+      await enqueueOutbox(tx, {
+        tenantId: ctx.user.tenantId,
+        aggregateType: "fallos",
+        aggregateId: id,
+        eventType: "FALLO_PUBLICADO",
+        payload: {
+          falloId: id,
+          licitacionId: current.licitacionId,
+          sentido: current.sentido,
+          proveedorId: current.proveedorGanadorId,
+          actorUserId: ctx.user.id,
+          asunto: `Fallo publicado #${id}`,
+          cuerpo: motivo,
+          entidadRef: "fallos",
+          entidadId: id,
+        },
+      });
+    }
   });
   const updated = await db.query.fallos.findFirst({ where: and(eq(fallos.id, id), eq(fallos.tenantId, ctx.user.tenantId)) });
   await writeAudit({ ctx: ctxForAudit(ctx), accion: "TRANSICION", entidad: "fallos", entidadId: id, valorAnterior: current, valorNuevo: updated, motivo });

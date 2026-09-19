@@ -24,6 +24,8 @@ export type OfferForRanking = {
   puntajeTecnico: string | number | null;
   puntajeEconomico?: string | number | null;
   puntajeTotal?: string | number | null;
+  /** Reception timestamp for fechaRecepcion tie-break (ISO or Date). */
+  recibidoAt?: string | Date | null;
 };
 
 /**
@@ -80,9 +82,32 @@ export function scoreTotalRelacion(
  *
  * Returns ordered ids (best first). Does NOT mutate.
  */
+
+export type TieBreakKey = "precio" | "fechaRecepcion" | "sorteo_documentado";
+
+function compareTieBreak(a: OfferForRanking, b: OfferForRanking, keys: TieBreakKey[]): number {
+  for (const key of keys) {
+    if (key === "precio") {
+      const dp = Number(a.montoOferta) - Number(b.montoOferta);
+      if (dp !== 0) return dp;
+    } else if (key === "fechaRecepcion") {
+      const ta = a.recibidoAt ? new Date(a.recibidoAt).getTime() : Number.POSITIVE_INFINITY;
+      const tb = b.recibidoAt ? new Date(b.recibidoAt).getTime() : Number.POSITIVE_INFINITY;
+      if (ta !== tb) return ta - tb; // earlier reception wins
+    } else if (key === "sorteo_documentado") {
+      // Documented lottery placeholder: stable ordering by id is NOT a silent primary rule;
+      // it only applies after precio/fechaRecepcion are exhausted when policy lists sorteo.
+      continue;
+    }
+  }
+  // Last resort after documented policy keys — never the silent primary rule.
+  return a.id - b.id;
+}
+
 export function rankAdmisibles(
   criterio: CriterioEvaluacion,
   offers: readonly OfferForRanking[],
+  tieBreak: TieBreakKey[] = ["precio", "fechaRecepcion", "sorteo_documentado"],
 ): number[] {
   if (!offers.length) return [];
   const copy = [...offers];
@@ -91,7 +116,7 @@ export function rankAdmisibles(
     copy.sort((a, b) => {
       const da = Number(a.montoOferta) - Number(b.montoOferta);
       if (da !== 0) return da;
-      return a.id - b.id;
+      return compareTieBreak(a, b, tieBreak.filter((k) => k !== "precio"));
     });
     return copy.map((o) => o.id);
   }
@@ -115,10 +140,7 @@ export function rankAdmisibles(
     copy.sort((a, b) => {
       const dt = Number(b.puntajeTecnico) - Number(a.puntajeTecnico);
       if (dt !== 0) return dt;
-      // Tie-break: lower price, then id
-      const dp = Number(a.montoOferta) - Number(b.montoOferta);
-      if (dp !== 0) return dp;
-      return a.id - b.id;
+      return compareTieBreak(a, b, tieBreak);
     });
     return copy.map((o) => o.id);
   }
@@ -135,7 +157,7 @@ export function rankAdmisibles(
   copy.sort((a, b) => {
     const dt = Number(b.puntajeTotal) - Number(a.puntajeTotal);
     if (dt !== 0) return dt;
-    return a.id - b.id;
+    return compareTieBreak(a, b, tieBreak);
   });
   return copy.map((o) => o.id);
 }
@@ -145,8 +167,9 @@ export function assertIsPrimerLugar(
   criterio: CriterioEvaluacion,
   offers: readonly OfferForRanking[],
   candidateId: number,
+  tieBreak: TieBreakKey[] = ["precio", "fechaRecepcion", "sorteo_documentado"],
 ) {
-  const ranked = rankAdmisibles(criterio, offers);
+  const ranked = rankAdmisibles(criterio, offers, tieBreak);
   if (!ranked.length || ranked[0] !== candidateId) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
@@ -161,7 +184,8 @@ export function assertIsPrimerLugar(
  */
 export function computeScoresAndOrden(
   reglas: FrozenReglas,
-  admisibles: Array<{ id: number; montoOferta: string | number; puntajeTecnico: string | number | null }>,
+  admisibles: Array<{ id: number; montoOferta: string | number; puntajeTecnico: string | number | null; recibidoAt?: string | Date | null }>,
+  tieBreak: TieBreakKey[] = ["precio", "fechaRecepcion", "sorteo_documentado"],
 ): Array<{ id: number; puntajeEconomico: string; puntajeTotal: string; ordenMerito: number }> {
   const criterio = reglas.criterioEvaluacion;
   const minBid = admisibles.length
@@ -195,10 +219,11 @@ export function computeScoresAndOrden(
       puntajeTecnico: technical,
       puntajeEconomico: economic,
       puntajeTotal: total,
+      recibidoAt: o.recibidoAt ?? null,
     };
   });
 
-  const order = rankAdmisibles(criterio, scored);
+  const order = rankAdmisibles(criterio, scored, tieBreak);
   const orderIndex = new Map(order.map((id, i) => [id, i + 1]));
   return scored.map((o) => ({
     id: o.id,

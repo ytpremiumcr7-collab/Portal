@@ -1,4 +1,4 @@
-# ARES Engine MX — Architecture (Phase 3 + P1 harden + SoD + institutional audit tranche)
+# ARES Engine MX — Architecture (Phase 3 + P1 harden + SoD + Domain Authority A/B/C)
 
 ## Boundary (ARES only)
 
@@ -105,7 +105,7 @@ Frozen at publish into `licitacion_reglas_version` (hash of criterio, ponderacio
 
 Engine: `api/lib/evaluation-engine.ts`. Pre-dictamen/pre-fallo: all received proposiciones must have final eval status (not PENDIENTE).
 
-Migrations: `0004_phase3_ciclo_completo.sql`, `0005_audit_harden_sod.sql`, `0006_sod_procedimiento.sql`, `0007_evaluation_freeze_doc_fks.sql`.
+Migrations: `0004`–`0007` (prior) + `0008_procedure_policy.sql`, `0009_proposiciones.sql`, `0010_outbox.sql`.
 
 Transition / gate helpers: `api/lib/phase2-transitions.ts`, `phase3-transitions.ts`, `oferta-completa.ts`, `finiquito-gates.ts`, `garantia-gates.ts`, `sod.ts` (vitest, no live DB).
 
@@ -123,21 +123,35 @@ PLANEACIÓN → (inv. mercado) → PROCEDIMIENTO → ACLARACIONES → APERTURA
 - Hash-chain on `audit_log` (today chain lives on expediente events)
 - Full out-of-band email/SMS delivery adapters (status machine is real; transport is in-process)
 
-## Deferred — next institutional cores (NOT this tranche)
 
-Documented explicitly so they are not mistaken for incomplete work in this harden pass:
+## Domain Authority (institutional cores A+B+C — landed)
 
-1. **Full ProcedurePolicy engine** for all modalities (beyond current frozen reglas snapshot)
-2. **Electronic Proposicion aggregate** (rich proposal object beyond participación + docs)
-3. **Full apertura manifest object** (structured seal/manifest beyond current apertura flow)
-4. **Empate jurídico formal** (tie-break legal procedure)
-5. **Consorcios** (joint ventures / consortium bidders)
-6. **Conflicto de interés declarations** (structured COI workflow)
-7. **OCDS export** (Open Contracting Data Standard)
-8. **Real SMTP outbox workers** (may stub `outbox` table + hook `fallo.publicar` to enqueue later; transport not productized here)
-9. **E-signature** (advanced electronic / qualified signatures)
+```
+LegalRegime (LAASSP / LOPSRM)
+    └─ ProcedurePolicy (per modalidad + version + hash)
+           └─ freeze on publicar → licitacion_reglas_version (+ policy snapshot)
+                  ├─ evaluation / adjudicación / dictamen / fallo READ snapshot only
+                  └─ tieBreakPolicy: precio | fechaRecepcion | sorteo_documentado (never silent id ASC)
 
-Also deferred: deeper document-evidence ontology beyond current FK + context binding.
+Participación + docs → Proposición (manifestHash / sealHash)
+    └─ aperturas.sellar seals proposición manifests (not all licitación docs)
+           └─ proposicion_exclusiones (structured NO_ADMISIBLE / DESECHADA)
+
+Critical acts (same TX as state change)
+    └─ domain_outbox (PENDING → processOutboxOnce)
+           └─ notificaciones estado REGISTRADA
+                  └─ ENVIADA_EXTERNA only if delivery adapter reports external success
+```
+
+Migrations: `0008_procedure_policy.sql`, `0009_proposiciones.sql`, `0010_outbox.sql`.
+
+### Deferred — remaining institutional cores
+1. E-signature (advanced / qualified)
+2. OCDS export
+3. Consorcios / joint ventures
+4. COI declarations (structured conflicto de interés workflow)
+5. Real SMTP / SMS provider (transport adapter beyond log/noop)
+6. Multi-regime depth (state/municipal overlays beyond LAASSP/LOPSRM seeds)
 
 ## Stack
 

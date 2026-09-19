@@ -1,16 +1,16 @@
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { aperturas, aperturaRegistros, participaciones, licitaciones, documentos } from "@db/schema";
+import { aperturas, aperturaRegistros, participaciones, licitaciones, documentos, proposiciones, proposicionDocumentos } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { assertAperturaTransition } from "../lib/phase2-transitions";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertOfertasDocumentalesCompletas } from "../lib/oferta-completa";
+import { buildProposicionManifest, buildAperturaSealFromProposicionManifests, mapDocTipoToRol, assertProposicionDocsCompletos } from "../lib/proposicion";
 
 export const aperturasRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -66,20 +66,63 @@ export const aperturasRouter = createRouter({
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
     assertAperturaTransition(apertura.estado as any, "SELLADA");
+    // Build/seal proposición manifests per participant — NOT the full licitación document bag.
     const offers = await db.query.participaciones.findMany({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, apertura.licitacionId)) });
-    // Include document sha256s / offer document hashes in seal payload where available.
     const docs = await db.query.documentos.findMany({
-      where: and(
-        eq(documentos.tenantId, ctx.user.tenantId),
-        eq(documentos.licitacionId, apertura.licitacionId),
-        eq(documentos.esVersionVigente, true),
-      ),
+      where: and(eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.licitacionId, apertura.licitacionId), eq(documentos.esVersionVigente, true)),
     });
-    const sealPayload = {
-      offers: offers.map(o => ({ id: o.id, proveedorId: o.proveedorId, monto: o.montoOferta })).sort((a, b) => a.id - b.id),
-      documentHashes: docs.map(d => ({ id: d.id, sha256: d.sha256, tipo: d.tipo, proveedorId: d.proveedorId })).sort((a, b) => a.id - b.id),
-    };
-    const selloHash = createHash("sha256").update(JSON.stringify(sealPayload)).digest("hex");
+    const manifests: Array<{ proposicionId: number; proveedorId: number; manifestHash: string }> = [];
+    await db.transaction(async (tx) => {
+      for (const o of offers) {
+        const propDocs = docs
+          .filter((d) => d.proveedorId === o.proveedorId)
+          .map((d) => {
+            const rol = mapDocTipoToRol(d.tipo);
+            return rol ? { documentoId: d.id, rol, sha256: d.sha256 } : null;
+          })
+          .filter((x): x is { documentoId: number; rol: "OFERTA_TECNICA" | "OFERTA_ECONOMICA" | "ANEXO"; sha256: string } => !!x);
+        assertProposicionDocsCompletos(propDocs);
+        let prop = await tx.query.proposiciones.findFirst({
+          where: and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, o.id)),
+        });
+        if (!prop) {
+          const ins = await tx.insert(proposiciones).values({
+            tenantId: ctx.user.tenantId,
+            licitacionId: apertura.licitacionId,
+            proveedorId: o.proveedorId,
+            participacionId: o.id,
+            estado: "RECIBIDA",
+            montoOferta: o.montoOferta,
+            recibidoAt: new Date(),
+          } as any);
+          const propId = Number(ins[0].insertId);
+          prop = await tx.query.proposiciones.findFirst({ where: and(eq(proposiciones.id, propId), eq(proposiciones.tenantId, ctx.user.tenantId)) });
+        }
+        const { manifestHash } = buildProposicionManifest({
+          proposicionId: prop!.id,
+          participacionId: o.id,
+          proveedorId: o.proveedorId,
+          montoOferta: o.montoOferta,
+          recibidoAt: prop!.recibidoAt,
+          documentos: propDocs,
+        });
+        await tx.delete(proposicionDocumentos).where(and(eq(proposicionDocumentos.tenantId, ctx.user.tenantId), eq(proposicionDocumentos.proposicionId, prop!.id)));
+        for (const d of propDocs) {
+          await tx.insert(proposicionDocumentos).values({
+            tenantId: ctx.user.tenantId,
+            proposicionId: prop!.id,
+            documentoId: d.documentoId,
+            rol: d.rol,
+            sha256: d.sha256,
+          } as any);
+        }
+        await tx.update(proposiciones).set({
+          manifestHash, sealHash: manifestHash, sealedAt: new Date(), estado: "SELLADA",
+        } as any).where(and(eq(proposiciones.id, prop!.id), eq(proposiciones.tenantId, ctx.user.tenantId)));
+        manifests.push({ proposicionId: prop!.id, proveedorId: o.proveedorId, manifestHash });
+      }
+    });
+    const selloHash = buildAperturaSealFromProposicionManifests(manifests);
     return transition(ctx, input.id, "SELLADA", input.motivo, { fechaSellado: new Date(), selloHash });
   }),
   abrir: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {

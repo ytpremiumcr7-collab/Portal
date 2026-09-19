@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "test:static": "node tests-governance.mjs"
+    "test:static": "node tests-governance.mjs",
+    "outbox:once": "npx tsx api/lib/outbox-worker.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

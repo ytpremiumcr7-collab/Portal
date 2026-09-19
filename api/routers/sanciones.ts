@@ -8,7 +8,7 @@ import { assertSancionTransition, assertInvestigacionSancionTransition } from ".
 import { syncImpedimentosActivo } from "../lib/sanciones-gate";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { tryNotifyEvent } from "../lib/notify-hook";
+import { enqueueOutbox } from "../lib/outbox";
 import { assertProcedimientoAsignacion } from "../lib/sod";
 
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -181,10 +181,22 @@ export const sancionesRouter = createRouter({
     const updated = await db.query.sanciones.findFirst({ where: and(eq(sanciones.id, input.id), eq(sanciones.tenantId, ctx.user.tenantId)) });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "TRANSICION", entidad: "sanciones", entidadId: input.id, valorAnterior: cur, valorNuevo: updated, motivo: input.motivo });
     if (input.to === "EMITIDA") {
-      await tryNotifyEvent({
-        tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, codigoEvento: "SANCION_EMITIDA",
-        asunto: `Sanción emitida ${cur.folio}`, cuerpo: cur.resolucion,
-        entidadRef: "sanciones", entidadId: cur.id, proveedorId: cur.proveedorId,
+      await getDb().transaction(async (tx) => {
+        await enqueueOutbox(tx, {
+          tenantId: ctx.user.tenantId,
+          aggregateType: "sanciones",
+          aggregateId: cur.id,
+          eventType: "SANCION_EMITIDA",
+          payload: {
+            sancionId: cur.id,
+            proveedorId: cur.proveedorId,
+            actorUserId: ctx.user.id,
+            asunto: `Sanción emitida ${cur.folio}`,
+            cuerpo: cur.resolucion,
+            entidadRef: "sanciones",
+            entidadId: cur.id,
+          },
+        });
       });
     }
     await syncImpedimentosActivo(ctx.user.tenantId);

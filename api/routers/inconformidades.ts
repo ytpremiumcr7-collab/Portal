@@ -1,3 +1,4 @@
+import { enqueueOutbox } from "../lib/outbox";
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -96,6 +97,15 @@ export const inconformidadesRouter = createRouter({
     });
     const created = await db.query.inconformidades.findFirst({ where: and(eq(inconformidades.id, id), eq(inconformidades.tenantId, ctx.user.tenantId)) });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "inconformidades", entidadId: id, valorNuevo: created, motivo: input.motivo });
+    await getDb().transaction(async (tx) => {
+      await enqueueOutbox(tx, {
+        tenantId: ctx.user.tenantId,
+        aggregateType: "inconformidades",
+        aggregateId: created!.id,
+        eventType: "INCONFORMIDAD_PRESENTADA",
+        payload: { inconformidadId: created!.id, licitacionId: created!.licitacionId, actorUserId: ctx.user.id, asunto: `Inconformidad ${created!.folio}`, cuerpo: "Inconformidad presentada", entidadRef: "inconformidades", entidadId: created!.id, proveedorId: created!.promoventeProveedorId },
+      });
+    });
     return created;
   }),
 

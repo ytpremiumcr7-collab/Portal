@@ -1,3 +1,4 @@
+import { efectoLegalFromEventType } from "../lib/outbox";
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -47,7 +48,6 @@ export const notificacionesRouter = createRouter({
     templateId: z.number().int().positive().optional(),
     asunto: z.string().trim().min(3).max(300),
     cuerpo: z.string().trim().min(10),
-    efectoLegal: z.boolean().default(false),
     entidadRef: z.string().trim().max(80).optional(),
     entidadId: z.number().int().positive().optional(),
     licitacionId: z.number().int().positive().optional(),
@@ -63,15 +63,15 @@ export const notificacionesRouter = createRouter({
     await db.transaction(async (tx) => {
       const result = await tx.insert(notificaciones).values({
         tenantId: ctx.user.tenantId, templateId: input.templateId ?? null, codigoEvento: input.codigoEvento,
-        asunto: input.asunto, cuerpo: input.cuerpo, efectoLegal: input.efectoLegal,
+        asunto: input.asunto, cuerpo: input.cuerpo, efectoLegal: efectoLegalFromEventType(input.codigoEvento),
         entidadRef: input.entidadRef ?? null, entidadId: input.entidadId ?? null, licitacionId: input.licitacionId ?? null,
-        estado: "ENVIADA", creadaPor: ctx.user.id, enviadaAt: new Date(),
+        estado: "REGISTRADA", creadaPor: ctx.user.id, enviadaAt: null,
       });
       id = Number(result[0].insertId);
       for (const d of input.destinatarios) {
         await tx.insert(notificacionDestinatarios).values({
           tenantId: ctx.user.tenantId, notificacionId: id, email: d.email,
-          userId: d.userId ?? null, proveedorId: d.proveedorId ?? null, deliveryStatus: "ENVIADO",
+          userId: d.userId ?? null, proveedorId: d.proveedorId ?? null, deliveryStatus: "PENDIENTE",
         });
       }
     });

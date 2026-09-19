@@ -11,6 +11,8 @@ import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { hashReglas, assertIsPrimerLugar, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
+import { parseTieBreakPolicy, parseActosObligatorios, assertActosPermitidosPorPolitica } from "../lib/procedure-policy";
+import { enqueueOutbox } from "../lib/outbox";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -122,6 +124,13 @@ export const licitacionesRouter = createRouter({
       rubricaTecnica: current.rubricaTecnica ?? null,
     };
     const reglasHash = hashReglas(frozen);
+    const policy = await db.query.procedurePolicies.findFirst({
+      where: (fields, { and, eq }) => and(eq(fields.modalidad, current.tipoLicitacion as any), eq(fields.version, 1)),
+    });
+    // Prefer seeded policy matching modalidad; attach immutable snapshot on publish.
+    const tieBreak = parseTieBreakPolicy(policy?.tieBreakPolicy);
+    const actos = parseActosObligatorios(policy?.actosObligatorios);
+    assertActosPermitidosPorPolitica(current.tipoLicitacion as any, actos, actos);
     await db.transaction(async (tx) => {
       const result = await tx.update(licitaciones).set({ estado: "PUBLICADA", etapa: "CONVOCATORIA", fechaPublicacion: current.fechaPublicacion ?? new Date() }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "BORRADOR")));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación cambió de estado antes de publicarse; vuelva a cargar el expediente." });
@@ -139,8 +148,17 @@ export const licitacionesRouter = createRouter({
         marcoJuridico: frozen.marcoJuridico,
         rubricaTecnica: frozen.rubricaTecnica,
         reglasHash,
+        policyId: policy?.id ?? null,
+        policyHash: policy?.hash ?? null,
+        tieBreakPolicy: tieBreak,
+        actosObligatorios: actos,
+        requisitos: policy?.requisitos ?? null,
         publishedBy: ctx.user.id,
-      });
+      } as any);
+      if (policy) {
+        await tx.update(licitaciones).set({ policyId: policy.id, policyVersionId: policy.id } as any)
+          .where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId)));
+      }
       await appendExpedienteEvent(tx, ctx, {
         expedienteId: expediente.id, tipo: "REGLAS_EVALUACION_CONGELADAS",
         estadoAnterior: "BORRADOR", estadoNuevo: "PUBLICADA", motivo: input.motivo,
@@ -204,7 +222,8 @@ export const licitacionesRouter = createRouter({
       eq(participaciones.estadoEvaluacion, "ADMISIBLE"),
     ));
     // NO universal max(puntajeTotal) when criterion is PRECIO_MAS_BAJO / MEJOR_VALOR_TECNICO.
-    assertIsPrimerLugar(criterio, admisibles, offer.id);
+    const tb = parseTieBreakPolicy((frozenRow as any).tieBreakPolicy);
+    assertIsPrimerLugar(criterio, admisibles, offer.id, tb);
     if (Number(input.montoAdjudicado) !== Number(offer.montoOferta)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El monto adjudicado debe coincidir con la oferta ganadora." });
     const dictamen = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.tenantId, ctx.user.tenantId), eq(dictamenes.licitacionId, input.id), eq(dictamenes.estado, "APROBADO")), orderBy: [desc(dictamenes.version)] });
     const fallo = await db.query.fallos.findFirst({ where: and(eq(fallos.tenantId, ctx.user.tenantId), eq(fallos.licitacionId, input.id)) });
@@ -226,6 +245,23 @@ export const licitacionesRouter = createRouter({
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación ya fue adjudicada o cambió de estado por otro usuario." });
       await tx.update(participaciones).set({ estadoEvaluacion: "GANADORA", montoAdjudicadoFinal: input.montoAdjudicado }).where(and(eq(participaciones.id, offer.id), eq(participaciones.tenantId, ctx.user.tenantId)));
       await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: "ADJUDICACION", estadoAnterior: "EN_EVALUACION", estadoNuevo: "ADJUDICADA", motivo: input.motivo, payload: { licitacionId: input.id, proveedorGanadorId: provider.id, montoAdjudicado: input.montoAdjudicado, falloId: fallo!.id, dictamenId: dictamen!.id } });
+ 
+      await enqueueOutbox(tx, {
+        tenantId: ctx.user.tenantId,
+        aggregateType: "licitaciones",
+        aggregateId: input.id,
+        eventType: "ADJUDICACION",
+        payload: {
+          licitacionId: input.id,
+          proveedorId: provider.id,
+          montoAdjudicado: input.montoAdjudicado,
+          actorUserId: ctx.user.id,
+          asunto: `Adjudicación licitación #${input.id}`,
+          cuerpo: input.motivo,
+          entidadRef: "licitaciones",
+          entidadId: input.id,
+        },
+      });
     });
     const updated = await getByTenant(input.id, ctx.user.tenantId);
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "ADJUDICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });

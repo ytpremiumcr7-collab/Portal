@@ -11,6 +11,7 @@ import { assertGarantiasRequeridasActivas } from "../lib/garantia-gates";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { tryNotifyEvent } from "../lib/notify-hook";
+import { enqueueOutbox } from "../lib/outbox";
 import { assertDocumentoBoundToContext } from "../lib/documento-binding";
 
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -99,10 +100,23 @@ export const contratosRouter = createRouter({
     const updated = await transition(ctx, input.id, "FORMALIZADO", input.motivo, {
       fechaFirma: input.fechaFirma, formalizadoPor: ctx.user.id, documentoContratoId: input.documentoContratoId,
     });
-    await tryNotifyEvent({
-      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, codigoEvento: "CONTRATO_FORMALIZADO",
-      asunto: `Contrato formalizado ${current.folio}`, cuerpo: `Se formalizó el contrato ${current.folio}.`,
-      entidadRef: "contratos", entidadId: current.id, licitacionId: current.licitacionId, proveedorId: current.proveedorId,
+    await getDb().transaction(async (tx) => {
+      await enqueueOutbox(tx, {
+        tenantId: ctx.user.tenantId,
+        aggregateType: "contratos",
+        aggregateId: current.id,
+        eventType: "CONTRATO_FORMALIZADO",
+        payload: {
+          contratoId: current.id,
+          licitacionId: current.licitacionId,
+          proveedorId: current.proveedorId,
+          actorUserId: ctx.user.id,
+          asunto: `Contrato formalizado ${current.folio}`,
+          cuerpo: `Se formalizó el contrato ${current.folio}.`,
+          entidadRef: "contratos",
+          entidadId: current.id,
+        },
+      });
     });
     return updated;
   }),

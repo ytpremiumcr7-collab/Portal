@@ -14,6 +14,7 @@ import {
   uniqueIndex,
   foreignKey,
   check,
+  json,
 } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 
@@ -185,6 +186,8 @@ export const licitaciones = mysqlTable("licitaciones", {
   modoEvaluacion: mysqlEnum("modo_evaluacion", ["MANUAL", "HIBRIDA", "AUTOMATICA"]).default("HIBRIDA").notNull(),
   proveedorGanadorId: bigint("proveedor_ganador_id", { mode: "number", unsigned: true }),
   montoAdjudicado: decimal("monto_adjudicado", { precision: 18, scale: 2 }),
+  policyId: bigint("policy_id", { mode: "number", unsigned: true }),
+  policyVersionId: bigint("policy_version_id", { mode: "number", unsigned: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => [
@@ -759,6 +762,11 @@ export const licitacionReglasVersion = mysqlTable("licitacion_reglas_version", {
   marcoJuridico: varchar("marco_juridico", { length: 20 }).notNull(),
   rubricaTecnica: text("rubrica_tecnica"),
   reglasHash: varchar("reglas_hash", { length: 64 }).notNull(),
+  policyId: bigint("policy_id", { mode: "number", unsigned: true }),
+  policyHash: varchar("policy_hash", { length: 64 }),
+  tieBreakPolicy: json("tie_break_policy"),
+  actosObligatorios: json("actos_obligatorios"),
+  requisitos: json("requisitos"),
   publishedAt: timestamp("published_at").defaultNow().notNull(),
   publishedBy: bigint("published_by", { mode: "number", unsigned: true }).notNull(),
 }, (t) => [
@@ -1242,7 +1250,7 @@ export const notificaciones = mysqlTable("notificaciones", {
   entidadRef: varchar("entidad_ref", { length: 80 }),
   entidadId: bigint("entidad_id", { mode: "number", unsigned: true }),
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }),
-  estado: mysqlEnum("estado", ["BORRADOR", "ENVIADA", "ENTREGADA", "FALLIDA", "ACKNOWLEDGED"]).default("BORRADOR").notNull(),
+  estado: mysqlEnum("estado", ["BORRADOR", "REGISTRADA", "ENVIADA", "ENVIADA_EXTERNA", "ENTREGADA", "FALLIDA", "ACKNOWLEDGED"]).default("BORRADOR").notNull(),
   creadaPor: bigint("creada_por", { mode: "number", unsigned: true }).notNull(),
   enviadaAt: timestamp("enviada_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -1269,5 +1277,116 @@ export const notificacionDestinatarios = mysqlTable("notificacion_destinatarios"
   index("notif_dest_notif_idx").on(t.tenantId, t.notificacionId),
   foreignKey({ name: "notif_dest_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
   foreignKey({ name: "notif_dest_notif_fk", columns: [t.tenantId, t.notificacionId], foreignColumns: [notificaciones.tenantId, notificaciones.id] }).onDelete("restrict"),
+]);
+
+export const legalRegimes = mysqlTable("legal_regimes", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 40 }).notNull(),
+  nombre: varchar("nombre", { length: 160 }).notNull(),
+  jurisdiccion: varchar("jurisdiccion", { length: 80 }).default("MX-FEDERAL").notNull(),
+  activa: boolean("activa").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("legal_regimes_code_uq").on(t.code),
+]);
+
+export const procedurePolicies = mysqlTable("procedure_policies", {
+  id: serial("id").primaryKey(),
+  regimeId: bigint("regime_id", { mode: "number", unsigned: true }).notNull(),
+  modalidad: mysqlEnum("modalidad", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "ADJUDICACION_DIRECTA"]).notNull(),
+  criterioEvaluacion: varchar("criterio_evaluacion", { length: 40 }).notNull(),
+  modoEvaluacion: varchar("modo_evaluacion", { length: 20 }).default("HIBRIDA").notNull(),
+  ponderacionTecnica: decimal("ponderacion_tecnica", { precision: 5, scale: 2 }).default("40.00").notNull(),
+  ponderacionEconomica: decimal("ponderacion_economica", { precision: 5, scale: 2 }).default("60.00").notNull(),
+  tieBreakPolicy: json("tie_break_policy").notNull(),
+  requisitos: json("requisitos").notNull(),
+  actosObligatorios: json("actos_obligatorios").notNull(),
+  version: int("version").default(1).notNull(),
+  hash: varchar("hash", { length: 64 }).notNull(),
+  publicadaAt: timestamp("publicada_at"),
+  createdBy: bigint("created_by", { mode: "number", unsigned: true }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("proc_pol_regime_mod_ver_uq").on(t.regimeId, t.modalidad, t.version),
+  index("proc_pol_regime_idx").on(t.regimeId),
+  foreignKey({ name: "proc_pol_regime_fk", columns: [t.regimeId], foreignColumns: [legalRegimes.id] }).onDelete("restrict"),
+]);
+
+export const proposiciones = mysqlTable("proposiciones", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
+  participacionId: bigint("participacion_id", { mode: "number", unsigned: true }).notNull(),
+  recibidoAt: timestamp("recibido_at").defaultNow().notNull(),
+  estado: mysqlEnum("estado", ["BORRADOR", "RECIBIDA", "SELLADA", "ADMISIBLE", "NO_ADMISIBLE", "DESECHADA", "GANADORA"]).default("BORRADOR").notNull(),
+  manifestHash: varchar("manifest_hash", { length: 64 }),
+  sealHash: varchar("seal_hash", { length: 64 }),
+  sealedAt: timestamp("sealed_at"),
+  montoOferta: decimal("monto_oferta", { precision: 18, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("prop_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("prop_part_uq").on(t.tenantId, t.participacionId),
+  uniqueIndex("prop_lic_prov_uq").on(t.tenantId, t.licitacionId, t.proveedorId),
+  index("prop_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "prop_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_prov_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_part_fk", columns: [t.tenantId, t.participacionId], foreignColumns: [participaciones.tenantId, participaciones.id] }).onDelete("restrict"),
+]);
+
+export const proposicionDocumentos = mysqlTable("proposicion_documentos", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  proposicionId: bigint("proposicion_id", { mode: "number", unsigned: true }).notNull(),
+  documentoId: bigint("documento_id", { mode: "number", unsigned: true }).notNull(),
+  rol: mysqlEnum("rol", ["OFERTA_TECNICA", "OFERTA_ECONOMICA", "ANEXO"]).notNull(),
+  sha256: varchar("sha256", { length: 64 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("prop_doc_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("prop_doc_uq").on(t.tenantId, t.proposicionId, t.documentoId),
+  foreignKey({ name: "prop_doc_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_doc_prop_fk", columns: [t.tenantId, t.proposicionId], foreignColumns: [proposiciones.tenantId, proposiciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_doc_documento_fk", columns: [t.tenantId, t.documentoId], foreignColumns: [documentos.tenantId, documentos.id] }).onDelete("restrict"),
+]);
+
+export const proposicionExclusiones = mysqlTable("proposicion_exclusiones", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  proposicionId: bigint("proposicion_id", { mode: "number", unsigned: true }).notNull(),
+  reasonCode: varchar("reason_code", { length: 60 }).notNull(),
+  reasonText: text("reason_text").notNull(),
+  evidenceDocId: bigint("evidence_doc_id", { mode: "number", unsigned: true }),
+  decidedBy: bigint("decided_by", { mode: "number", unsigned: true }).notNull(),
+  decidedAt: timestamp("decided_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("prop_excl_tenant_id_uq").on(t.tenantId, t.id),
+  index("prop_excl_prop_idx").on(t.tenantId, t.proposicionId),
+  foreignKey({ name: "prop_excl_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_excl_prop_fk", columns: [t.tenantId, t.proposicionId], foreignColumns: [proposiciones.tenantId, proposiciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "prop_excl_actor_fk", columns: [t.tenantId, t.decidedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const domainOutbox = mysqlTable("domain_outbox", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  aggregateType: varchar("aggregate_type", { length: 80 }).notNull(),
+  aggregateId: bigint("aggregate_id", { mode: "number", unsigned: true }).notNull(),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  payload: json("payload").notNull(),
+  status: mysqlEnum("status", ["PENDING", "PROCESSING", "SENT", "FAILED"]).default("PENDING").notNull(),
+  attempts: int("attempts").default(0).notNull(),
+  nextAttemptAt: timestamp("next_attempt_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  processedAt: timestamp("processed_at"),
+  lastError: text("last_error"),
+}, (t) => [
+  uniqueIndex("outbox_tenant_id_uq").on(t.tenantId, t.id),
+  index("outbox_pending_idx").on(t.status, t.nextAttemptAt),
+  index("outbox_agg_idx").on(t.tenantId, t.aggregateType, t.aggregateId),
+  foreignKey({ name: "outbox_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
 ]);
 

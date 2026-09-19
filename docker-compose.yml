@@ -19,6 +19,9 @@ services:
       - ./db/migrations/0005_audit_harden_sod.sql:/docker-entrypoint-initdb.d/05.sql:ro
       - ./db/migrations/0006_sod_procedimiento.sql:/docker-entrypoint-initdb.d/06.sql:ro
       - ./db/migrations/0007_evaluation_freeze_doc_fks.sql:/docker-entrypoint-initdb.d/07.sql:ro
+      - ./db/migrations/0008_procedure_policy.sql:/docker-entrypoint-initdb.d/08.sql:ro
+      - ./db/migrations/0009_proposiciones.sql:/docker-entrypoint-initdb.d/09.sql:ro
+      - ./db/migrations/0010_outbox.sql:/docker-entrypoint-initdb.d/10.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s

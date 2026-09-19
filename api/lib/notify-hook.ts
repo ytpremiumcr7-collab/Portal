@@ -1,6 +1,7 @@
 import { getDb } from "../queries/connection";
 import { notificaciones, notificacionDestinatarios, proveedores } from "@db/schema";
 import { and, eq } from "drizzle-orm";
+import { efectoLegalFromEventType } from "./outbox";
 
 /** Best-effort official notification hook (no throw on failure). */
 export async function tryNotifyEvent(input: {
@@ -30,13 +31,13 @@ export async function tryNotifyEvent(input: {
       codigoEvento: input.codigoEvento as any,
       asunto: input.asunto,
       cuerpo: input.cuerpo,
-      efectoLegal: true,
+      efectoLegal: efectoLegalFromEventType(input.codigoEvento),
       entidadRef: input.entidadRef ?? null,
       entidadId: input.entidadId ?? null,
       licitacionId: input.licitacionId ?? null,
-      estado: "ENVIADA",
+      estado: "REGISTRADA",
       creadaPor: input.actorUserId,
-      enviadaAt: new Date(),
+      enviadaAt: null,
     } as any);
     const id = Number(result[0].insertId);
     await db.insert(notificacionDestinatarios).values({
@@ -44,9 +45,9 @@ export async function tryNotifyEvent(input: {
       notificacionId: id,
       email,
       proveedorId: input.proveedorId ?? null,
-      deliveryStatus: "ENVIADO",
+      deliveryStatus: "PENDIENTE",
     } as any);
-    return { sent: true as const, id };
+    return { sent: false as const, registered: true as const, id };
   } catch {
     return { sent: false as const };
   }
