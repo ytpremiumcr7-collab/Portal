@@ -14,9 +14,10 @@ for f in \
   0010_outbox.sql \
   0011_audit_harden.sql \
   0012_audit_hash_consorcios.sql \
-  0013_preprod_p0p1.sql
+  0013_preprod_p0p1.sql \
+  0014_sobre_economico.sql
 do
   echo "Applying $f ..."
   mysql -u ares -pares_dev_local ares < "$ROOT/db/migrations/$f"
 done
-echo "Migraciones 0001-0013 aplicadas."
+echo "Migraciones 0001-0014 aplicadas."

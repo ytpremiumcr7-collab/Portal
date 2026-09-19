@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { actosTerminacion, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -16,7 +16,7 @@ export const terminacionRouter = createRouter({
     });
   }),
 
-  crear: convocanteQuery.input(z.object({
+  crear: capabilityQuery("publicar").input(z.object({
     licitacionId: z.number().int().positive(),
     tipo: z.enum(["CANCELACION", "DESIERTO"]),
     causa: z.string().trim().min(10),
@@ -40,7 +40,7 @@ export const terminacionRouter = createRouter({
     return db.query.actosTerminacion.findFirst({ where: and(eq(actosTerminacion.id, id), eq(actosTerminacion.tenantId, ctx.user.tenantId)) });
   }),
 
-  publicar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const acto = await db.query.actosTerminacion.findFirst({
       where: and(eq(actosTerminacion.id, input.id), eq(actosTerminacion.tenantId, ctx.user.tenantId)),

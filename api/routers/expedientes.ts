@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, asc } from "drizzle-orm";
-import { createRouter, adminQuery, convocanteQuery } from "../middleware";
+import { createRouter, adminQuery, convocanteQuery, capabilityQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { expedienteRequirements, expedientes } from "@db/schema";
 import { pageInput, pageResult } from "../lib/pagination";
@@ -35,7 +35,7 @@ export const expedientesRouter = createRouter({
     return getDb().query.expedienteRequirements.findMany({ where: and(eq(expedienteRequirements.tenantId, ctx.user.tenantId), eq(expedienteRequirements.expedienteId, input.expedienteId)), orderBy: [asc(expedienteRequirements.id)] });
   }),
 
-  markRequirement: convocanteQuery.input(z.object({ id: z.number().int().positive(), estado: requirementState, observaciones: z.string().trim().max(2000).nullable().optional(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  markRequirement: capabilityQuery("aprobar_juridico").input(z.object({ id: z.number().int().positive(), estado: requirementState, observaciones: z.string().trim().max(2000).nullable().optional(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.expedienteRequirements.findFirst({ where: and(eq(expedienteRequirements.id, input.id), eq(expedienteRequirements.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Requisito no encontrado." });
@@ -46,7 +46,7 @@ export const expedientesRouter = createRouter({
     return updated;
   }),
 
-  enviarRevisionJuridica: convocanteQuery.input(z.object({ expedienteId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  enviarRevisionJuridica: capabilityQuery("aprobar_juridico").input(z.object({ expedienteId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertExpediente(ctx.user.tenantId, input.expedienteId);
     if (!["INTEGRACION", "OBSERVADO"].includes(current.estado)) throw new TRPCError({ code: "CONFLICT", message: "El expediente sólo puede enviarse a revisión desde INTEGRACION u OBSERVADO." });
     await assertExpedienteComplete(ctx.user.tenantId, current.id);

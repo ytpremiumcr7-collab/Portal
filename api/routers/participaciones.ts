@@ -15,7 +15,13 @@ import { computeScoresAndOrden, parseDesempateOrden, type CriterioEvaluacion, ty
 import { mapEvalToProposicionEstado } from "../lib/proposicion";
 import { parseTieBreakPolicy } from "../lib/procedure-policy";
 import { assertRecepcionDentroDeVentana } from "../lib/calendario-gates";
-import { loadAperturaEstado, redactParticipacionEconomica } from "../lib/sobre-economico";
+import {
+  loadAperturaEstado,
+  redactParticipacionEconomica,
+  insertSobreEconomico,
+  hydrateOwnerMontoIfSealed,
+  ENVELOPE_PLACEHOLDER_MONTO,
+} from "../lib/sobre-economico";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
@@ -37,12 +43,22 @@ async function redactList(
   for (const item of items) {
     const licId = Number(item.licitacionId);
     if (!byLic.has(licId)) byLic.set(licId, await loadAperturaEstado(ctx.user.tenantId, licId));
+    const aperturaEstado = byLic.get(licId);
+    const isOwner =
+      ctx.user.role === "proveedor" &&
+      viewerProveedorId != null &&
+      Number(viewerProveedorId) === Number(item.proveedorId);
+    let hydrated = await hydrateOwnerMontoIfSealed(item, {
+      tenantId: ctx.user.tenantId,
+      isOwner,
+      revelado: !!aperturaEstado && ["ABIERTA","REGISTRADA","ACTA_EMITIDA","PUBLICADA"].includes(aperturaEstado),
+    });
     out.push(
-      redactParticipacionEconomica(item, {
+      redactParticipacionEconomica(hydrated, {
         role: ctx.user.role,
         viewerProveedorId,
         itemProveedorId: item.proveedorId,
-        aperturaEstado: byLic.get(licId),
+        aperturaEstado,
       }),
     );
   }
@@ -79,7 +95,13 @@ export const participacionesRouter = createRouter({
       viewerProveedorId = item.proveedorId;
     }
     const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, item.licitacionId);
-    return redactParticipacionEconomica(item as any, {
+    const isOwner = viewerProveedorId != null && Number(viewerProveedorId) === Number(item.proveedorId);
+    const hydrated = await hydrateOwnerMontoIfSealed(item as any, {
+      tenantId: ctx.user.tenantId,
+      isOwner,
+      revelado: !!aperturaEstado && ["ABIERTA","REGISTRADA","ACTA_EMITIDA","PUBLICADA"].includes(aperturaEstado),
+    });
+    return redactParticipacionEconomica(hydrated, {
       role: ctx.user.role,
       viewerProveedorId,
       itemProveedorId: item.proveedorId,
@@ -106,14 +128,22 @@ export const participacionesRouter = createRouter({
     await db.transaction(async (tx) => {
       const result = await tx.insert(participaciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
-        montoOferta: input.montoOferta, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion,
+        // Placeholder until apertura reveal — plaintext lives only in sobres_economicos ciphertext.
+        montoOferta: ENVELOPE_PLACEHOLDER_MONTO, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion,
         estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null, recibidoAt,
       } as any);
       id = Number(result[0].insertId);
-      await tx.insert(proposiciones).values({
+      const propIns = await tx.insert(proposiciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
-        participacionId: id, estado: "RECIBIDA", montoOferta: input.montoOferta, recibidoAt,
+        participacionId: id, estado: "RECIBIDA", montoOferta: ENVELOPE_PLACEHOLDER_MONTO, recibidoAt,
       } as any);
+      const proposicionId = Number(propIns[0].insertId);
+      await insertSobreEconomico(tx, {
+        tenantId: ctx.user.tenantId,
+        participacionId: id,
+        proposicionId,
+        monto: input.montoOferta,
+      });
       await tx.update(proveedores).set({
         licitacionesParticipadas: sql`${proveedores.licitacionesParticipadas} + 1`,
       } as any).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
@@ -125,7 +155,8 @@ export const participacionesRouter = createRouter({
       });
     });
     await detectLicitacionRisks(ctx.user.tenantId, input.licitacionId);
-    return created;
+    // Owner response includes submitted monto (never persisted plaintext pre-apertura).
+    return { ...created, montoOferta: input.montoOferta, sobreEconomicoSellado: true };
   }),
 
   evaluar: capabilityQuery("evaluar_tecnico").input(z.object({

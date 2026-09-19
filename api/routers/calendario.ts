@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { calendarioActos } from "@db/schema";
 import { assertLicitacionExists } from "../lib/domain";
@@ -14,7 +14,7 @@ export const calendarioRouter = createRouter({
     });
   }),
 
-  configurar: convocanteQuery.input(z.object({
+  configurar: capabilityQuery("crear_procedimiento").input(z.object({
     licitacionId: z.number().int().positive(),
     acto: z.string().trim().min(2).max(60),
     ventanaInicio: z.string().datetime(),

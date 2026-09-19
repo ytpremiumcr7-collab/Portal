@@ -251,6 +251,50 @@ const constP0 = fs.readFileSync("src/const.ts", "utf8");
 if (!constP0.includes('PRODUCT_NAME = "Piedra Angular"')) throw new Error("PRODUCT_NAME must stay Piedra Angular");
 if (/institucional/i.test(constP0)) throw new Error("PRODUCT_NAME path must not say institucional");
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal + preprod P0/P1)");
+// 0014 residual — envelope + system actor + authz harden
+const mig14 = fs.readFileSync("db/migrations/0014_sobre_economico.sql", "utf8");
+if (!mig14.includes("sobres_economicos") || !mig14.includes("ciphertext") || !mig14.includes("key_version")) {
+  throw new Error("0014 missing sobres_economicos envelope columns");
+}
+if (!schema.includes("sobresEconomicos")) throw new Error("schema missing sobresEconomicos");
+const envCrypto = fs.readFileSync("api/lib/envelope-crypto.ts", "utf8");
+if (!envCrypto.includes("aes-256-gcm") && !envCrypto.includes("AES-256-GCM")) {
+  throw new Error("envelope-crypto must use AES-256-GCM");
+}
+if (!envCrypto.includes("ARES_ENVELOPE_KEY_V")) throw new Error("envelope key rotation stub missing");
+const sobreLib = fs.readFileSync("api/lib/sobre-economico.ts", "utf8");
+if (!sobreLib.includes("revelarSobresEconomicos") || !sobreLib.includes("insertSobreEconomico")) {
+  throw new Error("sobre-economico must seal/reveal");
+}
+const part14 = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+if (!part14.includes("insertSobreEconomico") || !part14.includes("ENVELOPE_PLACEHOLDER_MONTO")) {
+  throw new Error("participaciones.create must encrypt envelope");
+}
+const apert14 = fs.readFileSync("api/routers/aperturas.ts", "utf8");
+if (!apert14.includes("revelarSobresEconomicos")) throw new Error("aperturas must reveal sobres on abrir/registrar");
+const sysActor = fs.readFileSync("api/lib/system-actor.ts", "utf8");
+if (!sysActor.includes("ensureSystemActor") || !sysActor.includes("system+t")) {
+  throw new Error("ensureSystemActor per-tenant missing");
+}
+const outbox14 = fs.readFileSync("api/lib/outbox.ts", "utf8");
+if (!outbox14.includes("ensureSystemActor")) throw new Error("outbox must use ensureSystemActor");
+const dc14 = fs.readFileSync("docker-compose.yml", "utf8");
+if (!dc14.includes("0014_sobre_economico.sql")) throw new Error("docker-compose must mount 0014");
+const migSh14 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
+if (!migSh14.includes("0014_sobre_economico.sql")) throw new Error("migrate-local.sh missing 0014");
+const fallos14 = fs.readFileSync("api/routers/fallos.ts", "utf8");
+if (fallos14.includes("emitir: convocanteQuery") || fallos14.includes("emitirBorrador: convocanteQuery")) {
+  throw new Error("fallos mutations must use capabilityQuery");
+}
+const dict14 = fs.readFileSync("api/routers/dictamenes.ts", "utf8");
+if (dict14.includes("crear: convocanteQuery") || dict14.includes("emitir: convocanteQuery")) {
+  throw new Error("dictamenes mutations must use capabilityQuery");
+}
+const calGate = fs.readFileSync("api/lib/calendario-gates.ts", "utf8");
+if (!calGate.includes("assertRecepcionDentroDeVentana") || !calGate.includes("isWithinRecepcionMs")) {
+  throw new Error("canonical calendar reception must remain");
+}
+
+console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal + preprod P0/P1 + 0014 residual)");
 
 

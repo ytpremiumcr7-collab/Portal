@@ -13,6 +13,8 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { buildProposicionManifest, buildAperturaSealFromProposicionManifests, mapDocTipoToRol, assertProposicionDocsCompletos, assertProposicionSelladaCompleta } from "../lib/proposicion";
 import { parseRequisitos } from "../lib/procedure-policy";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
+import { decryptMontoParticipacion, revelarSobresEconomicos } from "../lib/sobre-economico";
+import { ENVELOPE_PLACEHOLDER_MONTO } from "../lib/envelope-crypto";
 
 export const aperturasRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -97,23 +99,32 @@ export const aperturasRouter = createRouter({
         // recibidoAt from participación (authoritative at create), never seal time.
         const recibidoAt = (o as any).recibidoAt ?? prop?.recibidoAt ?? new Date();
         if (!prop) {
+          let montoProp = String(o.montoOferta);
+          if (montoProp === ENVELOPE_PLACEHOLDER_MONTO) {
+            montoProp = (await decryptMontoParticipacion(tx, ctx.user.tenantId, o.id)) ?? montoProp;
+          }
           const ins = await tx.insert(proposiciones).values({
             tenantId: ctx.user.tenantId,
             licitacionId: apertura.licitacionId,
             proveedorId: o.proveedorId,
             participacionId: o.id,
             estado: "RECIBIDA",
-            montoOferta: o.montoOferta,
+            montoOferta: montoProp,
             recibidoAt,
           } as any);
           const propId = Number(ins[0].insertId);
           prop = await tx.query.proposiciones.findFirst({ where: and(eq(proposiciones.id, propId), eq(proposiciones.tenantId, ctx.user.tenantId)) });
         }
+        let montoForSeal = String(o.montoOferta);
+        if (montoForSeal === ENVELOPE_PLACEHOLDER_MONTO || !montoForSeal) {
+          const decrypted = await decryptMontoParticipacion(tx, ctx.user.tenantId, o.id);
+          if (decrypted) montoForSeal = decrypted;
+        }
         const { manifestHash } = buildProposicionManifest({
           proposicionId: prop!.id,
           participacionId: o.id,
           proveedorId: o.proveedorId,
-          montoOferta: o.montoOferta,
+          montoOferta: montoForSeal,
           recibidoAt: prop!.recibidoAt ?? recibidoAt,
           documentos: propDocs,
         });
@@ -144,7 +155,31 @@ export const aperturasRouter = createRouter({
     return updated;
   }),
   abrir: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
-    return transition(ctx, input.id, "ABIERTA", input.motivo, { fechaApertura: new Date() });
+    const db = getDb();
+    const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
+    if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
+    assertAperturaTransition(apertura.estado as any, "ABIERTA");
+    await db.transaction(async (tx) => {
+      const result = await tx.update(aperturas).set({ estado: "ABIERTA", fechaApertura: new Date() } as any)
+        .where(and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.estado, apertura.estado)));
+      if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La apertura cambió de estado." });
+      const revealed = await revelarSobresEconomicos(tx, {
+        tenantId: ctx.user.tenantId,
+        licitacionId: apertura.licitacionId,
+        actorUserId: ctx.user.id,
+      });
+      await appendExpedienteEvent(tx, ctx, {
+        expedienteId: apertura.expedienteId,
+        tipo: "APERTURA_ABIERTA",
+        estadoAnterior: apertura.estado,
+        estadoNuevo: "ABIERTA",
+        motivo: input.motivo,
+        payload: { aperturaId: input.id, sobresRevelados: revealed.revelados },
+      });
+    });
+    const updated = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ABRIR_REVELAR", entidad: "aperturas", entidadId: input.id, valorAnterior: apertura, valorNuevo: updated, motivo: input.motivo });
+    return updated;
   }),
   registrarOfertas: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
@@ -174,15 +209,21 @@ export const aperturasRouter = createRouter({
       );
     }
     await db.transaction(async (tx) => {
+      const revealed = await revelarSobresEconomicos(tx, {
+        tenantId: ctx.user.tenantId,
+        licitacionId: apertura.licitacionId,
+        actorUserId: ctx.user.id,
+      });
       for (const o of offers) {
+        const monto = revealed.montos.get(o.id) ?? String(o.montoOferta);
         await tx.insert(aperturaRegistros).values({
           tenantId: ctx.user.tenantId, aperturaId: apertura.id, participacionId: o.id,
-          proveedorId: o.proveedorId, montoOferta: o.montoOferta, presente: true, registradoPor: ctx.user.id,
+          proveedorId: o.proveedorId, montoOferta: monto, presente: true, registradoPor: ctx.user.id,
         });
       }
       const result = await tx.update(aperturas).set({ estado: "REGISTRADA", ofertasRegistradas: offers.length }).where(and(eq(aperturas.id, apertura.id), eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.estado, "ABIERTA")));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La apertura cambió de estado." });
-      await appendExpedienteEvent(tx, ctx, { expedienteId: apertura.expedienteId, tipo: "APERTURA_REGISTRADA", estadoAnterior: "ABIERTA", estadoNuevo: "REGISTRADA", motivo: input.motivo, payload: { aperturaId: apertura.id, ofertas: offers.length } });
+      await appendExpedienteEvent(tx, ctx, { expedienteId: apertura.expedienteId, tipo: "APERTURA_REGISTRADA", estadoAnterior: "ABIERTA", estadoNuevo: "REGISTRADA", motivo: input.motivo, payload: { aperturaId: apertura.id, ofertas: offers.length, sobresRevelados: revealed.revelados } });
     });
     const updated = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)), with: { registros: true } });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "REGISTRAR", entidad: "aperturas", entidadId: input.id, valorNuevo: updated, motivo: input.motivo });

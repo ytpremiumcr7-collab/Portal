@@ -12,6 +12,8 @@ import { isWithinRecepcionMs } from "./calendario-gates";
 import { ROLE_CAPABILITIES } from "./capabilities";
 import { CAPABILITIES } from "@db/schema";
 import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_SENTINEL, efectoLegalFromEventType } from "./outbox";
+import { systemActorEmail } from "./system-actor";
+import { sealMontoOferta, openMontoOferta, ciphertextDiffersFromPlaintext } from "./envelope-crypto";
 
 function msg(fn: () => unknown) {
   try {
@@ -135,9 +137,19 @@ describe("P1 outbox system actor sentinel", () => {
   it("does not invent actorUserId=1 constant", () => {
     expect(SYSTEM_ACTOR_SENTINEL).toBe("SYSTEM");
     expect(SYSTEM_ACTOR_EMAIL).toContain("piedra-angular");
+    expect(systemActorEmail(3)).toBe("system+t3@piedra-angular.local");
   });
 
   it("efecto legal still recognized", () => {
     expect(efectoLegalFromEventType("CONTRATO_RESCINDIDO")).toBe(true);
+  });
+});
+
+describe("P0-2b envelope encryption residual", () => {
+  it("ciphertext differs from plaintext and round-trips", () => {
+    process.env.ARES_ENVELOPE_KEY ??= Buffer.from("piedra-angular-dev-envelope-key!!").toString("base64");
+    const seal = sealMontoOferta("42.00");
+    expect(ciphertextDiffersFromPlaintext(seal.ciphertext, "42.00")).toBe(true);
+    expect(openMontoOferta(seal)).toBe("42.00");
   });
 });

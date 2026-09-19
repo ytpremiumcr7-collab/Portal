@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { eq, desc, like, and, count, sql } from "drizzle-orm";
-import { createRouter, convocanteQuery, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion, actosDesempate } from "@db/schema";
 import { TRPCError } from "@trpc/server";
@@ -61,7 +61,7 @@ export const licitacionesRouter = createRouter({
     return lic;
   }),
 
-  create: convocanteQuery.input(z.object({
+  create: capabilityQuery("crear_procedimiento").input(z.object({
     titulo: z.string().trim().min(5).max(300), objeto: z.string().trim().min(10), descripcionDetallada: z.string().trim().optional(), entidadId: z.number().int().positive(), categoriaId: z.number().int().positive(), convocanteId: z.number().int().positive().optional(),
     tipoLicitacion: z.enum(["LICITACION_PUBLICA","INVITACION_RESTRINGIDA","ADJUDICACION_DIRECTA"]), tipoContratacion: z.enum(["OBRA","SERVICIO","BIENES","CONCESION","ARRENDAMIENTO"]), montoPresupuestado: money, fechaPublicacion: dateMx.optional(), fechaCierre: dateMx.optional(), fechaApertura: dateMx.optional(), criterioEvaluacion: z.enum(["PRECIO_MAS_BAJO","MEJOR_RELACION_CALIDAD_PRECIO","MEJOR_VALOR_TECNICO"]).default("MEJOR_RELACION_CALIDAD_PRECIO"), ponderacionTecnica: money.default("40.00"), ponderacionEconomica: money.default("60.00"), rubricaTecnica: z.string().optional(), modoEvaluacion: z.enum(["MANUAL","HIBRIDA","AUTOMATICA"]).default("HIBRIDA"),
   })).mutation(async ({ input, ctx }) => {
@@ -91,7 +91,7 @@ export const licitacionesRouter = createRouter({
     return { id: createdId, codigo, item: created };
   }),
 
-  update: convocanteQuery.input(z.object({
+  update: capabilityQuery("crear_procedimiento").input(z.object({
     id: z.number().int().positive(), titulo: z.string().trim().min(5).max(300).optional(), objeto: z.string().trim().min(10).optional(), descripcionDetallada: z.string().nullable().optional(), montoPresupuestado: money.optional(), fechaPublicacion: dateMx.nullable().optional(), fechaCierre: dateMx.nullable().optional(), fechaApertura: dateMx.nullable().optional(), criterioEvaluacion: z.enum(["PRECIO_MAS_BAJO","MEJOR_RELACION_CALIDAD_PRECIO","MEJOR_VALOR_TECNICO"]).optional(), ponderacionTecnica: money.optional(), ponderacionEconomica: money.optional(), rubricaTecnica: z.string().nullable().optional(), modoEvaluacion: z.enum(["MANUAL","HIBRIDA","AUTOMATICA"]).optional(), motivo: z.string().trim().min(3).optional(),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
@@ -110,7 +110,7 @@ export const licitacionesRouter = createRouter({
     return updated;
   }),
 
-  agregarJunta: convocanteQuery.input(z.object({ id: z.number().int().positive(), fechaProgramada: z.string().datetime(), nombre: z.string().trim().min(3).default("Junta de Aclaraciones"), motivo: z.string().optional() })).mutation(async ({ input, ctx }) => {
+  agregarJunta: capabilityQuery("crear_procedimiento").input(z.object({ id: z.number().int().positive(), fechaProgramada: z.string().datetime(), nombre: z.string().trim().min(3).default("Junta de Aclaraciones"), motivo: z.string().optional() })).mutation(async ({ input, ctx }) => {
     const lic = await assertLicitacionExists(ctx.user.tenantId, input.id);
     if (lic.estado !== "BORRADOR") throw new TRPCError({ code: "CONFLICT", message: "La junta se configura antes de publicar." });
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id); if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La licitación no tiene expediente electrónico." });
@@ -182,7 +182,7 @@ export const licitacionesRouter = createRouter({
     return updated;
   }),
 
-  iniciarEvaluacion: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  iniciarEvaluacion: capabilityQuery("evaluar_tecnico").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
     await assertCalendarioPermite(ctx.user.tenantId, input.id, "EVALUACION");
     if (!['PUBLICADA','CONSULTAS'].includes(current.estado)) throw new TRPCError({ code: "CONFLICT", message: "Sólo una licitación publicada puede pasar a evaluación." });

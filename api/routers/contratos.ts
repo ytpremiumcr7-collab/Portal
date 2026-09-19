@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
 import { assertProcedimientoAsignacion } from "../lib/sod";
 import { getDb } from "../queries/connection";
 import { contratos, fallos, licitaciones, documentos, garantias } from "@db/schema";
@@ -37,7 +37,7 @@ export const contratosRouter = createRouter({
     return item;
   }),
 
-  crear: convocanteQuery.input(z.object({
+  crear: capabilityQuery("formalizar_contrato").input(z.object({
     licitacionId: z.number().int().positive(),
     folio: z.string().trim().min(3).max(80),
     objeto: z.string().trim().min(10).optional(),
@@ -123,7 +123,7 @@ export const contratosRouter = createRouter({
     return updated;
   }),
 
-  ponerVigente: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  ponerVigente: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
@@ -134,7 +134,7 @@ export const contratosRouter = createRouter({
     return transition(ctx, input.id, "VIGENTE", input.motivo, {});
   }),
 
-  terminar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  terminar: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "TERMINADO", input.motivo, {});
   }),
 
@@ -186,7 +186,7 @@ export const contratosRouter = createRouter({
     return updated;
   }),
   /** BESA-lite: administrador del contrato + penas convencionales. */
-  configurarBesa: convocanteQuery.input(z.object({
+  configurarBesa: capabilityQuery("formalizar_contrato").input(z.object({
     id: z.number().int().positive(),
     administradorContratoId: z.number().int().positive().nullable().optional(),
     penasConvencionales: z.array(z.object({

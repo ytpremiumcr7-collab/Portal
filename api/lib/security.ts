@@ -146,6 +146,13 @@ function canonicalAuditEvent(input: {
   return JSON.stringify(input);
 }
 
+/** Second-precision UTC ISO — survives MySQL TIMESTAMP (no fractional seconds). */
+export function toAuditTimestampIso(d: Date = new Date()): string {
+  const x = new Date(d.getTime());
+  x.setUTCMilliseconds(0);
+  return x.toISOString();
+}
+
 /** Append-only audit with per-tenant hash chain serialized via audit_chain_heads FOR UPDATE. */
 export async function writeAudit(input: {
   ctx: RequestContext;
@@ -164,7 +171,7 @@ export async function writeAudit(input: {
   const valorNuevo = input.valorNuevo == null ? null : sanitizeAuditValue(input.valorNuevo);
   const motivo = input.motivo ?? null;
   const entidadId = input.entidadId ?? null;
-  const timestamp = new Date().toISOString();
+  const timestamp = toAuditTimestampIso();
 
   const run = async (tx: any) => {
     // Serialize chain head per tenant
@@ -230,7 +237,8 @@ export async function verifyAuditHashChain(tenantId: number) {
       started = true;
       previous = null;
     }
-    if (row.previousHash !== previous) return { valid: false, brokenAt: row.id };
+    const rowPrev = row.previousHash ?? null;
+    if (rowPrev !== previous) return { valid: false, brokenAt: row.id };
     let valorAnterior: unknown = null;
     let valorNuevo: unknown = null;
     try {
@@ -249,8 +257,8 @@ export async function verifyAuditHashChain(tenantId: number) {
       valorNuevo,
       motivo: row.motivo ?? null,
       requestId: row.requestId ?? null,
-      timestamp: row.timestamp.toISOString(),
-      previousHash: row.previousHash ?? null,
+      timestamp: toAuditTimestampIso(row.timestamp),
+      previousHash: rowPrev,
     });
     const expected = createHash("sha256").update(base).digest("hex");
     if (expected !== row.eventHash) return { valid: false, brokenAt: row.id };

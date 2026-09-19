@@ -138,3 +138,15 @@ Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES-only codebase
 
 ### UI proveedor
 - `/oportunidades`, `/presentar-propuesta`, `/mis-proposiciones`, documentos/comunicaciones
+
+## Pre-prod residual (0014) — envelope encryption + system actor + authz
+
+| # | Fix |
+|---|-----|
+| R-1 | `sobres_economicos`: AES-256-GCM ciphertext/nonce/authTag/keyVersion; `montoOferta` placeholder until apertura `abrir`/`registrarOfertas` reveal |
+| R-2 | Key rotation stub: `ARES_ENVELOPE_KEY` + `ARES_ENVELOPE_KEY_VERSION` + `ARES_ENVELOPE_KEY_V{n}` |
+| R-3 | `ensureSystemActor(tenantId)` → `system+t{id}@piedra-angular.local` (password null, activo=0); outbox never invents userId=1 |
+| R-4 | Audit chain concurrency: `audit_chain_heads` FOR UPDATE under stress keeps `verifyAuditHashChain` true |
+| R-5 | Remaining procedural mutations off bare `convocanteQuery` → `capabilityQuery` / `adminQuery` (config) |
+| R-6 | Canonical calendar reception unchanged (ms `ventana_fin`; no merge back to day-only `fechaCierre`) |
+

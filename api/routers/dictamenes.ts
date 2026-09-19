@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { dictamenes, dictamenFirmantes, participaciones, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -37,7 +37,7 @@ export const dictamenesRouter = createRouter({
     return item;
   }),
 
-  crear: convocanteQuery.input(z.object({
+  crear: capabilityQuery("emitir_dictamen").input(z.object({
     licitacionId: z.number().int().positive(),
     fundamento: z.string().trim().min(20),
     resultado: z.enum(["RECOMENDAR_ADJUDICACION", "DECLARAR_DESIERTO", "RECOMENDAR_CANCELACION"]),
@@ -87,7 +87,7 @@ export const dictamenesRouter = createRouter({
     return created;
   }),
 
-  firmar: convocanteQuery.input(z.object({ dictamenId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  firmar: capabilityQuery("emitir_dictamen").input(z.object({ dictamenId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const firmante = await db.query.dictamenFirmantes.findFirst({
       where: and(eq(dictamenFirmantes.tenantId, ctx.user.tenantId), eq(dictamenFirmantes.dictamenId, input.dictamenId), eq(dictamenFirmantes.usuarioId, ctx.user.id)),
@@ -103,7 +103,7 @@ export const dictamenesRouter = createRouter({
     return getDb().query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.dictamenId), eq(dictamenes.tenantId, ctx.user.tenantId)), with: { firmantes: true } });
   }),
 
-  emitir: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  emitir: capabilityQuery("emitir_dictamen").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId)), with: { firmantes: true } });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Dictamen no encontrado." });

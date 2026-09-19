@@ -52,3 +52,7 @@ npm run outbox:once
 npm run outbox:worker   # loop + lease reclaim
 ```
 Webhook: `ARES_SMTP_URL=https://hooks.example/mail` (path no-SMTP).
+
+## Economic envelope
+
+Set `ARES_ENVELOPE_KEY` (32-byte base64 or hex) and optional `ARES_ENVELOPE_KEY_VERSION` / `ARES_ENVELOPE_KEY_V{n}` for rotation. Apply migration `0014_sobre_economico.sql`.

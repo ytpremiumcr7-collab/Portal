@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq, asc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, proveedorQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, proveedorQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { aclaracionesJuntas, aclaracionesPreguntas, aclaracionesRespuestas, proveedores, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -39,7 +39,7 @@ export const aclaracionesRouter = createRouter({
     return junta;
   }),
 
-  crearJunta: convocanteQuery.input(z.object({
+  crearJunta: capabilityQuery("publicar").input(z.object({
     licitacionId: z.number().int().positive(),
     nombre: z.string().trim().min(3).default("Junta de aclaraciones"),
     modalidad: z.enum(["PRESENCIAL", "VIRTUAL", "MIXTA"]).default("VIRTUAL"),
@@ -72,7 +72,7 @@ export const aclaracionesRouter = createRouter({
     return created;
   }),
 
-  transicionarJunta: convocanteQuery.input(z.object({
+  transicionarJunta: capabilityQuery("publicar").input(z.object({
     id: z.number().int().positive(),
     siguiente: z.enum(["ABIERTA", "CERRADA_PREGUNTAS", "EN_RESPUESTA", "ACTA_EMITIDA", "PUBLICADA", "CANCELADA"]),
     actaResumen: z.string().trim().min(10).optional(),
@@ -118,7 +118,7 @@ export const aclaracionesRouter = createRouter({
     return getDb().query.aclaracionesPreguntas.findFirst({ where: and(eq(aclaracionesPreguntas.id, id), eq(aclaracionesPreguntas.tenantId, ctx.user.tenantId)) });
   }),
 
-  responderPregunta: convocanteQuery.input(z.object({
+  responderPregunta: capabilityQuery("publicar").input(z.object({
     preguntaId: z.number().int().positive(),
     respuesta: z.string().trim().min(5).max(8000),
     esPublica: z.boolean().default(true),

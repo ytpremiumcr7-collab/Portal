@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { and, eq, count, desc } from "drizzle-orm";
-import { createRouter, convocanteQuery, adminQuery, ctxForAudit } from "../middleware";
+import { createRouter, convocanteQuery, capabilityQuery, adminQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { hitos } from "@db/schema";
 import { TRPCError } from "@trpc/server";
@@ -22,12 +22,12 @@ export const hitosRouter = createRouter({
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Hito no encontrado." }); return item;
   }),
 
-  create: convocanteQuery.input(z.object({ licitacionId: z.number().int().positive(), tipo: z.enum(["PUBLICACION","JUNTA_ACLARACIONES","PREGUNTAS_RESPUESTAS","MODIFICACION_PLIEGO","APERTURA_SOBRES","EVALUACION_TECNICA","EVALUACION_ECONOMICA","FALLO","ADJUDICACION","FIRMA_CONTRATO","INICIO_EJECUCION","ENTREGA","FINALIZACION"]), nombre: z.string().trim().min(3).max(150), descripcion: z.string().trim().optional(), fechaProgramada: z.string().datetime(), motivo: z.string().trim().optional() })).mutation(async ({ input, ctx }) => {
+  create: capabilityQuery("crear_procedimiento").input(z.object({ licitacionId: z.number().int().positive(), tipo: z.enum(["PUBLICACION","JUNTA_ACLARACIONES","PREGUNTAS_RESPUESTAS","MODIFICACION_PLIEGO","APERTURA_SOBRES","EVALUACION_TECNICA","EVALUACION_ECONOMICA","FALLO","ADJUDICACION","FIRMA_CONTRATO","INICIO_EJECUCION","ENTREGA","FINALIZACION"]), nombre: z.string().trim().min(3).max(150), descripcion: z.string().trim().optional(), fechaProgramada: z.string().datetime(), motivo: z.string().trim().optional() })).mutation(async ({ input, ctx }) => {
     await assertLicitacionExists(ctx.user.tenantId, input.licitacionId); const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId); if (!expediente) throw new TRPCError({code:"PRECONDITION_FAILED", message:"La licitación no tiene expediente electrónico."}); const db = getDb(); const result = await db.insert(hitos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente.id, licitacionId: input.licitacionId, tipo: input.tipo, nombre: input.nombre, descripcion: input.descripcion ?? null, fechaProgramada: new Date(input.fechaProgramada), estado: "PENDIENTE", cumplido: false });
     const id = Number(result[0].insertId); const created = await db.query.hitos.findFirst({ where: and(eq(hitos.id,id),eq(hitos.tenantId,ctx.user.tenantId)) }); await writeAudit({ ctx: ctxForAudit(ctx), accion:"CREAR", entidad:"hitos", entidadId:id, valorNuevo:created, motivo:input.motivo }); return created;
   }),
 
-  update: convocanteQuery.input(z.object({ id: z.number().int().positive(), nombre: z.string().trim().min(3).max(150).optional(), descripcion: z.string().trim().nullable().optional(), fechaProgramada: z.string().datetime().optional(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  update: capabilityQuery("crear_procedimiento").input(z.object({ id: z.number().int().positive(), nombre: z.string().trim().min(3).max(150).optional(), descripcion: z.string().trim().nullable().optional(), fechaProgramada: z.string().datetime().optional(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.hitos.findFirst({ where: and(eq(hitos.id,input.id),eq(hitos.tenantId,ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code:"NOT_FOUND",message:"Hito no encontrado." });
@@ -39,7 +39,7 @@ export const hitosRouter = createRouter({
     return updated;
   }),
 
-  completar: convocanteQuery.input(z.object({ id: z.number().int().positive(), estado: z.enum(["EN_PROGRESO","COMPLETADO","CANCELADO"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  completar: capabilityQuery("crear_procedimiento").input(z.object({ id: z.number().int().positive(), estado: z.enum(["EN_PROGRESO","COMPLETADO","CANCELADO"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb(); const current = await db.query.hitos.findFirst({ where: and(eq(hitos.id,input.id),eq(hitos.tenantId,ctx.user.tenantId)) }); if (!current) throw new TRPCError({ code:"NOT_FOUND",message:"Hito no encontrado." });
     const allowed: Record<string,string[]> = { PENDIENTE:["EN_PROGRESO","COMPLETADO","CANCELADO"], EN_PROGRESO:["COMPLETADO","CANCELADO"], RETRASADO:["EN_PROGRESO","COMPLETADO","CANCELADO"] };
     if (!allowed[current.estado]?.includes(input.estado)) throw new TRPCError({ code:"CONFLICT",message:`Transición de hito no permitida: ${current.estado} → ${input.estado}.` });

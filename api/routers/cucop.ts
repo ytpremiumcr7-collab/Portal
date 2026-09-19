@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, eq, like } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, authedQuery, convocanteQuery, ctxForAudit } from "../middleware";
+import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { catalogoCucop, licitaciones } from "@db/schema";
 import { assertLicitacionExists } from "../lib/domain";
@@ -19,7 +19,7 @@ export const cucopRouter = createRouter({
     return db.query.catalogoCucop.findMany({ where: eq(catalogoCucop.activo, true), limit: 100 });
   }),
 
-  vincularLicitacion: convocanteQuery.input(z.object({
+  vincularLicitacion: capabilityQuery("crear_procedimiento").input(z.object({
     licitacionId: z.number().int().positive(),
     cucopId: z.number().int().positive(),
     motivo: z.string().trim().min(3),

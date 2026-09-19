@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { fallos, dictamenes, licitaciones, participaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -37,7 +37,7 @@ export const fallosRouter = createRouter({
     return item;
   }),
 
-  emitirBorrador: convocanteQuery.input(z.object({
+  emitirBorrador: capabilityQuery("autorizar_fallo").input(z.object({
     licitacionId: z.number().int().positive(),
     dictamenId: z.number().int().positive(),
     sentido: z.enum(["ADJUDICAR", "DESIERTO", "CANCELAR"]),
@@ -76,7 +76,7 @@ export const fallosRouter = createRouter({
     return created;
   }),
 
-  emitir: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  emitir: capabilityQuery("autorizar_fallo").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "EMITIDO", input.motivo, { emitidoPor: ctx.user.id, emitidoAt: new Date() });
   }),
   aprobar: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {

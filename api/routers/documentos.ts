@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createRouter, convocanteQuery, authedQuery, adminQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, authedQuery, adminQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { documentos, proveedores, expedientes } from "@db/schema";
 import { TRPCError } from "@trpc/server";
@@ -100,7 +100,7 @@ export const documentosRouter = createRouter({
     } catch (error) { try { await unlink(fullPath); } catch {} throw error; }
   }),
 
-  cambiarEstado: convocanteQuery.input(z.object({ id: z.number().int().positive(), estado: z.enum(["VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  cambiarEstado: capabilityQuery("aprobar_juridico").input(z.object({ id: z.number().int().positive(), estado: z.enum(["VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb(); const current = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
     if (!current.esVersionVigente && input.estado !== "OBSOLETO") throw new TRPCError({ code: "CONFLICT", message: "Sólo la versión vigente puede validarse." });

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, eq, desc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, proveedorQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, proveedorQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import {
   consorcios, consorcioMiembros, proveedores, participaciones, proposiciones,
@@ -138,7 +138,7 @@ export const consorciosRouter = createRouter({
   }),
 
   /** Convocante validates/links only — does not create/own. */
-  vincularParticipacion: convocanteQuery.input(z.object({
+  vincularParticipacion: capabilityQuery("crear_procedimiento").input(z.object({
     consorcioId: z.number().int().positive(),
     participacionId: z.number().int().positive(),
     motivo: z.string().trim().min(3),

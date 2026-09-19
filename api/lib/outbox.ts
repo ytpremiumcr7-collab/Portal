@@ -1,6 +1,6 @@
 import { and, eq, lte, lt } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { domainOutbox, notificaciones, notificacionDestinatarios, proveedores, users } from "@db/schema";
+import { domainOutbox, notificaciones, notificacionDestinatarios, proveedores } from "@db/schema";
 
 export const OUTBOX_EVENT_TYPES = [
   "FALLO_PUBLICADO",
@@ -17,9 +17,8 @@ export const OUTBOX_EVENT_TYPES = [
 
 export type OutboxEventType = (typeof OUTBOX_EVENT_TYPES)[number];
 
-/** Never invent actorUserId=1 — resolve system sentinel by email or payload. */
-export const SYSTEM_ACTOR_EMAIL = "system@piedra-angular.local";
-export const SYSTEM_ACTOR_SENTINEL = "SYSTEM" as const;
+import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_SENTINEL, ensureSystemActor, systemActorEmail } from "./system-actor";
+export { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_SENTINEL, ensureSystemActor, systemActorEmail };
 
 export function efectoLegalFromEventType(eventType: string): boolean {
   return (OUTBOX_EVENT_TYPES as readonly string[]).includes(eventType);
@@ -211,12 +210,13 @@ export const smtpAdapter: DeliveryAdapter = {
 
 async function resolveSystemActorUserId(db: any, tenantId: number, preferred?: number | null): Promise<number | typeof SYSTEM_ACTOR_SENTINEL> {
   if (preferred && Number(preferred) > 0) return Number(preferred);
-  const sys = await db.query.users.findFirst({
-    where: and(eq(users.tenantId, tenantId), eq(users.email, SYSTEM_ACTOR_EMAIL)),
-    columns: { id: true },
-  });
-  if (sys?.id) return sys.id;
-  // Do NOT invent actorUserId=1 — return sentinel; caller must skip FK insert or use payload.
+  try {
+    const ensured = await ensureSystemActor(db, tenantId);
+    if (ensured?.id) return ensured.id;
+  } catch (e: any) {
+    console.warn("[outbox] ensureSystemActor failed", { tenantId, error: e?.message ?? e, hint: systemActorEmail(tenantId) });
+  }
+  // Fail closed — never invent actorUserId=1
   return SYSTEM_ACTOR_SENTINEL;
 }
 

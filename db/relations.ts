@@ -2,7 +2,7 @@ import { relations } from "drizzle-orm";
 import {
   tenants, users, sessions, entidades, proveedores, categorias, licitaciones,
   expedientes, expedienteRequirements, expedienteEvents, participaciones,
-  alertasSeguridad, documentos, hitos, auditLog,
+  alertasSeguridad, documentos, hitos, auditLog, sobresEconomicos,
   aclaracionesJuntas, aclaracionesPreguntas, aclaracionesRespuestas,
   aperturas, aperturaRegistros, dictamenes, dictamenFirmantes, fallos,
   contratos, garantias,
@@ -98,6 +98,12 @@ export const participacionesRelations = relations(participaciones, ({ one }) => 
   licitacion: one(licitaciones, { fields: [participaciones.licitacionId], references: [licitaciones.id] }),
   proveedor: one(proveedores, { fields: [participaciones.proveedorId], references: [proveedores.id] }),
   evaluator: one(users, { fields: [participaciones.evaluatedBy], references: [users.id] }),
+  sobreEconomico: one(sobresEconomicos, { fields: [participaciones.id], references: [sobresEconomicos.participacionId] }),
+}));
+
+export const sobresEconomicosRelations = relations(sobresEconomicos, ({ one }) => ({
+  tenant: one(tenants, { fields: [sobresEconomicos.tenantId], references: [tenants.id] }),
+  participacion: one(participaciones, { fields: [sobresEconomicos.participacionId], references: [participaciones.id] }),
 }));
 
 export const alertasRelations = relations(alertasSeguridad, ({ one }) => ({

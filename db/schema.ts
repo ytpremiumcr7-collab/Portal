@@ -1550,6 +1550,30 @@ export const consorcioMiembros = mysqlTable("consorcio_miembros", {
 ]);
 
 
+
+export const sobresEconomicos = mysqlTable("sobres_economicos", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  participacionId: bigint("participacion_id", { mode: "number", unsigned: true }).notNull(),
+  proposicionId: bigint("proposicion_id", { mode: "number", unsigned: true }),
+  ciphertext: text("ciphertext").notNull(),
+  nonceIv: varchar("nonce_iv", { length: 64 }).notNull(),
+  authTag: varchar("auth_tag", { length: 64 }).notNull(),
+  keyVersion: int("key_version").notNull().default(1),
+  algorithm: varchar("algorithm", { length: 32 }).notNull().default("AES-256-GCM"),
+  estado: mysqlEnum("estado", ["SELLADO", "REVELADO"]).default("SELLADO").notNull(),
+  reveladoAt: timestamp("revelado_at"),
+  reveladoPor: bigint("revelado_por", { mode: "number", unsigned: true }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("sobre_econ_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("sobre_econ_part_uq").on(t.tenantId, t.participacionId),
+  index("sobre_econ_estado_idx").on(t.tenantId, t.estado),
+  foreignKey({ name: "sobre_econ_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "sobre_econ_part_fk", columns: [t.tenantId, t.participacionId], foreignColumns: [participaciones.tenantId, participaciones.id] }).onDelete("restrict"),
+]);
+
 export const actosDesempate = mysqlTable("actos_desempate", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
