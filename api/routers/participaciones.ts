@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { eq, desc, and, count, sql } from "drizzle-orm";
-import { createRouter, capabilityQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
+import { createRouter, procedureMutation, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { participaciones, proveedores, licitacionReglasVersion, proposiciones, coiDeclaraciones, actosDesempate } from "@db/schema";
 import { TRPCError } from "@trpc/server";
@@ -10,7 +10,6 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { writeAudit } from "../lib/security";
 import { detectLicitacionRisks } from "../lib/detection";
 import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
-import { assertProcedimientoAsignacion } from "../lib/sod";
 import { computeScoresAndOrden, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 import { mapEvalToProposicionEstado } from "../lib/proposicion";
 import { parseTieBreakPolicy } from "../lib/procedure-policy";
@@ -25,6 +24,7 @@ import {
   ENVELOPE_PLACEHOLDER_MONTO,
 } from "../lib/sobre-economico";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
+import { licitacionIdFromParticipacion } from "../lib/procedure-resolvers";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -173,7 +173,11 @@ export const participacionesRouter = createRouter({
     return { ...created, montoOferta: input.montoOferta, sobreEconomicoSellado: true };
   }),
 
-  evaluar: capabilityQuery("evaluar_tecnico").input(z.object({
+  evaluar: procedureMutation({
+    capability: ["evaluar_tecnico", "evaluar_economico"],
+    roles: ["evaluador_tecnico", "evaluador_economico"],
+    resolveLicitacionId: (i, ctx) => licitacionIdFromParticipacion(i, ctx.user!.tenantId),
+  }).input(z.object({
     id: z.number().int().positive(),
     puntajeTecnico: z.number().min(0).max(100).optional(),
     criteriosTecnicos: z.record(z.string().trim().min(1), z.number().min(0).max(100)).optional(),
@@ -190,7 +194,7 @@ export const participacionesRouter = createRouter({
     const lic = offer.licitacion;
     if (lic.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "La licitación debe estar EN_EVALUACION." });
 
-    await assertProcedimientoAsignacion(ctx.user, lic.id, ["evaluador_tecnico", "evaluador_economico"]);
+    // Assignment enforced by procedureMutation (evaluador_tecnico | evaluador_economico).
     const coi = await db.query.coiDeclaraciones.findFirst({
       where: and(eq(coiDeclaraciones.tenantId, ctx.user.tenantId), eq(coiDeclaraciones.licitacionId, lic.id), eq(coiDeclaraciones.userId, ctx.user.id), eq(coiDeclaraciones.tieneConflicto, true), eq(coiDeclaraciones.recusado, false)),
     });

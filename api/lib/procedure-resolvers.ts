@@ -15,6 +15,7 @@ import {
   dictamenes,
   fallos,
   actoAdjudicacion,
+  participaciones,
 } from "@db/schema";
 
 type IdInput = { id?: number; licitacionId?: number; contratoId?: number; dictamenId?: number };
@@ -24,6 +25,16 @@ export function licitacionIdFromInput(input: unknown): number {
   if (i?.licitacionId && Number(i.licitacionId) > 0) return Number(i.licitacionId);
   if (i?.id && Number(i.id) > 0) return Number(i.id);
   throw new TRPCError({ code: "BAD_REQUEST", message: "licitacionId requerido." });
+}
+
+export async function licitacionIdFromParticipacion(input: unknown, tenantId: number): Promise<number> {
+  const id = Number((input as IdInput).id);
+  const row = await getDb().query.participaciones.findFirst({
+    where: and(eq(participaciones.id, id), eq(participaciones.tenantId, tenantId)),
+    columns: { licitacionId: true },
+  });
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
+  return row.licitacionId;
 }
 
 export async function licitacionIdFromApertura(input: unknown, tenantId: number): Promise<number> {

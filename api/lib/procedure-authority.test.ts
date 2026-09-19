@@ -50,6 +50,38 @@ describe("procedure authority — juridical acts need assignment", () => {
   });
 });
 
+describe("participaciones.evaluar — global cap alone cannot evaluate other procedure", () => {
+  it("FORBIDDEN: evaluar_tecnico global without procedure assignment", () => {
+    // Mirrors procedureMutation gate: capability held is irrelevant without assignment.
+    const r = evaluateProcedimientoAsignacion({
+      userRole: "licitante",
+      heldRoles: [], // no evaluador_* on this licitacion
+      required: ["evaluador_tecnico", "evaluador_economico"],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/asignación|break_glass/i);
+  });
+
+  it("allowed: same user with evaluador_tecnico assignment on the procedure", () => {
+    const r = evaluateProcedimientoAsignacion({
+      userRole: "licitante",
+      heldRoles: ["evaluador_tecnico"],
+      required: ["evaluador_tecnico", "evaluador_economico"],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("allowed: evaluador_economico assignment also satisfies OR roles", () => {
+    const r = evaluateProcedimientoAsignacion({
+      userRole: "licitante",
+      heldRoles: ["evaluador_economico"],
+      required: ["evaluador_tecnico", "evaluador_economico"],
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
+
 describe("sorteo P0 — OTRO / missing evidence / wrong set REJECT", () => {
   const tied: OfferForRanking[] = [
     { id: 10, montoOferta: "100", puntajeTecnico: "80", recibidoAt: "2026-09-18T10:00:00Z" },

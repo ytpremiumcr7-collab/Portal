@@ -210,6 +210,7 @@ procedureMutation({ capability, role|roles[], resolveLicitacionId })
 | Domain | Guard |
 |--------|-------|
 | licitaciones.publicar / iniciarEvaluacion / adjudicar | procedureMutation + creador / evaluador_* / autorizador_fallo |
+| participaciones.evaluar | procedureMutation + evaluar_tecnico\|evaluar_economico + evaluador_tecnico\|evaluador_economico |
 | aperturas.* | procedureMutation + creador |
 | contratos.crear / ponerVigente / terminar / configurarBesa / formalizar / rescindir | procedureMutation + creador |
 | garantias transitions | procedureMutation + creador |

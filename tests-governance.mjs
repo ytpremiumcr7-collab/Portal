@@ -149,8 +149,14 @@ if (!ejec.includes("paidCumulativeBruto") && !ejec.includes("montoBruto")) throw
 const sodLib2 = fs.readFileSync("api/lib/sod.ts", "utf8");
 if (!sodLib2.includes("assertProcedimientoAsignacion")) throw new Error("Missing assertProcedimientoAsignacion");
 const part2 = fs.readFileSync("api/routers/participaciones.ts", "utf8");
-if (!part2.includes("assertProcedimientoAsignacion") || !part2.includes("licitacionReglasVersion")) {
-  throw new Error("participaciones.evaluar must use SoD + frozen rules");
+if (!part2.includes("procedureMutation") || !part2.includes("licitacionReglasVersion")) {
+  throw new Error("participaciones.evaluar must use procedureMutation + frozen rules");
+}
+if (!part2.includes("evaluador_tecnico") || !part2.includes("evaluador_economico")) {
+  throw new Error("participaciones.evaluar must require evaluador_tecnico | evaluador_economico");
+}
+if (part2.includes("capabilityQuery(\"evaluar_tecnico\)") || part2.includes("capabilityQuery('evaluar_tecnico')")) {
+  throw new Error("participaciones.evaluar must not use bare capabilityQuery");
 }
 const licPub = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
 if (!licPub.includes("licitacionReglasVersion") || !licPub.includes("assertIsPrimerLugar")) {
@@ -367,6 +373,13 @@ if (!out15.includes("at-least-once")) {
 const des15 = fs.readFileSync("api/routers/desempate.ts", "utf8");
 if (!des15.includes("assertSorteoResultadoValid") || !des15.includes("computeEmpateSet")) {
   throw new Error("desempate.registrarResultado must validate empate set / sorteo");
+}
+const part15 = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+if (!part15.includes("procedureMutation") || !part15.includes("licitacionIdFromParticipacion")) {
+  throw new Error("participaciones.evaluar must use procedureMutation + licitacionIdFromParticipacion");
+}
+if (!part15.includes('capability: ["evaluar_tecnico", "evaluar_economico"]') && !part15.includes("evaluar_tecnico") ) {
+  throw new Error("participaciones.evaluar must declare evaluar_* capabilities");
 }
 console.log("0015 procedure authority governance OK");
 console.log("governance static assertions: PASS (phase1..0015 procedure authority)");
