@@ -236,6 +236,7 @@ export const participaciones = mysqlTable("participaciones", {
   ...tenantColumns,
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
+  consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }),
   montoOferta: decimal("monto_oferta", { precision: 18, scale: 2 }).notNull(),
   monedaOferta: mysqlEnum("moneda_oferta", ["MXN"]).default("MXN").notNull(),
   plazoEjecucion: int("plazo_ejecucion"),
@@ -366,6 +367,8 @@ export const auditLog = mysqlTable("audit_log", {
   userAgent: text("user_agent"),
   motivo: text("motivo"),
   requestId: varchar("request_id", { length: 80 }),
+  previousHash: varchar("previous_hash", { length: 64 }),
+  eventHash: varchar("event_hash", { length: 64 }),
 }, (t) => [
   index("audit_tenant_entity_idx").on(t.tenantId, t.entidad, t.entidadId),
   index("audit_tenant_time_idx").on(t.tenantId, t.timestamp),
@@ -1324,6 +1327,7 @@ export const proposiciones = mysqlTable("proposiciones", {
   ...tenantColumns,
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
+  consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }),
   participacionId: bigint("participacion_id", { mode: "number", unsigned: true }).notNull(),
   recibidoAt: timestamp("recibido_at").defaultNow().notNull(),
   estado: mysqlEnum("estado", ["BORRADOR", "RECIBIDA", "SELLADA", "ADMISIBLE", "NO_ADMISIBLE", "DESECHADA", "GANADORA"]).default("BORRADOR").notNull(),
@@ -1504,5 +1508,38 @@ export const calendarioActos = mysqlTable("calendario_actos", {
   uniqueIndex("cal_acto_lic_acto_uq").on(t.tenantId, t.licitacionId, t.acto),
   foreignKey({ name: "cal_acto_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
   foreignKey({ name: "cal_acto_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+]);
+
+
+export const consorcios = mysqlTable("consorcios", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  nombre: varchar("nombre", { length: 200 }).notNull(),
+  rfcLider: varchar("rfc_lider", { length: 13 }),
+  estado: mysqlEnum("estado", ["BORRADOR", "ACTIVO", "DISUELTO"]).default("BORRADOR").notNull(),
+  creadoPor: bigint("creado_por", { mode: "number", unsigned: true }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("consorcio_tenant_id_uq").on(t.tenantId, t.id),
+  index("consorcio_estado_idx").on(t.tenantId, t.estado),
+  foreignKey({ name: "consorcio_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "consorcio_actor_fk", columns: [t.tenantId, t.creadoPor], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const consorcioMiembros = mysqlTable("consorcio_miembros", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }).notNull(),
+  proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
+  rol: mysqlEnum("rol", ["LIDER", "MIEMBRO"]).default("MIEMBRO").notNull(),
+  porcentajeParticipacion: decimal("porcentaje_participacion", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cons_miembro_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("cons_miembro_prov_uq").on(t.tenantId, t.consorcioId, t.proveedorId),
+  foreignKey({ name: "cons_miembro_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "cons_miembro_cons_fk", columns: [t.tenantId, t.consorcioId], foreignColumns: [consorcios.tenantId, consorcios.id] }).onDelete("restrict"),
+  foreignKey({ name: "cons_miembro_prov_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
 ]);
 

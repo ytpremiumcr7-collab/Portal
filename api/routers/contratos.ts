@@ -182,6 +182,30 @@ export const contratosRouter = createRouter({
     });
     return updated;
   }),
+  /** BESA-lite: administrador del contrato + penas convencionales. */
+  configurarBesa: convocanteQuery.input(z.object({
+    id: z.number().int().positive(),
+    administradorContratoId: z.number().int().positive().nullable().optional(),
+    penasConvencionales: z.array(z.object({
+      concepto: z.string().trim().min(3),
+      porcentaje: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
+      monto: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
+      fundamento: z.string().trim().min(3).optional(),
+    })).optional(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+    await db.update(contratos).set({
+      administradorContratoId: input.administradorContratoId === undefined ? current.administradorContratoId : input.administradorContratoId,
+      penasConvencionales: input.penasConvencionales === undefined ? current.penasConvencionales : input.penasConvencionales,
+    } as any).where(and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)));
+    const updated = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CONFIGURAR_BESA", entidad: "contratos", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
+    return updated;
+  }),
+
 });
 
 async function transition(ctx: any, id: number, next: string, motivo: string, patch: Record<string, unknown>, extraPayload: Record<string, unknown> = {}) {

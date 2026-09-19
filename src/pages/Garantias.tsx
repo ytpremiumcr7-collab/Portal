@@ -8,6 +8,7 @@ export default function Garantias() {
   const [page] = useState(1);
   const [contratoId, setContratoId] = useState("");
   const [monto, setMonto] = useState("");
+  const [porcentaje, setPorcentaje] = useState("");
   const [instrumento, setInstrumento] = useState("");
   const [poliza, setPoliza] = useState("");
   const [docId, setDocId] = useState("");
@@ -19,14 +20,15 @@ export default function Garantias() {
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white">Garantías</h2>
-      <p className="text-sm text-slate-400">Recibir/presentar (proveedor o intake) ≠ validar/activar (convocante). Documento GARANTIA APROBADO requerido antes de VIGENTE.</p>
+      <p className="text-sm text-slate-400">Garantías BESA: tipo, monto/%, póliza e instrumento. Presentar ≠ activar (convocante). Documento GARANTÍA APROBADO antes de VIGENTE. Consulte penas convencionales del contrato en el detalle contractual.</p>
       <Card className="border-slate-700 bg-slate-800/50">
         <CardHeader><CardTitle className="text-white">Requerir garantía</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-3">
           <Input placeholder="Contrato ID" value={contratoId} onChange={e => setContratoId(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[8rem]" />
           <Input placeholder="Monto" value={monto} onChange={e => setMonto(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[10rem]" />
+          <Input placeholder="% (BESA)" value={porcentaje} onChange={e => setPorcentaje(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[8rem]" />
           <Button className="bg-amber-600" disabled={!contratoId || !monto || requerir.isPending}
-            onClick={() => requerir.mutate({ contratoId: Number(contratoId), tipo: "CUMPLIMIENTO", monto, motivo: "Requerimiento de garantía de cumplimiento" })}>Requerir</Button>
+            onClick={() => requerir.mutate({ contratoId: Number(contratoId), tipo: "CUMPLIMIENTO", monto, porcentaje: porcentaje || undefined, motivo: "Requerimiento de garantía de cumplimiento" })}>Requerir</Button>
         </CardContent>
       </Card>
       <Card className="border-slate-700 bg-slate-800/50">
@@ -44,6 +46,7 @@ export default function Garantias() {
               <th className="p-3 text-left text-xs text-slate-400">ID</th>
               <th className="p-3 text-left text-xs text-slate-400">Tipo</th>
               <th className="p-3 text-left text-xs text-slate-400">Monto</th>
+              <th className="p-3 text-left text-xs text-slate-400">%</th>
               <th className="p-3 text-left text-xs text-slate-400">Estado</th>
               <th className="p-3 text-right text-xs text-slate-400">Acción</th>
             </tr></thead>
@@ -53,6 +56,7 @@ export default function Garantias() {
                   <td className="p-3 text-sm text-white">{g.id}</td>
                   <td className="p-3 text-sm text-slate-300">{g.tipo}</td>
                   <td className="p-3 text-sm text-slate-300">${g.monto}</td>
+                  <td className="p-3 text-sm text-slate-300">{g.porcentaje ?? "—"}</td>
                   <td className="p-3 text-xs text-slate-300">{g.estado}</td>
                   <td className="p-3 text-right space-x-2">
                     {g.estado === "REQUERIDA" && <Button size="sm" disabled={!instrumento || !poliza || !docId}

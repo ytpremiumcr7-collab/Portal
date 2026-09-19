@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { Shield, Search, FileText, Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from "@/const";
 
 export default function PortalPublico() {
   return (
@@ -10,9 +11,9 @@ export default function PortalPublico() {
           <div className="flex items-center gap-3">
             <Shield className="h-6 w-6 text-emerald-300" />
             <div>
-              <p className="text-lg font-semibold tracking-wide">ARES</p>
+              <p className="text-lg font-semibold tracking-wide">{PRODUCT_NAME}</p>
               <p className="text-[11px] uppercase tracking-wider text-slate-300">
-                Portal de contratación pública
+                {PRODUCT_TAGLINE}
               </p>
             </div>
           </div>
@@ -21,7 +22,7 @@ export default function PortalPublico() {
               <Link to="/convocatorias">Convocatorias</Link>
             </Button>
             <Button asChild size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500">
-              <Link to="/login">Acceso institucional</Link>
+              <Link to="/login">Acceso al sistema</Link>
             </Button>
           </div>
         </div>
@@ -55,7 +56,7 @@ export default function PortalPublico() {
         </div>
 
         <p className="mt-12 text-center text-[11px] text-slate-500">
-          Gobierno de México · Uso institucional · Toda operación autenticada queda en bitácora de auditoría
+          Gobierno de México · Contratación pública · Toda operación autenticada queda en bitácora de auditoría
         </p>
       </main>
     </div>

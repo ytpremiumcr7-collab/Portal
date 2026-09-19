@@ -68,18 +68,62 @@ export const noopAdapter: DeliveryAdapter = {
   },
 };
 
-/** Stub SMTP adapter: when ARES_SMTP_URL is set, marks delivery as external success. */
+/**
+ * SMTP / webhook delivery adapter.
+ * - ARES_SMTP_URL unset → REGISTRADA (external:false)
+ * - http(s):// → POST JSON webhook {to,subject,body,eventType}
+ * - smtp:// or smtps:// → nodemailer transport (optional dependency)
+ */
 export const smtpAdapter: DeliveryAdapter = {
   name: "smtp",
   async send(msg) {
-    const url = process.env.ARES_SMTP_URL;
+    const url = process.env.ARES_SMTP_URL?.trim();
     if (!url) {
       console.info("[outbox:smtp-adapter] ARES_SMTP_URL unset — remaining REGISTRADA", msg.to, msg.subject);
       return { ok: true, external: false };
     }
-    // Stub: real transport would connect to url; we only flip external flag for pipeline testing.
-    console.info("[outbox:smtp-adapter] ENVIADA_EXTERNA stub via", url, msg.to, msg.subject);
-    return { ok: true, external: true };
+    try {
+      if (/^https?:\/\//i.test(url)) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({
+            to: msg.to,
+            subject: msg.subject,
+            body: msg.body,
+            eventType: msg.eventType,
+            product: "Piedra Angular",
+          }),
+        });
+        if (!res.ok) {
+          console.error("[outbox:smtp-adapter] webhook HTTP", res.status, await res.text().catch(() => ""));
+          return { ok: false, external: false };
+        }
+        console.info("[outbox:smtp-adapter] ENVIADA_EXTERNA webhook", msg.to, msg.subject);
+        return { ok: true, external: true };
+      }
+      // smtp://user:pass@host:587 or smtps://
+      let nodemailer: any;
+      try {
+        nodemailer = await import("nodemailer");
+      } catch {
+        console.error("[outbox:smtp-adapter] nodemailer no instalado — deje REGISTRADA. npm i nodemailer");
+        return { ok: true, external: false };
+      }
+      const transport = nodemailer.createTransport(url);
+      const from = process.env.ARES_SMTP_FROM || "noreply@piedra-angular.gob.mx";
+      await transport.sendMail({
+        from,
+        to: msg.to,
+        subject: msg.subject,
+        text: msg.body,
+      });
+      console.info("[outbox:smtp-adapter] ENVIADA_EXTERNA smtp", msg.to, msg.subject);
+      return { ok: true, external: true };
+    } catch (e: any) {
+      console.error("[outbox:smtp-adapter] fallo de entrega", e?.message ?? e);
+      return { ok: false, external: false };
+    }
   },
 };
 

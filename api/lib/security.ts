@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual, type BinaryLike, type ScryptOptions } from "node:crypto";
 import * as cookie from "cookie";
 import { TRPCError } from "@trpc/server";
-import { eq, and, isNull, gt } from "drizzle-orm";
+import { eq, and, isNull, gt, desc, asc } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { auditLog, sessions, tenants, users } from "@db/schema";
 import { Session, ErrorMessages } from "@contracts/constants";
@@ -130,6 +130,23 @@ function sanitizeAuditValue(value: unknown): unknown {
   return out;
 }
 
+function canonicalAuditEvent(input: {
+  tenantId: number;
+  actorUserId: number;
+  accion: string;
+  entidad: string;
+  entidadId: number | null;
+  valorAnterior: unknown;
+  valorNuevo: unknown;
+  motivo: string | null;
+  requestId: string | null;
+  timestamp: string;
+  previousHash: string | null;
+}) {
+  return JSON.stringify(input);
+}
+
+/** Append-only audit with per-tenant hash chain (same spirit as expediente events). */
 export async function writeAudit(input: {
   ctx: RequestContext;
   accion: string;
@@ -139,19 +156,96 @@ export async function writeAudit(input: {
   valorNuevo?: unknown;
   motivo?: string | null;
 }) {
-  await getDb().insert(auditLog).values({
-    tenantId: input.ctx.user.tenantId,
-    actorUserId: input.ctx.user.id,
-    accion: input.accion,
-    entidad: input.entidad,
-    entidadId: input.entidadId ?? null,
-    valorAnterior: input.valorAnterior == null ? null : JSON.stringify(sanitizeAuditValue(input.valorAnterior)),
-    valorNuevo: input.valorNuevo == null ? null : JSON.stringify(sanitizeAuditValue(input.valorNuevo)),
-    ipAddress: input.ctx.ipAddress,
-    userAgent: input.ctx.userAgent,
-    motivo: input.motivo ?? null,
-    requestId: input.ctx.requestId,
+  const db = getDb();
+  const tenantId = input.ctx.user.tenantId;
+  const valorAnterior = input.valorAnterior == null ? null : sanitizeAuditValue(input.valorAnterior);
+  const valorNuevo = input.valorNuevo == null ? null : sanitizeAuditValue(input.valorNuevo);
+  const motivo = input.motivo ?? null;
+  const entidadId = input.entidadId ?? null;
+  const timestamp = new Date().toISOString();
+
+  await db.transaction(async (tx) => {
+    const last = await tx.query.auditLog.findFirst({
+      where: eq(auditLog.tenantId, tenantId),
+      orderBy: [desc(auditLog.id)],
+      columns: { eventHash: true },
+    });
+    const previousHash = last?.eventHash ?? null;
+    const base = canonicalAuditEvent({
+      tenantId,
+      actorUserId: input.ctx.user.id,
+      accion: input.accion,
+      entidad: input.entidad,
+      entidadId,
+      valorAnterior,
+      valorNuevo,
+      motivo,
+      requestId: input.ctx.requestId ?? null,
+      timestamp,
+      previousHash,
+    });
+    const eventHash = createHash("sha256").update(base).digest("hex");
+    await tx.insert(auditLog).values({
+      tenantId,
+      actorUserId: input.ctx.user.id,
+      accion: input.accion,
+      entidad: input.entidad,
+      entidadId,
+      valorAnterior: valorAnterior == null ? null : JSON.stringify(valorAnterior),
+      valorNuevo: valorNuevo == null ? null : JSON.stringify(valorNuevo),
+      timestamp: new Date(timestamp),
+      ipAddress: input.ctx.ipAddress,
+      userAgent: input.ctx.userAgent,
+      motivo,
+      requestId: input.ctx.requestId,
+      previousHash,
+      eventHash,
+    });
   });
+}
+
+export async function verifyAuditHashChain(tenantId: number) {
+  const db = getDb();
+  const rows = await db.query.auditLog.findMany({
+    where: eq(auditLog.tenantId, tenantId),
+    orderBy: [asc(auditLog.id)],
+  });
+  const hashed = rows.filter((r) => r.eventHash);
+  let previous: string | null = null;
+  let started = false;
+  for (const row of hashed) {
+    if (!started) {
+      // First hashed row may start a new chain (previousHash null) after legacy rows.
+      started = true;
+      previous = null;
+    }
+    if (row.previousHash !== previous) return { valid: false, brokenAt: row.id };
+    let valorAnterior: unknown = null;
+    let valorNuevo: unknown = null;
+    try {
+      valorAnterior = row.valorAnterior ? JSON.parse(row.valorAnterior) : null;
+      valorNuevo = row.valorNuevo ? JSON.parse(row.valorNuevo) : null;
+    } catch {
+      return { valid: false, brokenAt: row.id };
+    }
+    const base = canonicalAuditEvent({
+      tenantId: row.tenantId,
+      actorUserId: row.actorUserId,
+      accion: row.accion,
+      entidad: row.entidad,
+      entidadId: row.entidadId ?? null,
+      valorAnterior,
+      valorNuevo,
+      motivo: row.motivo ?? null,
+      requestId: row.requestId ?? null,
+      timestamp: row.timestamp.toISOString(),
+      previousHash: row.previousHash ?? null,
+    });
+    const expected = createHash("sha256").update(base).digest("hex");
+    if (expected !== row.eventHash) return { valid: false, brokenAt: row.id };
+    previous = row.eventHash;
+  }
+  return { valid: true, brokenAt: null, events: hashed.length };
 }
 
 export function clearSessionCookie(resHeaders: Headers) {

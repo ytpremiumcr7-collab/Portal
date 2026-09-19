@@ -1,10 +1,12 @@
-# ARES Engine MX — Architecture (Governmental portal + Domain Authority + audit harden)
+# Piedra Angular — Architecture (public procurement portal + Domain Authority + audit harden)
 
 ## Boundary (ARES only)
 
-ARES is Mexico’s **transactional public procurement** platform: planeación → investigación de mercado → convocatoria → aclaraciones → recepción/apertura → evaluación → dictamen → fallo → acto de adjudicación → adjudicación → contrato → garantías → ejecución → pagos → incidencias / sanciones / inconformidades, con notificaciones oficiales y consulta pública.
+Product brand: **Piedra Angular**. Codebase/package boundary remains ARES-only (no Megalodon/BIM/APU).
 
-**Out of scope / never merge here:** Megalodon, BIM, APU, or any “preparation platform” features. MEGALODON prepares; ARES contracts, administers, and governs.
+Piedra Angular is Mexico’s **transactional public procurement** platform: planeación → investigación de mercado → convocatoria → aclaraciones → recepción/apertura → evaluación → dictamen → fallo → acto de adjudicación → adjudicación → contrato → garantías → ejecución → pagos → incidencias / sanciones / inconformidades, con notificaciones oficiales y consulta pública.
+
+**Out of scope / never merge here:** Megalodon, BIM, APU, or any “preparation platform” features. MEGALODON prepares; Piedra Angular contracts, administers, and governs.
 
 Design rule: do **not** fake missing phases with more `hitos`, `tipo_documento`, or fields on `licitaciones`. Each act is a real transactional domain.
 
@@ -28,7 +30,7 @@ UX: **light formal governmental** theme (white/off-white, deep navy headers, res
   - **development**: allowed unless `ARES_ALLOW_PUBLIC_REGISTER=false`
 - Default production posture: `ARES_ALLOW_PUBLIC_REGISTER=false`.
 - IP: trust `X-Forwarded-For` only when `ARES_TRUST_PROXY=true`; otherwise direct/socket.
-- SMTP outbox: `ARES_SMTP_URL` + adapter `smtp` can mark `ENVIADA_EXTERNA`; otherwise notifications remain `REGISTRADA`.
+- SMTP outbox: solid `DeliveryAdapter`. If `ARES_SMTP_URL` is unset, notifications stay `REGISTRADA`. If set to `http(s)://…`, delivery POSTs a JSON webhook; if `smtp://` / `smtps://`, uses nodemailer. Success marks `ENVIADA_EXTERNA`.
 
 ## Conserved from Phase 1–2 / Phase 3 ciclo completo / P1 / SoD / Domain Authority
 
@@ -69,7 +71,7 @@ UX: **light formal governmental** theme (white/off-white, deep navy headers, res
 4. **BESA-lite** — garantía types + `%` / póliza; `penas_convencionales` + `administrador_contrato` on contract
 5. **Calendario jurídico** — `calendario_actos` windows gate RECEPCION / EVALUACION / ADJUDICACION when present
 6. **OCDS-like** — `consultaPublica.ocdsRelease` planning/tender/award/contract JSON
-7. **SMTP/outbox** — stub adapter marks `ENVIADA_EXTERNA` when `ARES_SMTP_URL` set
+7. **SMTP/outbox** — adapter: webhook or nodemailer when `ARES_SMTP_URL` set; else `REGISTRADA`
 8. **CUCoP-lite** — `catalogo_cucop` + link on licitación; seed codes
 9. **Modalities** — IR/AD skip junta via policy actos (#6)
 10. **Adversarial tests** — `api/lib/gov-audit.test.ts` (+ institutional cores)
@@ -96,7 +98,7 @@ Migrations: `0008`–`0010` + **`0011_audit_harden.sql`**.
 ### Deferred — remaining institutional cores
 1. E-signature (advanced / qualified)
 2. Consorcios / joint ventures
-3. Full production SMTP/SMS provider beyond stub
+3. Full SMS provider; richer multi-tenant SMTP credentials UI
 4. Multi-regime depth (state/municipal overlays beyond LAASSP/LOPSRM seeds)
 5. Hash-chain on `audit_log` (today chain lives on expediente events)
 
@@ -104,4 +106,12 @@ Migrations: `0008`–`0010` + **`0011_audit_harden.sql`**.
 
 ## Stack
 
-Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES only — no Megalodon.
+Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES-only codebase (product: Piedra Angular) — no Megalodon.
+
+
+## Pre-producción (0012+)
+
+- `audit_log` hash-chain (`previous_hash` / `event_hash`) in `writeAudit`, same spirit as expediente events
+- UI modules: acto de adjudicación, comisión/COI, cancelación/desierto, calendario jurídico, garantías BESA, consorcios MVP
+- Consorcios: tablas + vínculo a participación/proposición
+- Brand constant: `PRODUCT_NAME` in `src/const.ts` (= "Piedra Angular")

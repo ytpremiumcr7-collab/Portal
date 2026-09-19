@@ -41,6 +41,7 @@ export const garantiasRouter = createRouter({
     contratoId: z.number().int().positive(),
     tipo: z.enum(["CUMPLIMIENTO", "ANTICIPO", "VICIOS_OCULTOS", "SERIEDAD"]),
     monto: money,
+    porcentaje: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     assertNonNegativeDecimal(input.monto, "monto");
@@ -52,7 +53,7 @@ export const garantiasRouter = createRouter({
     await db.transaction(async (tx) => {
       const result = await tx.insert(garantias).values({
         tenantId: ctx.user.tenantId, contratoId: contrato.id, licitacionId: contrato.licitacionId,
-        proveedorId: contrato.proveedorId, tipo: input.tipo, estado: "REQUERIDA", monto: input.monto, moneda: "MXN",
+        proveedorId: contrato.proveedorId, tipo: input.tipo, estado: "REQUERIDA", monto: input.monto, porcentaje: input.porcentaje ?? null, moneda: "MXN",
       });
       id = Number(result[0].insertId);
       await appendExpedienteEvent(tx, ctx, { expedienteId: contrato.expedienteId, tipo: "GARANTIA_REQUERIDA", estadoAnterior: null, estadoNuevo: "REQUERIDA", motivo: input.motivo, payload: { garantiaId: id, tipo: input.tipo, monto: input.monto } });

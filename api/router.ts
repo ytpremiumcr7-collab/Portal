@@ -33,6 +33,7 @@ import { actoAdjudicacionRouter } from "./routers/actoAdjudicacion";
 import { comisionRouter } from "./routers/comision";
 import { terminacionRouter } from "./routers/terminacion";
 import { calendarioRouter } from "./routers/calendario";
+import { consorciosRouter } from "./routers/consorcios";
 import { cucopRouter } from "./routers/cucop";
 
 export const appRouter = createRouter({
@@ -71,6 +72,7 @@ export const appRouter = createRouter({
   comision: comisionRouter,
   terminacion: terminacionRouter,
   calendario: calendarioRouter,
+  consorcios: consorciosRouter,
   cucop: cucopRouter,
 });
 

@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ares/PageHeader";
 import { StatusBadge } from "@/components/ares/StatusBadge";
 import { EmptyState } from "@/components/ares/EmptyState";
 import { Globe, Search, Shield, X } from "lucide-react";
+import { PRODUCT_NAME } from "@/const";
 
 /** Public open-data surface — no auth required for tRPC consultaPublica.* */
 export default function ConsultaPublica() {
@@ -52,7 +53,7 @@ export default function ConsultaPublica() {
               <Shield className="h-4 w-4 text-amber-500" />
             </div>
             <div>
-              <p className="text-sm font-semibold tracking-wide text-slate-50">ARES</p>
+              <p className="text-sm font-semibold tracking-wide text-slate-50">{PRODUCT_NAME}</p>
               <p className="text-[10px] uppercase tracking-wider text-slate-500">
                 Consulta pública · Datos abiertos
               </p>
@@ -62,7 +63,7 @@ export default function ConsultaPublica() {
             to="/login"
             className="text-xs font-medium text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
           >
-            Acceso institucional
+            Acceso al sistema
           </Link>
         </div>
       </header>

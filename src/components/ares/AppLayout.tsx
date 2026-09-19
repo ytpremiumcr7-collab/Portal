@@ -34,6 +34,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { PRODUCT_NAME } from "@/const";
 
 type NavItem = {
   path: string;
@@ -81,6 +82,11 @@ const navGroups: NavGroup[] = [
       { path: "/aperturas", label: "Apertura", icon: PackageOpen, roles: ["admin", "licitante"] },
       { path: "/dictamenes", label: "Evaluación / dictamen", icon: Scale, roles: ["admin", "licitante"] },
       { path: "/fallos", label: "Fallo", icon: Gavel, roles: ["admin", "licitante"] },
+      { path: "/acto-adjudicacion", label: "Acto de adjudicación", icon: Gavel, roles: ["admin", "licitante"] },
+      { path: "/comision", label: "Comisión / COI", icon: Users, roles: ["admin", "licitante"] },
+      { path: "/terminacion", label: "Cancelación / desierto", icon: Ban, roles: ["admin", "licitante"] },
+      { path: "/calendario", label: "Calendario jurídico", icon: ClipboardList, roles: ["admin", "licitante"] },
+      { path: "/consorcios", label: "Consorcios", icon: Users, roles: ["admin", "licitante", "proveedor"] },
       { path: "/contratos", label: "Adjudicación / contrato", icon: FileSignature, roles: ["admin", "licitante"] },
       { path: "/garantias", label: "Garantías", icon: ShieldCheck, roles: ["admin", "licitante"] },
       { path: "/ejecucion", label: "Ejecución", icon: Wrench, roles: ["admin", "licitante"] },
@@ -165,7 +171,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (isLoading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm text-slate-600">
-        Validando sesión institucional…
+        Validando sesión…
       </div>
     );
   }
@@ -178,7 +184,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Shield className="text-emerald-300" style={{ width: 18, height: 18 }} />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold tracking-wide">ARES</p>
+            <p className="text-sm font-semibold tracking-wide">{PRODUCT_NAME}</p>
             <p className="truncate text-[10px] uppercase tracking-wider text-slate-300">
               Contratación pública · MX
             </p>
@@ -227,7 +233,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2.5">
             <Shield className="h-4 w-4 text-emerald-300" />
             <div>
-              <p className="text-sm font-semibold">ARES</p>
+              <p className="text-sm font-semibold">{PRODUCT_NAME}</p>
               <p className="text-[10px] uppercase tracking-wider text-slate-300">Contratación pública</p>
             </div>
           </div>

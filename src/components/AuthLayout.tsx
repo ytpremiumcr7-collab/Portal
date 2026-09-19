@@ -65,7 +65,7 @@ export default function AuthLayout({
               Inicie sesión para continuar
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              El acceso a este portal requiere autenticación institucional.
+              El acceso a este portal requiere autenticación oficial.
             </p>
           </div>
           <Button

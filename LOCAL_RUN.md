@@ -1,4 +1,4 @@
-# ARES — corrida local
+# Piedra Angular — corrida local
 
 ## Estado en la máquina del agente
 - MariaDB 11.8 local en `localhost:3306`

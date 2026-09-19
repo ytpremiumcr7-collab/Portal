@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shield } from "lucide-react";
+import { PRODUCT_NAME } from "@/const";
 
 const fields = [
   {
@@ -28,7 +29,7 @@ const fields = [
   {
     key: "email" as const,
     label: "Correo electrónico",
-    help: "Correo institucional del administrador.",
+    help: "Correo oficial del administrador.",
     type: "email",
   },
   {
@@ -66,7 +67,7 @@ export default function Registro() {
             <h1 className="text-lg font-semibold text-slate-50">Registro de organización</h1>
             <p className="mt-1 text-sm text-slate-400">
               Alta inicial de una organización mexicana y de su cuenta administradora
-              en ARES.
+              en {PRODUCT_NAME}.
             </p>
           </div>
         </div>

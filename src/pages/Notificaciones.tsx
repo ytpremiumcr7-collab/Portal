@@ -30,7 +30,7 @@ export default function Notificaciones() {
             })}>Emitir</Button>
           <Button variant="outline" onClick={() => crearTpl.mutate({
             codigo: `TPL-${Date.now().toString().slice(-6)}`, nombre: "Plantilla operativa",
-            asunto: "Aviso oficial ARES", cuerpo: "Cuerpo de plantilla de notificación oficial.",
+            asunto: "Aviso oficial Piedra Angular", cuerpo: "Cuerpo de plantilla de notificación oficial.",
             motivo: "Alta de plantilla",
           })}>Crear plantilla</Button>
         </CardContent>

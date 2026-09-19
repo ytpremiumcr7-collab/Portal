@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shield } from "lucide-react";
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from "@/const";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ export default function Login() {
               <Shield className="h-5 w-5 text-emerald-300" />
             </div>
             <div>
-              <p className="text-lg font-semibold tracking-wide">ARES</p>
+              <p className="text-lg font-semibold tracking-wide">{PRODUCT_NAME}</p>
               <p className="text-[11px] uppercase tracking-wider text-slate-300">
                 Sistema de adquisiciones
               </p>
@@ -36,7 +37,7 @@ export default function Login() {
           </div>
           <div className="mt-16 max-w-sm space-y-4">
             <h1 className="text-2xl font-semibold leading-snug">
-              Portal institucional de contratación pública
+              {PRODUCT_TAGLINE}
             </h1>
             <p className="text-sm leading-relaxed text-slate-300">
               Gestión formal de procedimientos de adquisición, expediente electrónico,
@@ -55,14 +56,14 @@ export default function Login() {
           <div className="mb-6 space-y-1">
             <h2 className="text-lg font-semibold text-slate-900">Acceso al sistema</h2>
             <p className="text-sm text-slate-600">
-              Ingrese con las credenciales institucionales de su organización.
+              Ingrese con las credenciales oficiales de su organización.
             </p>
           </div>
 
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email" className="ares-label ares-required">
-                Correo electrónico institucional
+                Correo electrónico oficial
               </Label>
               <Input
                 id="email"

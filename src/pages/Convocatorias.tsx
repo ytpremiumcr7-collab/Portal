@@ -18,7 +18,7 @@ export default function Convocatorias() {
             <Shield className="h-5 w-5 text-emerald-300" />
             <div>
               <p className="font-semibold">Convocatorias publicadas</p>
-              <p className="text-[11px] text-slate-300">Portal público · ARES</p>
+              <p className="text-[11px] text-slate-300">Portal público · Piedra Angular</p>
             </div>
           </div>
           <Button asChild variant="secondary" size="sm" className="bg-white text-slate-900">

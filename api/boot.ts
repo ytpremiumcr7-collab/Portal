@@ -43,5 +43,5 @@ if (env.isProduction) {
   const { serveStaticFiles } = await import("./lib/vite");
   serveStaticFiles(app);
   const port = parseInt(process.env.PORT || "3000", 10);
-  serve({ fetch: app.fetch, port }, () => console.log(`ARES Engine MX ejecutándose en http://localhost:${port}/`));
+  serve({ fetch: app.fetch, port }, () => console.log(`Piedra Angular ejecutándose en http://localhost:${port}/`));
 }
