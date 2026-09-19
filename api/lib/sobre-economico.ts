@@ -40,6 +40,8 @@ export function redactParticipacionEconomica<T extends Record<string, unknown>>(
     viewerProveedorId?: number | null;
     itemProveedorId?: number | null;
     aperturaEstado: string | null | undefined;
+    /** When true: plaintext monto without envelope — block convocante reads until migrated. */
+    legacyPlaintext?: boolean;
   },
 ): T {
   const owner =
@@ -47,6 +49,18 @@ export function redactParticipacionEconomica<T extends Record<string, unknown>>(
     opts.viewerProveedorId != null &&
     opts.itemProveedorId != null &&
     Number(opts.viewerProveedorId) === Number(opts.itemProveedorId);
+
+  // Legacy plaintext: never expose to convocante/admin until migrated into sobres.
+  if (opts.legacyPlaintext && !owner) {
+    const clone: Record<string, unknown> = { ...item };
+    if ("montoOferta" in clone) clone.montoOferta = null;
+    if ("puntajeEconomico" in clone) clone.puntajeEconomico = null;
+    if ("montoAdjudicadoFinal" in clone) clone.montoAdjudicadoFinal = null;
+    clone.legacyPlaintext = true;
+    clone.sobreEconomicoSellado = false;
+    return clone as T;
+  }
+
   if (owner || isSobreEconomicoRevelado(opts.aperturaEstado)) return item;
 
   const clone: Record<string, unknown> = { ...item };
@@ -62,9 +76,32 @@ export function canViewMontoOferta(input: {
   role: string;
   isOwner: boolean;
   aperturaEstado: string | null | undefined;
+  legacyPlaintext?: boolean;
 }): boolean {
+  if (input.legacyPlaintext && !(input.isOwner && input.role === "proveedor")) return false;
   if (input.isOwner && input.role === "proveedor") return true;
   return isSobreEconomicoRevelado(input.aperturaEstado);
+}
+
+/** True when monto looks like real plaintext (not envelope placeholder). */
+export function isRealMontoOferta(monto: unknown): boolean {
+  if (monto == null) return false;
+  const s = String(monto);
+  if (s === ENVELOPE_PLACEHOLDER_MONTO) return false;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0;
+}
+
+/** Pure: legacy plaintext = real monto and no sobre in SELLADO/REVELADO (or PENDIENTE if ever added). */
+export function isLegacyPlaintextCandidate(input: {
+  montoOferta: unknown;
+  hasSobreEconomico: boolean;
+}): boolean {
+  return isRealMontoOferta(input.montoOferta) && !input.hasSobreEconomico;
+}
+
+export function hasEnvelopeKeyConfigured(): boolean {
+  return !!process.env.ARES_ENVELOPE_KEY?.trim();
 }
 
 /** Persist sealed envelope row (call inside participación create TX). */
@@ -248,6 +285,79 @@ export async function hydrateOwnerMontoIfSealed<T extends Record<string, unknown
   const decrypted = await decryptMontoParticipacion(getDb(), opts.tenantId, partId);
   if (!decrypted) return item;
   return { ...item, montoOferta: decrypted, sobreEconomicoSellado: true } as T;
+}
+
+
+/**
+ * Find participaciones with real montoOferta and no sobres_economicos row.
+ * Prefer encrypt+placeholder when ARES_ENVELOPE_KEY is set.
+ * If key missing: leave rows flagged as legacy_plaintext (caller must block convocante reads).
+ */
+export async function migrateLegacyPlaintextMontos(
+  dbOrTx: any = getDb(),
+  opts: { tenantId?: number; dryRun?: boolean } = {},
+): Promise<{
+  scanned: number;
+  migrated: number;
+  flaggedLegacy: number;
+  keyPresent: boolean;
+  idsMigrated: number[];
+  idsFlagged: number[];
+}> {
+  const keyPresent = hasEnvelopeKeyConfigured();
+  const conditions = [];
+  if (opts.tenantId != null) conditions.push(eq(participaciones.tenantId, opts.tenantId));
+  const parts = await dbOrTx.query.participaciones.findMany({
+    where: conditions.length ? and(...conditions) : undefined,
+    columns: { id: true, tenantId: true, montoOferta: true },
+  });
+  let scanned = 0;
+  let migrated = 0;
+  let flaggedLegacy = 0;
+  const idsMigrated: number[] = [];
+  const idsFlagged: number[] = [];
+
+  for (const part of parts) {
+    if (!isRealMontoOferta(part.montoOferta)) continue;
+    scanned += 1;
+    const sobre = await loadSobreForParticipacion(dbOrTx, part.tenantId, part.id);
+    if (sobre) continue; // already has SELLADO/REVELADO envelope
+    if (!isLegacyPlaintextCandidate({ montoOferta: part.montoOferta, hasSobreEconomico: false })) continue;
+
+    if (!keyPresent) {
+      flaggedLegacy += 1;
+      idsFlagged.push(part.id);
+      continue;
+    }
+    if (opts.dryRun) {
+      migrated += 1;
+      idsMigrated.push(part.id);
+      continue;
+    }
+    const monto = String(part.montoOferta);
+    await insertSobreEconomico(dbOrTx, {
+      tenantId: part.tenantId,
+      participacionId: part.id,
+      monto,
+    });
+    await dbOrTx
+      .update(participaciones)
+      .set({ montoOferta: ENVELOPE_PLACEHOLDER_MONTO } as any)
+      .where(and(eq(participaciones.id, part.id), eq(participaciones.tenantId, part.tenantId)));
+    await dbOrTx
+      .update(proposiciones)
+      .set({ montoOferta: ENVELOPE_PLACEHOLDER_MONTO } as any)
+      .where(
+        and(
+          eq(proposiciones.tenantId, part.tenantId),
+          eq(proposiciones.participacionId, part.id),
+        ),
+      );
+    migrated += 1;
+    idsMigrated.push(part.id);
+  }
+
+  return { scanned, migrated, flaggedLegacy, keyPresent, idsMigrated, idsFlagged };
 }
 
 export { ENVELOPE_PLACEHOLDER_MONTO };

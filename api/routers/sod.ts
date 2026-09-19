@@ -242,4 +242,79 @@ export const sodRouter = createRouter({
     return { success: true };
   }),
 
+
+  /**
+   * One-shot admin bootstrap for a new procedimiento: assigns `creador` only
+   * to the first user (default: licitacion.convocanteId / caller).
+   * Does NOT grant all roles — operational caps still need procedimiento_asignaciones
+   * (evaluador_*, autorizador_fallo, …) and/or explicit user_capabilities.
+   * Fails if any asignación already exists for the procedimiento.
+   */
+  bootstrapAsignaciones: adminQuery.input(z.object({
+    licitacionId: z.number().int().positive(),
+    userId: z.number().int().positive().optional(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const lic = await db.query.licitaciones.findFirst({
+      where: and(eq(licitaciones.id, input.licitacionId), eq(licitaciones.tenantId, ctx.user.tenantId)),
+    });
+    if (!lic) throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada." });
+    const existing = await db.query.procedimientoAsignaciones.findMany({
+      where: and(
+        eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId),
+        eq(procedimientoAsignaciones.licitacionId, input.licitacionId),
+      ),
+    });
+    if (existing.length > 0) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "bootstrapAsignaciones es one-shot: el procedimiento ya tiene asignaciones. Use sod.asignar.",
+      });
+    }
+    const targetUserId = input.userId ?? Number(lic.convocanteId) ?? ctx.user.id;
+    const user = await db.query.users.findFirst({
+      where: and(eq(users.id, targetUserId), eq(users.tenantId, ctx.user.tenantId)),
+    });
+    if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Usuario no encontrado." });
+    if (user.role === "proveedor") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "bootstrapAsignaciones no asigna roles de procedimiento a proveedores." });
+    }
+    const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
+    let id = 0;
+    await db.transaction(async (tx) => {
+      const result = await tx.insert(procedimientoAsignaciones).values({
+        tenantId: ctx.user.tenantId,
+        licitacionId: input.licitacionId,
+        userId: targetUserId,
+        rol: "creador",
+        overrideSod: false,
+        justificacionOverride: null,
+        asignadoPor: ctx.user.id,
+      });
+      id = Number(result[0].insertId);
+      if (expediente) {
+        await appendExpedienteEvent(tx, ctx, {
+          expedienteId: expediente.id,
+          tipo: "SOD_BOOTSTRAP_ASIGNACION",
+          estadoAnterior: null,
+          estadoNuevo: "creador",
+          motivo: input.motivo,
+          payload: { asignacionId: id, userId: targetUserId, rol: "creador", oneShot: true },
+        });
+      }
+    });
+    const created = await db.query.procedimientoAsignaciones.findFirst({
+      where: and(eq(procedimientoAsignaciones.id, id), eq(procedimientoAsignaciones.tenantId, ctx.user.tenantId)),
+    });
+    await writeAudit({
+      ctx: ctxForAudit(ctx), accion: "SOD_BOOTSTRAP",
+      entidad: "procedimiento_asignaciones", entidadId: id, valorNuevo: created, motivo: input.motivo,
+    });
+    return {
+      asignacion: created,
+      note: "Sólo rol «creador». Asigne evaluador_*/autorizador_fallo/… vía sod.asignar; no se restauran caps globales de licitante.",
+    };
+  }),
+
 });

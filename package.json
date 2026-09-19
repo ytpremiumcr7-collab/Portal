@@ -17,7 +17,9 @@
     "db:push": "drizzle-kit push",
     "test:static": "node tests-governance.mjs",
     "outbox:once": "npx tsx api/lib/outbox-worker.ts",
-    "outbox:worker": "npx tsx api/lib/outbox-worker.ts --loop"
+    "outbox:worker": "npx tsx api/lib/outbox-worker.ts --loop",
+    "migrate:legacy-sobres": "npx tsx scripts/migrate-legacy-sobres.ts",
+    "ensure:system-actors": "npx tsx scripts/ensure-system-actors.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.965.0",

@@ -20,6 +20,8 @@ import {
   redactParticipacionEconomica,
   insertSobreEconomico,
   hydrateOwnerMontoIfSealed,
+  loadSobreForParticipacion,
+  isLegacyPlaintextCandidate,
   ENVELOPE_PLACEHOLDER_MONTO,
 } from "../lib/sobre-economico";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -39,6 +41,7 @@ async function redactList(
   viewerProveedorId: number | null,
 ) {
   const byLic = new Map<number, string | null>();
+  const db = getDb();
   const out = [];
   for (const item of items) {
     const licId = Number(item.licitacionId);
@@ -48,6 +51,11 @@ async function redactList(
       ctx.user.role === "proveedor" &&
       viewerProveedorId != null &&
       Number(viewerProveedorId) === Number(item.proveedorId);
+    const sobre = await loadSobreForParticipacion(db, ctx.user.tenantId, Number(item.id));
+    const legacyPlaintext = isLegacyPlaintextCandidate({
+      montoOferta: item.montoOferta,
+      hasSobreEconomico: !!sobre,
+    });
     let hydrated = await hydrateOwnerMontoIfSealed(item, {
       tenantId: ctx.user.tenantId,
       isOwner,
@@ -59,6 +67,7 @@ async function redactList(
         viewerProveedorId,
         itemProveedorId: item.proveedorId,
         aperturaEstado,
+        legacyPlaintext,
       }),
     );
   }
@@ -96,6 +105,11 @@ export const participacionesRouter = createRouter({
     }
     const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, item.licitacionId);
     const isOwner = viewerProveedorId != null && Number(viewerProveedorId) === Number(item.proveedorId);
+    const sobre = await loadSobreForParticipacion(db, ctx.user.tenantId, item.id);
+    const legacyPlaintext = isLegacyPlaintextCandidate({
+      montoOferta: item.montoOferta,
+      hasSobreEconomico: !!sobre,
+    });
     const hydrated = await hydrateOwnerMontoIfSealed(item as any, {
       tenantId: ctx.user.tenantId,
       isOwner,
@@ -106,6 +120,7 @@ export const participacionesRouter = createRouter({
       viewerProveedorId,
       itemProveedorId: item.proveedorId,
       aperturaEstado,
+      legacyPlaintext,
     });
   }),
 
@@ -114,10 +129,8 @@ export const participacionesRouter = createRouter({
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
-    await assertRecepcionDentroDeVentana(ctx.user.tenantId, input.licitacionId, {
-      fechaCierre: lic.fechaCierre,
-      requireCalendar: lic.estado === "PUBLICADA",
-    });
+    // Canonical reception: calendario RECEPCION ventana_* only (never fechaCierre day clock).
+    await assertRecepcionDentroDeVentana(ctx.user.tenantId, input.licitacionId);
     if (Number(input.montoOferta) <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });

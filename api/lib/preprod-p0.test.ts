@@ -7,13 +7,19 @@ import {
   type OfferForRanking,
 } from "./evaluation-engine";
 import { evaluateProcedimientoAsignacion } from "./sod";
-import { canViewMontoOferta, isSobreEconomicoRevelado } from "./sobre-economico";
-import { isWithinRecepcionMs } from "./calendario-gates";
+import {
+  canViewMontoOferta,
+  isSobreEconomicoRevelado,
+  isLegacyPlaintextCandidate,
+  isRealMontoOferta,
+  hasEnvelopeKeyConfigured,
+} from "./sobre-economico";
+import { isWithinRecepcionMs, isCanonicalRecepcionSource } from "./calendario-gates";
 import { ROLE_CAPABILITIES } from "./capabilities";
 import { CAPABILITIES } from "@db/schema";
 import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_SENTINEL, efectoLegalFromEventType } from "./outbox";
 import { systemActorEmail } from "./system-actor";
-import { sealMontoOferta, openMontoOferta, ciphertextDiffersFromPlaintext } from "./envelope-crypto";
+import { sealMontoOferta, openMontoOferta, ciphertextDiffersFromPlaintext, ENVELOPE_PLACEHOLDER_MONTO } from "./envelope-crypto";
 
 function msg(fn: () => unknown) {
   try {
@@ -151,5 +157,68 @@ describe("P0-2b envelope encryption residual", () => {
     const seal = sealMontoOferta("42.00");
     expect(ciphertextDiffersFromPlaintext(seal.ciphertext, "42.00")).toBe(true);
     expect(openMontoOferta(seal)).toBe("42.00");
+  });
+});
+
+describe("T-1 no day-only fechaCierre reception path", () => {
+  it("canonical source is only calendario", () => {
+    expect(isCanonicalRecepcionSource("calendario")).toBe(true);
+    expect(isCanonicalRecepcionSource("fechaCierre_eod")).toBe(false);
+  });
+
+  it("gate module source forbids fechaCierre_eod / day-slice fallback", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("./calendario-gates.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/fechaCierre_eod/);
+    expect(src).not.toMatch(/T23:59:59\.999Z/);
+    expect(src).toMatch(/assertRecepcionDentroDeVentana/);
+    // opts must not accept fechaCierre
+    expect(src).not.toMatch(/fechaCierre\?:/);
+  });
+
+  it("iniciarEvaluacion must not compare fechaCierre day strings", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("../routers/licitaciones.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/fecha de cierre aún no ha llegado/);
+    expect(src).not.toMatch(/toYmd\(current\.fechaCierre\)/);
+  });
+});
+
+describe("T-2 legacy plaintext migrate helper", () => {
+  it("detects real monto without sobre as legacy candidate", () => {
+    expect(isRealMontoOferta("1500.00")).toBe(true);
+    expect(isRealMontoOferta(ENVELOPE_PLACEHOLDER_MONTO)).toBe(false);
+    expect(isLegacyPlaintextCandidate({ montoOferta: "1500.00", hasSobreEconomico: false })).toBe(true);
+    expect(isLegacyPlaintextCandidate({ montoOferta: "1500.00", hasSobreEconomico: true })).toBe(false);
+    expect(isLegacyPlaintextCandidate({ montoOferta: ENVELOPE_PLACEHOLDER_MONTO, hasSobreEconomico: false })).toBe(false);
+  });
+
+  it("blocks convocante view of legacy plaintext", () => {
+    expect(
+      canViewMontoOferta({
+        role: "licitante",
+        isOwner: false,
+        aperturaEstado: null,
+        legacyPlaintext: true,
+      }),
+    ).toBe(false);
+    expect(
+      canViewMontoOferta({
+        role: "proveedor",
+        isOwner: true,
+        aperturaEstado: null,
+        legacyPlaintext: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hasEnvelopeKeyConfigured reflects env", () => {
+    const prev = process.env.ARES_ENVELOPE_KEY;
+    delete process.env.ARES_ENVELOPE_KEY;
+    expect(hasEnvelopeKeyConfigured()).toBe(false);
+    process.env.ARES_ENVELOPE_KEY = Buffer.from("piedra-angular-dev-envelope-key!!").toString("base64");
+    expect(hasEnvelopeKeyConfigured()).toBe(true);
+    if (prev === undefined) delete process.env.ARES_ENVELOPE_KEY;
+    else process.env.ARES_ENVELOPE_KEY = prev;
   });
 });

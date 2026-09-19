@@ -6,7 +6,7 @@ import { calendarioActos } from "@db/schema";
 /**
  * When a calendar row exists for `acto`, the transition must fall inside the window.
  * Absence of calendar = no extra gate (backward compatible) — except RECEPCION reception
- * which uses assertRecepcionDentroDeVentana (canonical ms deadline).
+ * which uses assertRecepcionDentroDeVentana (canonical ms deadline; calendar REQUIRED).
  */
 export async function assertCalendarioPermite(
   tenantId: number,
@@ -35,20 +35,16 @@ export async function assertCalendarioPermite(
 }
 
 /**
- * Canonical reception deadline: uses calendario RECEPCION ventana_fin timestamps (ms).
- * Published procedures SHOULD have a RECEPCION calendar row; if missing, falls back to
- * fechaCierre end-of-day (UTC) ONLY as documented last resort — prefer requiring calendar.
- *
- * deadline+1ms MUST reject.
+ * Canonical reception deadline = published calendar RECEPCION ventana_inicio/ventana_fin only (ms).
+ * NEVER reunite with day-granularity fechaCierre as a second clock.
+ * Domain contract = procedimiento + ProcedurePolicy snapshot + calendario.
+ * deadline+1ms MUST reject. Missing RECEPCION calendar → PRECONDITION_FAILED.
  */
 export async function assertRecepcionDentroDeVentana(
   tenantId: number,
   licitacionId: number,
   opts: {
-    fechaCierre?: string | Date | null;
     at?: Date;
-    /** When true (default for PUBLICADA), missing RECEPCION calendar is PRECONDITION_FAILED. */
-    requireCalendar?: boolean;
   } = {},
 ) {
   const at = opts.at ?? new Date();
@@ -61,60 +57,39 @@ export async function assertRecepcionDentroDeVentana(
     ),
   });
 
-  if (row) {
-    const t = at.getTime();
-    const ini = new Date(row.ventanaInicio).getTime();
-    const fin = new Date(row.ventanaFin).getTime();
-    if (t < ini) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: `La recepción aún no abre (ventana desde ${row.ventanaInicio}).`,
-      });
-    }
-    // Strict: t > fin rejects (deadline+1ms REJECT). t === fin still accepted.
-    if (t > fin) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: `El periodo de presentación de ofertas cerró en ${row.ventanaFin} (comparación canónica ms).`,
-      });
-    }
-    return { source: "calendario" as const, ventanaFin: fin };
-  }
-
-  const requireCalendar = opts.requireCalendar !== false;
-  if (requireCalendar) {
+  if (!row) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message:
-        "Se requiere ventana de calendario RECEPCION (ventana_inicio/ventana_fin) publicada para recibir proposiciones. No se acepta comparación por día civil.",
+        "Se requiere ventana de calendario RECEPCION (ventana_inicio/ventana_fin) publicada para recibir proposiciones. No se acepta comparación por día civil (fechaCierre).",
     });
   }
 
-  // Documented last resort: fechaCierre as end-of-day UTC (23:59:59.999).
-  if (!opts.fechaCierre) {
+  const t = at.getTime();
+  const ini = new Date(row.ventanaInicio).getTime();
+  const fin = new Date(row.ventanaFin).getTime();
+  if (t < ini) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "Sin calendario RECEPCION ni fechaCierre: no se puede validar el plazo de recepción.",
+      message: `La recepción aún no abre (ventana desde ${row.ventanaInicio}).`,
     });
   }
-  const ymd =
-    opts.fechaCierre instanceof Date
-      ? opts.fechaCierre.toISOString().slice(0, 10)
-      : String(opts.fechaCierre).slice(0, 10);
-  const fin = Date.parse(`${ymd}T23:59:59.999Z`);
-  if (!Number.isFinite(fin)) {
-    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "fechaCierre inválida." });
-  }
-  if (at.getTime() > fin) {
+  // Strict: t > fin rejects (deadline+1ms REJECT). t === fin still accepted.
+  if (t > fin) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: `El periodo de presentación de ofertas ya cerró (fechaCierre fin-de-día ${ymd} UTC, fallback documentado).`,
+      message: `El periodo de presentación de ofertas cerró en ${row.ventanaFin} (comparación canónica ms).`,
     });
   }
-  return { source: "fechaCierre_eod" as const, ventanaFin: fin };
+  return { source: "calendario" as const, ventanaFin: fin };
 }
 
 /** Pure helper for unit tests: deadline+1ms rejects. */
 export function isWithinRecepcionMs(atMs: number, ventanaFinMs: number): boolean {
   return atMs <= ventanaFinMs;
+}
+
+/** True when source is exclusively calendar (no fechaCierre day-clock). */
+export function isCanonicalRecepcionSource(source: string): boolean {
+  return source === "calendario";
 }

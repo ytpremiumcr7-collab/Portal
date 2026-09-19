@@ -294,7 +294,41 @@ const calGate = fs.readFileSync("api/lib/calendario-gates.ts", "utf8");
 if (!calGate.includes("assertRecepcionDentroDeVentana") || !calGate.includes("isWithinRecepcionMs")) {
   throw new Error("canonical calendar reception must remain");
 }
+if (calGate.includes("fechaCierre_eod") || calGate.includes("T23:59:59.999Z") || calGate.includes("fechaCierre?:")) {
+  throw new Error("dual-clock fechaCierre reception fallback must be deleted");
+}
+const licEval = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
+if (licEval.includes("fecha de cierre aún no ha llegado") || /toYmd\s*\(\s*current\.fechaCierre/.test(licEval)) {
+  throw new Error("iniciarEvaluacion must not use day-only fechaCierre");
+}
+const partRec = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+if (partRec.includes("fechaCierre: lic.fechaCierre")) {
+  throw new Error("participaciones must not pass fechaCierre into reception gate");
+}
+const sobreLib2 = fs.readFileSync("api/lib/sobre-economico.ts", "utf8");
+if (!sobreLib2.includes("migrateLegacyPlaintextMontos") || !sobreLib2.includes("isLegacyPlaintextCandidate")) {
+  throw new Error("legacy plaintext migrate helper missing");
+}
+const sysAll = fs.readFileSync("api/lib/system-actor.ts", "utf8");
+if (!sysAll.includes("ensureSystemActorsForAllTenants")) {
+  throw new Error("ensureSystemActorsForAllTenants missing");
+}
+const seedAll = fs.readFileSync("db/seed.ts", "utf8");
+if (!seedAll.includes("ensureSystemActorsForAllTenants")) {
+  throw new Error("seed must ensure system actors for all tenants");
+}
+const sodBoot = fs.readFileSync("api/routers/sod.ts", "utf8");
+if (!sodBoot.includes("bootstrapAsignaciones")) {
+  throw new Error("sod.bootstrapAsignaciones missing");
+}
+if (!/rol:\s*"creador"/.test(sodBoot) && !sodBoot.includes('rol: "creador"')) {
+  throw new Error("bootstrapAsignaciones must assign only creador");
+}
+const archTime = fs.readFileSync("ARCHITECTURE.md", "utf8");
+if (!archTime.includes("Autoridad canónica de tiempo") || !archTime.includes("HSM")) {
+  throw new Error("ARCHITECTURE must document canonical time authority + HSM residual");
+}
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal + preprod P0/P1 + 0014 residual)");
+console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal + preprod P0/P1 + 0014 residual + dual-clock/legacy close-out)");
 
 

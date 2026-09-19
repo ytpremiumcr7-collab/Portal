@@ -148,5 +148,52 @@ Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES-only codebase
 | R-3 | `ensureSystemActor(tenantId)` → `system+t{id}@piedra-angular.local` (password null, activo=0); outbox never invents userId=1 |
 | R-4 | Audit chain concurrency: `audit_chain_heads` FOR UPDATE under stress keeps `verifyAuditHashChain` true |
 | R-5 | Remaining procedural mutations off bare `convocanteQuery` → `capabilityQuery` / `adminQuery` (config) |
-| R-6 | Canonical calendar reception unchanged (ms `ventana_fin`; no merge back to day-only `fechaCierre`) |
+| R-6 | Canonical calendar reception: ms `ventana_fin` only — day-only `fechaCierre` path DELETED (see Autoridad canónica de tiempo) |
+
+
+## Autoridad canónica de tiempo
+
+**Canonical reception time = published calendar `ventana_inicio` / `ventana_fin` only (ms).**  
+NEVER reunite with day-granularity `fechaCierre` as a second clock for recepción.
+
+| Clock | Authority |
+|-------|-----------|
+| Recepción / proposición | `calendario_actos` acto=`RECEPCION` (`assertRecepcionDentroDeVentana`) |
+| Evaluación / adjudicación windows | `calendario_actos` via `assertCalendarioPermite` when row present |
+| `fechaCierre` / `fechaPublicacion` / `fechaApertura` | Planning / OCDS / publish readiness only — **not** recepción deadline |
+
+Domain contract for a published procedimiento:
+
+```
+procedimiento (licitación)
+  + ProcedurePolicy snapshot (frozen at publish)
+  + calendario jurídico (RECEPCION required to accept offers)
+```
+
+If code still compares `fechaCierre` day strings (`slice(0,10)`, EOD UTC) for recepción → **DELETE that path**.
+
+## Pre-prod residual close-out (0014+/0015 ops)
+
+| # | Fix |
+|---|-----|
+| T-1 | Dual-clock deleted: no `fechaCierre_eod` fallback in reception gates |
+| T-2 | Legacy plaintext migrate: `migrateLegacyPlaintextMontos` / `scripts/migrate-legacy-sobres.ts` — encrypt+placeholder when `ARES_ENVELOPE_KEY` set; else flag and block convocante reads |
+| T-3 | `ensureSystemActorsForAllTenants` on seed (all existing tenants, not only first outbox) |
+| T-4 | `sod.bootstrapAsignaciones` one-shot → only `creador` (not all roles); operational acts need `procedimiento_asignaciones` / explicit caps |
+| T-5 | Licitante ROLE defaults stay narrow — no restore of all procedural capabilities |
+
+### Capability grants (ops note)
+
+Convocante **operational** roles (`evaluar_*`, `autorizar_fallo`, `aprobar_pago`, …) require:
+
+1. Explicit `user_capabilities` grants where needed beyond `ROLE_CAPABILITIES.licitante`, **and**
+2. `procedimiento_asignaciones` on the specific licitación (or time-bound `break_glass`).
+
+Admin does **not** auto-bypass SoD. Use `sod.bootstrapAsignaciones` only to seed `creador` on a new empty procedimiento.
+
+## Residual risks (intentionally open)
+
+1. **HSM / KMS for envelope keys** — `ARES_ENVELOPE_KEY` is env-material today (AES-256-GCM software). Production should move active keys to HSM/KMS with app-level unwrap; rotation stub (`ARES_ENVELOPE_KEY_V{n}`) remains software-side until then.
+2. E-signature (advanced / qualified) — still deferred.
+3. Full multi-tenant SMTP credentials UI — deferred.
 

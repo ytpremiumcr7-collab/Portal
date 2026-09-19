@@ -23,6 +23,9 @@ export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capa
     "consulta_publica_admin",
     "break_glass",
   ],
+  // Narrow defaults — operational acts (evaluar_*, autorizar_fallo, aprobar_pago, …)
+  // need explicit user_capabilities AND procedimiento_asignaciones (or break_glass).
+  // Do NOT restore full procedural caps here. Use sod.bootstrapAsignaciones for creador only.
   licitante: [
     "crear_procedimiento",
     "publicar",

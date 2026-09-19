@@ -4,7 +4,7 @@ import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } f
 import { getDb } from "../queries/connection";
 import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion, actosDesempate } from "@db/schema";
 import { TRPCError } from "@trpc/server";
-import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, toYmd, listHitosTiposConfigurados, assertJuntaSiPoliticaLoExige } from "../lib/domain";
+import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, listHitosTiposConfigurados, assertJuntaSiPoliticaLoExige } from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
 import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura } from "../lib/phase2-transitions";
 import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
@@ -186,7 +186,7 @@ export const licitacionesRouter = createRouter({
     const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
     await assertCalendarioPermite(ctx.user.tenantId, input.id, "EVALUACION");
     if (!['PUBLICADA','CONSULTAS'].includes(current.estado)) throw new TRPCError({ code: "CONFLICT", message: "Sólo una licitación publicada puede pasar a evaluación." });
-    if (current.fechaCierre && (toYmd(current.fechaCierre) ?? "") > new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La fecha de cierre aún no ha llegado." });
+    // Reception/evaluation clocks: calendario jurídico only (assertCalendarioPermite above). Never day-granularity fechaCierre.
     const db = getDb();
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.licitacionId, input.id)) });
     assertEvaluacionRequiresApertura(apertura?.estado);
