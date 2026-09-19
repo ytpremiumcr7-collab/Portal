@@ -171,19 +171,4 @@ export const capabilitiesRouter = createRouter({
     return { request: await db.query.capabilityGrantRequests.findFirst({ where: and(eq(capabilityGrantRequests.id, input.id), eq(capabilityGrantRequests.tenantId, ctx.user.tenantId)) }), grant: row };
   }),
 
-  /** @deprecated Use requestGrant → approveGrant. Direct grant with declarative approvedBy is forbidden. */
-  grant: adminQuery.input(z.object({
-    userId: z.number().int().positive(),
-    capability: z.string().trim().min(2),
-    granted: z.boolean().default(true),
-    overrideSod: z.boolean().default(false),
-    justificacionOverride: z.string().trim().min(10).optional(),
-    expiresAt: z.string().datetime().optional(),
-    motivo: z.string().trim().min(3),
-  })).mutation(async () => {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "capabilities.grant directo está deshabilitado. Use requestGrant → approveGrant (cuatro ojos reales).",
-    });
-  }),
 });

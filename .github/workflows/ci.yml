@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ares
+          MYSQL_USER: ares
+          MYSQL_PASSWORD: ares_dev_local
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://ares:ares_dev_local@127.0.0.1:3306/ares
+      ARES_STORAGE_PATH: ./storage
+      ARES_ENVELOPE_KEY: cGllZHJhLWFuZ3VsYXItZGV2LWVudmVsb3BlLWtleSE=
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc -b --pretty false
+      - name: Unit tests
+        run: npm test
+      - name: Static governance
+        run: npm run test:static
+      - name: Migrate (optional MariaDB concurrency path)
+        run: |
+          for f in db/migrations/*.sql; do
+            echo "Applying $f"
+            mysql -h 127.0.0.1 -u ares -pares_dev_local ares < "$f" || true
+          done
+        continue-on-error: true

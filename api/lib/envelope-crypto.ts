@@ -1,4 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { getEnvelopeKeyProvider, createEnvelopeKeyProviderFromEnv, setEnvelopeKeyProvider } from "./envelope-key-provider";
+
+setEnvelopeKeyProvider(createEnvelopeKeyProviderFromEnv());
 
 export const ENVELOPE_ALGORITHM = "AES-256-GCM" as const;
 export const ENVELOPE_PLACEHOLDER_MONTO = "0.00";
@@ -20,13 +23,6 @@ export type EnvelopeSeal = {
   aad?: string;
 };
 
-function parseKeyMaterial(raw: string): Buffer {
-  const t = raw.trim();
-  if (/^[0-9a-fA-F]{64}$/.test(t)) return Buffer.from(t, "hex");
-  const b64 = Buffer.from(t, "base64");
-  if (b64.length === 32) return b64;
-  throw new Error("ARES_ENVELOPE_KEY must be 32-byte base64 or 64-char hex");
-}
 
 /** Active write key version (rotation stub). */
 export function currentEnvelopeKeyVersion(): number {
@@ -40,19 +36,12 @@ export function currentEnvelopeKeyVersion(): number {
  * else → ARES_ENVELOPE_KEY_V{n} (rotation stub for decrypt of older envelopes)
  */
 export function resolveEnvelopeKey(version: number): Buffer {
-  if (version === currentEnvelopeKeyVersion()) {
-    const raw = process.env.ARES_ENVELOPE_KEY?.trim();
-    if (!raw) {
-      if (process.env.NODE_ENV === "production") {
-        throw new Error("ARES_ENVELOPE_KEY required in production");
-      }
-      return parseKeyMaterial(Buffer.from("piedra-angular-dev-envelope-key!!").toString("base64"));
-    }
-    return parseKeyMaterial(raw);
+  const provider = getEnvelopeKeyProvider();
+  const key = provider.resolveKey(version);
+  if (key instanceof Promise) {
+    throw new Error(`EnvelopeKeyProvider ${provider.name} returned async key; use EnvKeyProvider for sync seal/open paths.`);
   }
-  const legacy = process.env[`ARES_ENVELOPE_KEY_V${version}`]?.trim();
-  if (!legacy) throw new Error(`Missing ARES_ENVELOPE_KEY_V${version} for keyVersion=${version}`);
-  return parseKeyMaterial(legacy);
+  return key;
 }
 
 /** Canonical AAD binding: tenant:licitacion:participacion:proposicion:keyVersion */

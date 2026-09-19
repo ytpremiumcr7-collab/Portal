@@ -39,7 +39,7 @@ app.get("/api/documents/:id/download", async (c) => {
   }
   try {
     const data = await readFile(path.resolve(env.storagePath, doc.storageKey));
-    return new Response(data, { headers: { "content-type": doc.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(doc.nombreArchivo)}`, "cache-control": "private, no-store" } });
+    return new Response(data, { headers: { "content-type": doc.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(doc.nombreArchivo)}`, "cache-control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
   } catch {
     return c.json({ error: "Archivo no disponible" }, 404);
   }
@@ -61,7 +61,7 @@ app.get("/api/public/documents/:id", async (c) => {
   }
   try {
     const data = await readFile(path.resolve(env.storagePath, doc.storageKey));
-    return new Response(data, { headers: { "content-type": doc.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(doc.nombreArchivo)}`, "cache-control": "public, max-age=300" } });
+    return new Response(data, { headers: { "content-type": doc.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(doc.nombreArchivo)}`, "cache-control": "public, max-age=300", "X-Content-Type-Options": "nosniff" } });
   } catch {
     return c.json({ error: "Archivo no disponible" }, 404);
   }

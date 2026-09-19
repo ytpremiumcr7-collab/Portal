@@ -8,6 +8,7 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { assertExpediente, assertExpedienteComplete, findExpedienteByLicitacion, appendExpedienteEvent, verifyExpedienteEvidenceChain } from "../lib/expediente";
 import { ctxForAudit } from "../middleware";
 import { writeAudit } from "../lib/security";
+import { verifyDocumentStoreIntegrity } from "../lib/document-integrity";
 
 const requirementState = z.enum(["PENDIENTE", "CUMPLIDO", "OBSERVADO", "NO_APLICA"]);
 
@@ -81,5 +82,18 @@ export const expedientesRouter = createRouter({
   events: convocanteQuery.input(z.object({ expedienteId: z.number().int().positive() })).query(async ({ input, ctx }) => {
     const exp = await assertExpediente(ctx.user.tenantId, input.expedienteId);
     return exp.events;
+  }),
+
+  verifyStoreIntegrity: adminQuery.input(z.object({
+    documentoId: z.number().int().positive().optional(),
+    expedienteId: z.number().int().positive().optional(),
+    licitacionId: z.number().int().positive().optional(),
+  }).optional()).query(async ({ input, ctx }) => {
+    return verifyDocumentStoreIntegrity({
+      tenantId: ctx.user.tenantId,
+      documentoId: input?.documentoId,
+      expedienteId: input?.expedienteId,
+      licitacionId: input?.licitacionId,
+    });
   }),
 });

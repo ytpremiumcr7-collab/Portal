@@ -7,6 +7,7 @@ import { licitacionIdFromInput } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { actosDesempate, licitaciones, documentos, licitacionReglasVersion, participaciones } from "@db/schema";
 import { writeAudit } from "../lib/security";
+import { assertDocumentoBoundToContext } from "../lib/documento-binding";
 import { computeEmpateSet, assertSorteoResultadoValid, type CriterioEvaluacion } from "../lib/evaluation-engine";
 import { parseTieBreakPolicy } from "../lib/procedure-policy";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -120,7 +121,16 @@ export const desempateRouter = createRouter({
       const doc = await db.query.documentos.findFirst({
         where: and(eq(documentos.id, input.evidenciaDocId), eq(documentos.tenantId, ctx.user.tenantId)),
       });
-      if (!doc) throw new TRPCError({ code: "BAD_REQUEST", message: "Documento de evidencia no válido." });
+      const expedienteForBind = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
+      assertDocumentoBoundToContext(doc as any, {
+        tenantId: ctx.user.tenantId,
+        licitacionId: input.licitacionId,
+        expedienteId: expedienteForBind?.id ?? null,
+        expectedTipo: doc?.tipo ?? "ACTA_EVALUACION",
+      });
+      if (!doc || !["ACTA_EVALUACION", "ACTA_APERTURA", "DICTAMEN", "OTRO"].includes(doc.tipo)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Evidencia de desempate: se requiere documento APROBADO/vigente vinculado al procedimiento." });
+      }
     }
     const admisibles = await db.query.participaciones.findMany({
       where: and(

@@ -154,20 +154,6 @@ export const sodRouter = createRouter({
     return created;
   }),
 
-  /** @deprecated Use requestAsignar → approveAsignar. Declarative approvedBy is forbidden. */
-  asignar: adminQuery.input(z.object({
-    licitacionId: z.number().int().positive(),
-    userId: z.number().int().positive(),
-    rol: z.string().trim().min(2),
-    overrideSod: z.boolean().default(false),
-    justificacionOverride: z.string().trim().min(10).optional(),
-    motivo: z.string().trim().min(3),
-  })).mutation(async () => {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "sod.asignar directo está deshabilitado. Use requestAsignar → approveAsignar (cuatro ojos reales).",
-    });
-  }),
 
   revocar: adminQuery.input(z.object({
     id: z.number().int().positive(),

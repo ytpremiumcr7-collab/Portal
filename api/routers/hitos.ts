@@ -6,11 +6,11 @@ import { hitos } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertLicitacionExists } from "../lib/domain";
-import { findExpedienteByLicitacion } from "../lib/expediente";
+import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
 
 export const hitosRouter = createRouter({
-  list: convocanteQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), estado: z.enum(["PENDIENTE","EN_PROGRESO","COMPLETADO","CANCELADO","RETRASADO"]).optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
+  list: convocanteQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), estado: z.enum(["PENDIENTE","EN_PROGRESO","COMPLETADO","CANCELADO","RETRASADO","ANULADO"]).optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize); const conditions = [eq(hitos.tenantId, ctx.user.tenantId)];
     if (input?.licitacionId) conditions.push(eq(hitos.licitacionId, input.licitacionId)); if (input?.estado) conditions.push(eq(hitos.estado, input.estado));
     const where = and(...conditions); const db = getDb(); const [items,totalRows] = await Promise.all([db.query.hitos.findMany({ where, orderBy: [desc(hitos.fechaProgramada)], limit: pageSize, offset, with: { licitacion: true } }), db.select({ total: count() }).from(hitos).where(where)]);
@@ -51,5 +51,35 @@ export const hitosRouter = createRouter({
     const db = getDb(); const now = new Date(); const due = await db.query.hitos.findMany({ where: and(eq(hitos.tenantId,ctx.user.tenantId),eq(hitos.estado,"PENDIENTE")) }); const late = due.filter(h=>h.fechaProgramada < now); for (const h of late) { await db.update(hitos).set({ estado:"RETRASADO" }).where(and(eq(hitos.id,h.id),eq(hitos.tenantId,ctx.user.tenantId))); await writeAudit({ctx:ctxForAudit(ctx),accion:"MARCAR_RETRASADO",entidad:"hitos",entidadId:h.id,valorAnterior:h,valorNuevo:{...h,estado:"RETRASADO"},motivo:"Control automático de vencimiento"}); } return { updated: late.length };
   }),
 
-  delete: adminQuery.input(z.object({id:z.number().int().positive(),motivo:z.string().trim().min(3)})).mutation(async ({input,ctx})=>{const db=getDb(); const current=await db.query.hitos.findFirst({where:and(eq(hitos.id,input.id),eq(hitos.tenantId,ctx.user.tenantId))}); if(!current)throw new TRPCError({code:"NOT_FOUND",message:"Hito no encontrado."}); await db.delete(hitos).where(and(eq(hitos.id,input.id),eq(hitos.tenantId,ctx.user.tenantId))); await writeAudit({ctx:ctxForAudit(ctx),accion:"ELIMINAR",entidad:"hitos",entidadId:input.id,valorAnterior:current,motivo:input.motivo}); return {success:true};})
+
+  /** Soft-cancel only — hard delete removed. Sets ANULADO + motivo + expediente event. */
+  anular: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.hitos.findFirst({ where: and(eq(hitos.id, input.id), eq(hitos.tenantId, ctx.user.tenantId)) });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Hito no encontrado." });
+    if (current.estado === "ANULADO") throw new TRPCError({ code: "CONFLICT", message: "El hito ya está anulado." });
+    const expediente = current.expedienteId ? { id: current.expedienteId } : await findExpedienteByLicitacion(ctx.user.tenantId, current.licitacionId);
+    await db.transaction(async (tx) => {
+      await tx.update(hitos).set({
+        estado: "ANULADO", cumplido: false, motivoAnulacion: input.motivo, anuladoPor: ctx.user.id, anuladoAt: new Date(),
+      } as any).where(and(eq(hitos.id, input.id), eq(hitos.tenantId, ctx.user.tenantId)));
+      if (expediente) {
+        await appendExpedienteEvent(tx, ctx, {
+          expedienteId: expediente.id, tipo: "HITO_ANULADO",
+          estadoAnterior: current.estado, estadoNuevo: "ANULADO", motivo: input.motivo,
+          payload: { hitoId: input.id, tipo: current.tipo, nombre: current.nombre },
+        });
+      }
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "ANULAR", entidad: "hitos", entidadId: input.id,
+        valorAnterior: current, valorNuevo: { ...current, estado: "ANULADO" }, motivo: input.motivo, tx,
+      });
+    });
+    return db.query.hitos.findFirst({ where: and(eq(hitos.id, input.id), eq(hitos.tenantId, ctx.user.tenantId)) });
+  }),
+
+  /** @deprecated Use anular — hard delete disabled. */
+  delete: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async () => {
+    throw new TRPCError({ code: "FORBIDDEN", message: "hitos.delete físico está deshabilitado. Use hitos.anular (ANULADO + motivo)." });
+  }),
 });

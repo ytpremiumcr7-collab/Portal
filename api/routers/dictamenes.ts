@@ -11,6 +11,7 @@ import { assertDictamenTransition } from "../lib/phase2-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
+import { createFirmaElectronica } from "../lib/firmas-electronicas";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -98,6 +99,17 @@ export const dictamenesRouter = createRouter({
     if (!dictamen || dictamen.estado !== "BORRADOR") throw new TRPCError({ code: "CONFLICT", message: "Sólo se firma en BORRADOR." });
     await db.transaction(async (tx) => {
       await tx.update(dictamenFirmantes).set({ firmado: true, firmadoAt: new Date() }).where(and(eq(dictamenFirmantes.id, firmante.id), eq(dictamenFirmantes.tenantId, ctx.user.tenantId)));
+      // Honest signature base: SESSION_CONFIRMATION (not advanced e.firma / FIEL).
+      await createFirmaElectronica(tx, {
+        tenantId: ctx.user.tenantId,
+        documentoId: null,
+        entidadRef: "dictamenes",
+        entidadId: input.dictamenId,
+        kind: "SESSION_CONFIRMATION",
+        payload: { dictamenId: input.dictamenId, version: dictamen.version, estado: dictamen.estado, firmadoPor: ctx.user.id },
+        signerUserId: ctx.user.id,
+        motivo: input.motivo,
+      });
       await appendExpedienteEvent(tx, ctx, { expedienteId: dictamen.expedienteId, tipo: "DICTAMEN_FIRMA", estadoAnterior: "BORRADOR", estadoNuevo: "BORRADOR", motivo: input.motivo, payload: { dictamenId: dictamen.id, usuarioId: ctx.user.id } });
     });
     return getDb().query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.dictamenId), eq(dictamenes.tenantId, ctx.user.tenantId)), with: { firmantes: true } });

@@ -378,44 +378,81 @@ export const participacionesRouter = createRouter({
     return updated;
   }),
 
-  /** Soft-delete only — hard delete disabled. Marks RETIRADA/INVALIDADA + expediente event. */
-  delete: adminQuery.input(z.object({
+  /** Proveedor retira su propia proposición (RETIRADA). */
+  retirar: proveedorQuery.input(z.object({
     id: z.number().int().positive(),
     motivo: z.string().trim().min(3),
-    estado: z.enum(["RETIRADA", "INVALIDADA"]).default("INVALIDADA"),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.participaciones.findFirst({
+      where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)),
+      with: { proveedor: true },
+    });
+    if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
+    if ((current as any).proveedor?.usuarioId !== ctx.user.id && ctx.user.role !== "admin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Sólo el proveedor titular puede retirar su proposición." });
+    }
+    if (["GANADORA", "ADMISIBLE", "RETIRADA", "INVALIDADA"].includes(current.estadoEvaluacion)) {
+      throw new TRPCError({ code: "CONFLICT", message: `No se puede retirar en estado ${current.estadoEvaluacion}.` });
+    }
+    const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, current.licitacionId);
+    await db.transaction(async (tx) => {
+      await tx.update(participaciones).set({ estadoEvaluacion: "RETIRADA" } as any)
+        .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      await tx.update(proposiciones).set({ estado: "DESECHADA" } as any)
+        .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)));
+      if (expediente) {
+        await appendExpedienteEvent(tx, ctx, {
+          expedienteId: expediente.id, tipo: "PARTICIPACION_RETIRADA",
+          estadoAnterior: current.estadoEvaluacion, estadoNuevo: "RETIRADA", motivo: input.motivo,
+          payload: { participacionId: input.id, actor: "proveedor" },
+        });
+      }
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "RETIRAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });
+    });
+    return { success: true, estado: "RETIRADA" as const };
+  }),
+
+  /** Admin/convocante invalida proposición (INVALIDADA) — distinto de retiro del proveedor. */
+  invalidar: adminQuery.input(z.object({
+    id: z.number().int().positive(),
+    motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.participaciones.findFirst({
       where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)),
     });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
-    if (["GANADORA", "ADMISIBLE"].includes(current.estadoEvaluacion)) {
-      throw new TRPCError({ code: "CONFLICT", message: "Una oferta admisible/adjudicada no se retira por esta vía." });
-    }
-    if (["RETIRADA", "INVALIDADA"].includes(current.estadoEvaluacion)) {
-      throw new TRPCError({ code: "CONFLICT", message: "La oferta ya está retirada o invalidada." });
+    if (["GANADORA", "RETIRADA", "INVALIDADA"].includes(current.estadoEvaluacion)) {
+      throw new TRPCError({ code: "CONFLICT", message: `No se puede invalidar en estado ${current.estadoEvaluacion}.` });
     }
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, current.licitacionId);
     await db.transaction(async (tx) => {
-      await tx.update(participaciones).set({ estadoEvaluacion: input.estado } as any)
+      await tx.update(participaciones).set({ estadoEvaluacion: "INVALIDADA" } as any)
         .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
       await tx.update(proposiciones).set({ estado: "DESECHADA" } as any)
         .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)));
       if (expediente) {
         await appendExpedienteEvent(tx, ctx, {
-          expedienteId: expediente.id,
-          tipo: input.estado === "RETIRADA" ? "PARTICIPACION_RETIRADA" : "PARTICIPACION_INVALIDADA",
-          estadoAnterior: current.estadoEvaluacion,
-          estadoNuevo: input.estado,
-          motivo: input.motivo,
-          payload: { participacionId: input.id },
+          expedienteId: expediente.id, tipo: "PARTICIPACION_INVALIDADA",
+          estadoAnterior: current.estadoEvaluacion, estadoNuevo: "INVALIDADA", motivo: input.motivo,
+          payload: { participacionId: input.id, actor: "admin" },
         });
       }
-      await writeAudit({
-        ctx: ctxForAudit(ctx), accion: input.estado, entidad: "participaciones", entidadId: input.id,
-        valorAnterior: current, motivo: input.motivo, tx,
-      });
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "INVALIDAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });
     });
-    return { success: true, estado: input.estado };
+    return { success: true, estado: "INVALIDADA" as const };
+  }),
+
+  /** @deprecated Use retirar (proveedor) o invalidar (admin). */
+  delete: adminQuery.input(z.object({
+    id: z.number().int().positive(),
+    motivo: z.string().trim().min(3),
+    estado: z.enum(["RETIRADA", "INVALIDADA"]).default("INVALIDADA"),
+  })).mutation(async () => {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "participaciones.delete unificado está deshabilitado. Use retirar (proveedor) o invalidar (admin).",
+    });
   }),
 });

@@ -11,6 +11,7 @@ import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementStatuses } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
+import { detectMimeFromMagic, assertMimeAllowed } from "../lib/mime-detect";
 import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed } from "../lib/document-access";
 
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -93,7 +94,9 @@ export const documentosRouter = createRouter({
     }
     const buffer = Buffer.from(input.contentBase64.replace(/^data:.*;base64,/, ""), "base64");
     if (!buffer.length || buffer.length > MAX_BYTES) throw new TRPCError({ code: "BAD_REQUEST", message: "El archivo debe tener entre 1 byte y 20 MB." });
-    const sha256 = createHash("sha256").update(buffer).digest("hex");
+        const detectedMime = detectMimeFromMagic(buffer, input.mimeType);
+    assertMimeAllowed(detectedMime);
+const sha256 = createHash("sha256").update(buffer).digest("hex");
     const previous = input.reemplazaDocumentoId ? await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.reemplazaDocumentoId), eq(documentos.tenantId, ctx.user.tenantId)) }) : null;
     const versionGroup = previous?.versionGroup ?? randomUUID();
     const version = previous ? previous.version + 1 : 1;
@@ -103,7 +106,7 @@ export const documentosRouter = createRouter({
     try {
       const createdId = await db.transaction(async tx => {
         if (previous) await tx.update(documentos).set({ esVersionVigente: false, estado: "OBSOLETO" }).where(and(eq(documentos.id, previous.id), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)));
-        const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: input.mimeType, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
+        const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: detectedMime, mimeDetectado: detectedMime, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
         const id = Number(result[0].insertId);
         if (expediente) { await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: previous ? "NUEVA_VERSION_DOCUMENTAL" : "DOCUMENTO_AGREGADO", motivo: input.motivo ?? null, payload: { documentoId: id, tipo: input.tipo, version, sha256, previousVersionId: previous?.id ?? null } }); }
         return id;

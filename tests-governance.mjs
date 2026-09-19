@@ -447,3 +447,60 @@ if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-lo
   }
   console.log("governance: P0-01/02/03 + migrate 0016 OK");
 }
+
+
+// ---- 0017 P1 audit close-out ----
+{
+  const mig17 = fs.readFileSync("db/migrations/0017_audit_p1_closeout.sql", "utf8");
+  for (const marker of ["calendario_versiones", "login_rate_limits", "firmas_electronicas", "tenant_smtp_settings", "ANULADO", "mime_detectado"]) {
+    if (!mig17.includes(marker)) throw new Error(`0017 missing ${marker}`);
+  }
+  const cal = fs.readFileSync("api/routers/calendario.ts", "utf8");
+  if (!cal.includes("calendarioVersiones") || !cal.includes("CALENDARIO_ACTO_CAMBIADO")) {
+    throw new Error("calendario must version + expediente event");
+  }
+  const hitos = fs.readFileSync("api/routers/hitos.ts", "utf8");
+  if (!hitos.includes("anular:") || hitos.includes("db.delete(hitos)") || hitos.includes(".delete(hitos)")) {
+    throw new Error("hitos must anular without hard delete");
+  }
+  const term = fs.readFileSync("api/routers/terminacion.ts", "utf8");
+  const des = fs.readFileSync("api/routers/desempate.ts", "utf8");
+  if (!term.includes("assertDocumentoBoundToContext") || !des.includes("assertDocumentoBoundToContext")) {
+    throw new Error("terminacion/desempate must bind evidence via assertDocumentoBoundToContext");
+  }
+  const docs = fs.readFileSync("api/routers/documentos.ts", "utf8");
+  if (!docs.includes("detectMimeFromMagic")) throw new Error("documentos must detect MIME magic");
+  const boot = fs.readFileSync("api/boot.ts", "utf8");
+  if (!boot.includes("nosniff")) throw new Error("boot downloads must send nosniff");
+  const auth = fs.readFileSync("api/auth-router.ts", "utf8");
+  if (!auth.includes("assertLoginAllowed") || !auth.includes("recordLoginFailure")) {
+    throw new Error("auth.login must rate-limit");
+  }
+  const caps = fs.readFileSync("api/routers/capabilities.ts", "utf8");
+  const sod = fs.readFileSync("api/routers/sod.ts", "utf8");
+  if (/\ngrant:\s*adminQuery/.test(caps)) throw new Error("capabilities.grant stub must be removed");
+  if (/\nasignar:\s*adminQuery/.test(sod)) throw new Error("sod.asignar stub must be removed");
+  const part = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+  if (!part.includes("retirar:") || !part.includes("invalidar:")) {
+    throw new Error("participaciones must expose retirar + invalidar");
+  }
+  const envKey = fs.readFileSync("api/lib/envelope-key-provider.ts", "utf8");
+  if (!envKey.includes("EnvelopeKeyProvider") || !envKey.includes("AwsKmsKeyProvider") || !envKey.includes("VaultTransitKeyProvider")) {
+    throw new Error("envelope key provider interface missing");
+  }
+  const firmas = fs.readFileSync("api/lib/firmas-electronicas.ts", "utf8");
+  if (!firmas.includes("SESSION_CONFIRMATION") || !firmas.includes("CRYPTO_SIGNATURE")) {
+    throw new Error("firmas electronicas kinds missing");
+  }
+  if (!fs.existsSync("src/pages/Capabilities.tsx") || !fs.existsSync("src/pages/Desempate.tsx") || !fs.existsSync("src/pages/SmtpSettings.tsx")) {
+    throw new Error("Capabilities/Desempate/SmtpSettings UI pages missing");
+  }
+  const ci = fs.readFileSync(".github/workflows/ci.yml", "utf8");
+  if (!ci.includes("npm test") || !ci.includes("tsc") || !ci.includes("test:static")) {
+    throw new Error("CI workflow incomplete");
+  }
+  const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
+  if (!migSh.includes("0017_audit_p1_closeout.sql")) throw new Error("migrate-local missing 0017");
+  console.log("governance: 0017 P1 close-out OK");
+}
+

@@ -305,6 +305,7 @@ export const documentos = mysqlTable("documentos", {
   esVersionVigente: boolean("es_version_vigente").default(true).notNull(),
   nombreArchivo: varchar("nombre_archivo", { length: 255 }).notNull(),
   mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  mimeDetectado: varchar("mime_detectado", { length: 120 }),
   tamanoBytes: bigint("tamano_bytes", { mode: "number", unsigned: true }).notNull(),
   sha256: varchar("sha256", { length: 64 }).notNull(),
   storageKey: varchar("storage_key", { length: 500 }).notNull(),
@@ -342,8 +343,11 @@ export const hitos = mysqlTable("hitos", {
   descripcion: text("descripcion"),
   fechaProgramada: timestamp("fecha_programada").notNull(),
   fechaRealizada: timestamp("fecha_realizada"),
-  estado: mysqlEnum("estado", ["PENDIENTE", "EN_PROGRESO", "COMPLETADO", "CANCELADO", "RETRASADO"]).default("PENDIENTE").notNull(),
+  estado: mysqlEnum("estado", ["PENDIENTE", "EN_PROGRESO", "COMPLETADO", "CANCELADO", "RETRASADO", "ANULADO"]).default("PENDIENTE").notNull(),
   cumplido: boolean("cumplido").default(false).notNull(),
+  motivoAnulacion: text("motivo_anulacion"),
+  anuladoPor: bigint("anulado_por", { mode: "number", unsigned: true }),
+  anuladoAt: timestamp("anulado_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("hitos_tenant_licitacion_idx").on(t.tenantId, t.licitacionId, t.fechaProgramada),
@@ -1691,3 +1695,78 @@ export const auditChainHeads = mysqlTable("audit_chain_heads", {
   foreignKey({ name: "audit_heads_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
 ]);
 
+
+export const calendarioVersiones = mysqlTable("calendario_versiones", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  calendarioActoId: bigint("calendario_acto_id", { mode: "number", unsigned: true }).notNull(),
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  acto: varchar("acto", { length: 60 }).notNull(),
+  version: int("version").notNull(),
+  ventanaInicio: timestamp("ventana_inicio").notNull(),
+  ventanaFin: timestamp("ventana_fin").notNull(),
+  obligatorio: boolean("obligatorio").default(true).notNull(),
+  motivo: varchar("motivo", { length: 500 }).notNull(),
+  changedBy: bigint("changed_by", { mode: "number", unsigned: true }).notNull(),
+  approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
+  breakGlassId: bigint("break_glass_id", { mode: "number", unsigned: true }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cal_ver_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("cal_ver_acto_ver_uq").on(t.tenantId, t.calendarioActoId, t.version),
+  index("cal_ver_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "cal_ver_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+]);
+
+export const loginRateLimits = mysqlTable("login_rate_limits", {
+  id: serial("id").primaryKey(),
+  scope: mysqlEnum("scope", ["IP", "ACCOUNT"]).notNull(),
+  scopeKey: varchar("scope_key", { length: 255 }).notNull(),
+  failCount: int("fail_count").default(0).notNull(),
+  windowStartedAt: timestamp("window_started_at").defaultNow().notNull(),
+  lockedUntil: timestamp("locked_until"),
+  lastFailAt: timestamp("last_fail_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("lrl_scope_key_uq").on(t.scope, t.scopeKey),
+]);
+
+export const firmasElectronicas = mysqlTable("firmas_electronicas", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  documentoId: bigint("documento_id", { mode: "number", unsigned: true }),
+  entidadRef: varchar("entidad_ref", { length: 64 }).notNull(),
+  entidadId: bigint("entidad_id", { mode: "number", unsigned: true }).notNull(),
+  kind: mysqlEnum("kind", ["SESSION_CONFIRMATION", "CRYPTO_SIGNATURE"]).default("SESSION_CONFIRMATION").notNull(),
+  documentDigest: varchar("document_digest", { length: 64 }).notNull(),
+  algorithm: varchar("algorithm", { length: 64 }).default("SHA256").notNull(),
+  signatureValue: text("signature_value"),
+  certificatePem: text("certificate_pem"),
+  signerUserId: bigint("signer_user_id", { mode: "number", unsigned: true }).notNull(),
+  signedAt: timestamp("signed_at").defaultNow().notNull(),
+  validationStatus: mysqlEnum("validation_status", ["PENDING", "VALID", "INVALID", "NOT_APPLICABLE"]).default("NOT_APPLICABLE").notNull(),
+  motivo: varchar("motivo", { length: 500 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("firma_tenant_id_uq").on(t.tenantId, t.id),
+  index("firma_entidad_idx").on(t.tenantId, t.entidadRef, t.entidadId),
+  index("firma_doc_idx").on(t.tenantId, t.documentoId),
+  foreignKey({ name: "firma_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "firma_signer_fk", columns: [t.tenantId, t.signerUserId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const tenantSmtpSettings = mysqlTable("tenant_smtp_settings", {
+  tenantId: bigint("tenant_id", { mode: "number", unsigned: true }).primaryKey(),
+  host: varchar("host", { length: 255 }),
+  port: int("port"),
+  secure: boolean("secure").default(false).notNull(),
+  username: varchar("username", { length: 255 }),
+  fromAddress: varchar("from_address", { length: 255 }),
+  fromName: varchar("from_name", { length: 180 }),
+  status: mysqlEnum("status", ["UNSET", "CONFIGURED", "DISABLED", "ERROR"]).default("UNSET").notNull(),
+  lastError: text("last_error"),
+  updatedBy: bigint("updated_by", { mode: "number", unsigned: true }),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  foreignKey({ name: "tenant_smtp_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+]);

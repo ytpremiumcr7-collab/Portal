@@ -8,6 +8,8 @@ import { actosTerminacion, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { writeAudit } from "../lib/security";
+import { assertDocumentoBoundToContext } from "../lib/documento-binding";
+import { documentos } from "@db/schema";
 import { enqueueOutbox } from "../lib/outbox";
 
 export const terminacionRouter = createRouter({
@@ -31,6 +33,19 @@ export const terminacionRouter = createRouter({
     }
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente." });
+    if (input.documentoId) {
+      const doc = await getDb().query.documentos.findFirst({ where: and(eq(documentos.id, input.documentoId), eq(documentos.tenantId, ctx.user.tenantId)) });
+      assertDocumentoBoundToContext(doc as any, {
+        tenantId: ctx.user.tenantId,
+        expedienteId: expediente.id,
+        licitacionId: input.licitacionId,
+        expectedTipo: doc?.tipo ?? "OTRO",
+      });
+      // Re-assert tipo is an allowed evidence type for terminacion
+      if (!doc || !["ACTA_EVALUACION", "FALLO_ADJUDICACION", "DICTAMEN", "OTRO", "JUNTA_ACLARACIONES"].includes(doc.tipo)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Documento de evidencia de terminación: tipo no admitido o no APROBADO/vigente en contexto." });
+      }
+    }
     const db = getDb();
     const result = await db.insert(actosTerminacion).values({
       tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, expedienteId: expediente.id,

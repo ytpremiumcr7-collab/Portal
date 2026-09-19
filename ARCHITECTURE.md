@@ -237,9 +237,41 @@ procedureMutation({ capability, role|roles[], resolveLicitacionId })
 Migration: **`0015_procedure_authority.sql`**.
 
 
+
+
+## P1 audit close-out (0017) — residual after cfaeee5 / 38d82c9
+
+| ID | Fix |
+|----|-----|
+| P1-1 | Calendario versionado: `calendario_versiones` append-only + expediente event; projection update with motivo/changedBy/approvedBy/breakGlass |
+| P1-2 | Hitos: `anular` → ANULADO + motivo (no `db.delete`) |
+| P1-3 | Evidence binding: terminacion + desempate use `assertDocumentoBoundToContext` + FKs |
+| P1-4 | `verifyDocumentStoreIntegrity` (storage bytes ↔ sha256) via expedientes/auditoria |
+| P1-5 | MIME magic-bytes detect + allowlist; download `X-Content-Type-Options: nosniff` |
+| P1-6 | Login rate limit per IP + account with progressive lockout; MFA/step-up documented as next |
+| P1-7 | Atomic audit: critical paths pass `tx` into `writeAudit` |
+| P1-8 | Removed throwing stubs `capabilities.grant` / `sod.asignar`; UI uses request/approve |
+| UI-9 | Capabilities admin + SoD request/approve |
+| UI-10 | Desempate page → emitir/registrarResultado |
+| UI-11 | Planeacion UI: programas, partidas, suficiencia, estrategia, vincular |
+| UI-12 | InvestigacionMercado UI: cotizaciones, validar/descartar, comparativo, concluir |
+| UI-13 | Public: PAAASOP/programas + investigación concluida; downloads `/api/public/documents/:id` |
+| UI-14 | Proveedor `retirar` vs admin `invalidar` (separate mutations) |
+| INF-15 | GitHub Actions CI: install, tsc, test, static (+ optional MariaDB) |
+| INF-16 | `EnvelopeKeyProvider` (Env default + AwsKms/Vault stubs) |
+| INF-17 | `firmas_electronicas` + dictamen.firmar SESSION_CONFIRMATION (honest; not e.firma avanzada) |
+| INF-18 | SMTP tenant settings UI + outbox list |
+
+### Residuals (intentionally open)
+1. True e.firma / FIEL provider (qualified certificate)
+2. Real KMS/HSM credentials (AwsKms/Vault stubs only)
+3. Full Compras MX parity modules beyond current cores
+
+Migration: **`0017_audit_p1_closeout.sql`**.
+
 ## Residual risks (intentionally open)
 
-1. **HSM / KMS for envelope keys** — `ARES_ENVELOPE_KEY` is env-material today (AES-256-GCM software). Production should move active keys to HSM/KMS with app-level unwrap; rotation stub (`ARES_ENVELOPE_KEY_V{n}`) remains software-side until then.
-2. E-signature (advanced / qualified) — still deferred.
-3. Full multi-tenant SMTP credentials UI — deferred.
+1. **HSM / KMS for envelope keys** — EnvKeyProvider default; AwsKms/Vault stubs exist but need real credentials (AES-256-GCM software). Production should move active keys to HSM/KMS with app-level unwrap; rotation stub (`ARES_ENVELOPE_KEY_V{n}`) remains software-side until then.
+2. E-signature (advanced / qualified / FIEL) — structure via firmas_electronicas (SESSION_CONFIRMATION / CRYPTO_SIGNATURE); true FIEL provider still deferred.
+3. Full multi-tenant SMTP password vaulting — UI host/from/status + outbox landed; secret material remains env/worker-side.
 

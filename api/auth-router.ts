@@ -8,6 +8,8 @@ import { createSession, clearSessionCookie, hashPassword, verifyPassword, revoke
 import { pageInput, pageResult } from "./lib/pagination";
 import { TRPCError } from "@trpc/server";
 import { env } from "./lib/env";
+import { assertLoginAllowed, recordLoginFailure, recordLoginSuccess } from "./lib/login-rate-limit";
+import { requestMeta } from "./lib/security";
 
 const rfcMx = z.string().trim().toUpperCase().regex(/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3}$/i, "RFC mexicano inválido.");
 const strongPassword = z.string().min(12, "La contraseña debe tener al menos 12 caracteres.");
@@ -63,11 +65,15 @@ export const authRouter = createRouter({
   }),
 
   login: publicQuery.input(z.object({ email: z.string().email().transform(v => v.toLowerCase().trim()), password: z.string().min(1) })).mutation(async ({ input, ctx }) => {
+    const ip = requestMeta(ctx.req).ipAddress;
+    await assertLoginAllowed(ip, input.email);
     const db = getDb();
     const user = await db.query.users.findFirst({ where: eq(users.email, input.email) });
     if (!user || !user.passwordHash || !user.activo || !(await verifyPassword(input.password, user.passwordHash))) {
+      await recordLoginFailure(ip, input.email).catch(() => undefined);
       throw new TRPCError({ code: "UNAUTHORIZED", message: "Correo o contraseña incorrectos." });
     }
+    await recordLoginSuccess(ip, input.email).catch(() => undefined);
     await db.update(users).set({ lastSignInAt: new Date() }).where(eq(users.id, user.id));
     const session = await createSession(user, ctx.req);
     setSessionCookie(ctx.resHeaders, session);

@@ -33,6 +33,9 @@ import Inconformidades from "@/pages/Inconformidades";
 import Notificaciones from "@/pages/Notificaciones";
 import ConsultaPublica from "@/pages/ConsultaPublica";
 import SoD from "@/pages/SoD";
+import Capabilities from "@/pages/Capabilities";
+import Desempate from "@/pages/Desempate";
+import SmtpSettings from "@/pages/SmtpSettings";
 import PortalPublico from "@/pages/PortalPublico";
 import Convocatorias from "@/pages/Convocatorias";
 import BuscadorPublico from "@/pages/BuscadorPublico";
@@ -102,6 +105,9 @@ export default function App() {
             <Route path="/notificaciones" element={<RoleGate roles={["admin","licitante","proveedor"]}><Notificaciones /></RoleGate>} />
             <Route path="/auditoria" element={<RoleGate roles={["admin"]}><Auditoria /></RoleGate>} />
             <Route path="/sod" element={<RoleGate roles={["admin"]}><SoD /></RoleGate>} />
+            <Route path="/capabilities" element={<RoleGate roles={["admin"]}><Capabilities /></RoleGate>} />
+            <Route path="/desempate" element={<RoleGate roles={["admin","licitante"]}><Desempate /></RoleGate>} />
+            <Route path="/smtp" element={<RoleGate roles={["admin"]}><SmtpSettings /></RoleGate>} />
             <Route path="/usuarios" element={<RoleGate roles={["admin"]}><Usuarios /></RoleGate>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

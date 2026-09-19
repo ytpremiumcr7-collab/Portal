@@ -30,6 +30,9 @@ import {
   ScrollText,
   Landmark,
   Briefcase,
+  Dices,
+  KeyRound,
+  Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMemo, useState } from "react";
@@ -85,6 +88,7 @@ const navGroups: NavGroup[] = [
       { path: "/aperturas", label: "Apertura", icon: PackageOpen, roles: ["admin", "licitante"] },
       { path: "/dictamenes", label: "Evaluación / dictamen", icon: Scale, roles: ["admin", "licitante"] },
       { path: "/fallos", label: "Fallo", icon: Gavel, roles: ["admin", "licitante"] },
+      { path: "/desempate", label: "Desempate", icon: Dices, roles: ["admin", "licitante"] },
       { path: "/acto-adjudicacion", label: "Acto de adjudicación", icon: Gavel, roles: ["admin", "licitante"] },
       { path: "/comision", label: "Comisión / COI", icon: Users, roles: ["admin", "licitante"] },
       { path: "/terminacion", label: "Cancelación / desierto", icon: Ban, roles: ["admin", "licitante"] },
@@ -109,6 +113,8 @@ const navGroups: NavGroup[] = [
       { path: "/hitos", label: "Hitos / evidencias", icon: AlertTriangle, roles: ["admin", "licitante"] },
       { path: "/auditoria", label: "Bitácora de eventos", icon: Shield, roles: ["admin"] },
       { path: "/sod", label: "Segregación de funciones", icon: SplitSquareVertical, roles: ["admin"] },
+      { path: "/capabilities", label: "Capacidades", icon: KeyRound, roles: ["admin"] },
+      { path: "/smtp", label: "SMTP / outbox", icon: Mail, roles: ["admin"] },
       { path: "/usuarios", label: "Usuarios", icon: Users, roles: ["admin"] },
     ],
   },
