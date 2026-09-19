@@ -214,3 +214,17 @@ describe("second-person grant rules (pure)", () => {
     expect(approverSameAsBeneficiary === beneficiary).toBe(true);
   });
 });
+
+
+describe("four-eyes consent (pure)", () => {
+  function canApprove(approverId: number, requesterId: number, beneficiaryId: number) {
+    return approverId !== requesterId && approverId !== beneficiaryId;
+  }
+  it("cannot self-approve: approver must differ from requester and beneficiary", () => {
+    expect(canApprove(10, 10, 20)).toBe(false);
+    expect(canApprove(20, 10, 20)).toBe(false);
+  });
+  it("second session approve works when approver is third party", () => {
+    expect(canApprove(30, 10, 20)).toBe(true);
+  });
+});

@@ -1631,6 +1631,57 @@ export const breakGlassGrants = mysqlTable("break_glass_grants", {
   foreignKey({ name: "bg_grantor_fk", columns: [t.tenantId, t.grantedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
 ]);
 
+
+export const capabilityGrantRequests = mysqlTable("capability_grant_requests", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  userId: bigint("user_id", { mode: "number", unsigned: true }).notNull(),
+  capability: varchar("capability", { length: 64 }).notNull(),
+  granted: boolean("granted").default(true).notNull(),
+  overrideSod: boolean("override_sod").default(false).notNull(),
+  justificacionOverride: text("justificacion_override"),
+  expiresAt: timestamp("expires_at"),
+  status: mysqlEnum("status", ["PENDING", "APPROVED", "REJECTED", "CANCELLED"]).default("PENDING").notNull(),
+  requestedBy: bigint("requested_by", { mode: "number", unsigned: true }).notNull(),
+  approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
+  approvedAt: timestamp("approved_at"),
+  motivo: varchar("motivo", { length: 500 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("cgr_tenant_id_uq").on(t.tenantId, t.id),
+  index("cgr_status_idx").on(t.tenantId, t.status),
+  index("cgr_user_idx").on(t.tenantId, t.userId),
+  foreignKey({ name: "cgr_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "cgr_user_fk", columns: [t.tenantId, t.userId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  foreignKey({ name: "cgr_requester_fk", columns: [t.tenantId, t.requestedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const sodAssignmentRequests = mysqlTable("sod_assignment_requests", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  userId: bigint("user_id", { mode: "number", unsigned: true }).notNull(),
+  rol: varchar("rol", { length: 64 }).notNull(),
+  overrideSod: boolean("override_sod").default(false).notNull(),
+  justificacionOverride: text("justificacion_override"),
+  status: mysqlEnum("status", ["PENDING", "APPROVED", "REJECTED", "CANCELLED"]).default("PENDING").notNull(),
+  requestedBy: bigint("requested_by", { mode: "number", unsigned: true }).notNull(),
+  approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
+  approvedAt: timestamp("approved_at"),
+  motivo: varchar("motivo", { length: 500 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("sar_tenant_id_uq").on(t.tenantId, t.id),
+  index("sar_status_idx").on(t.tenantId, t.status),
+  index("sar_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "sar_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "sar_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "sar_user_fk", columns: [t.tenantId, t.userId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  foreignKey({ name: "sar_requester_fk", columns: [t.tenantId, t.requestedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
 export const auditChainHeads = mysqlTable("audit_chain_heads", {
   tenantId: bigint("tenant_id", { mode: "number", unsigned: true }).primaryKey(),
   lastEventHash: varchar("last_event_hash", { length: 64 }),

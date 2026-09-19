@@ -11,6 +11,7 @@ import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementStatuses } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
+import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed } from "../lib/document-access";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const allowedTypes = ["CONVOCATORIA","FUNDAMENTO_JURIDICO","PLIEGO_TECNICO","PLIEGO_ADMINISTRATIVO","JUNTA_ACLARACIONES","ACTA_APERTURA","OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA","ACTA_EVALUACION","DICTAMEN","FALLO_ADJUDICACION","CONTRATO","FACTURA","OTRO"] as const;
@@ -48,13 +49,21 @@ export const documentosRouter = createRouter({
     if (input?.estado) conditions.push(eq(documentos.estado, input.estado));
     const where = and(...conditions); const db = getDb();
     const [items, totalRows] = await Promise.all([db.query.documentos.findMany({ where, orderBy: [desc(documentos.fechaSubida)], limit: pageSize, offset, with: { expediente: true, licitacion: true, proveedor: true, usuario: true } }), db.select({ total: count() }).from(documentos).where(where)]);
-    return pageResult(items, Number(totalRows[0]?.total ?? 0), page, pageSize);
+    const readable = await filterReadableDocuments(
+      { id: ctx.user.id, tenantId: ctx.user.tenantId, role: ctx.user.role },
+      items as any[],
+    );
+    // Preserve pagination total as pre-filter count for UX stability; items are authz-filtered.
+    return pageResult(readable, Number(totalRows[0]?.total ?? 0), page, pageSize);
   }),
 
   getById: authedQuery.input(z.object({ id: z.number().int().positive() })).query(async ({ input, ctx }) => {
     const db = getDb(); const doc = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true, licitacion: true, proveedor: true, usuario: true } });
     if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
-    if (ctx.user.role === "proveedor" && doc.proveedor?.usuarioId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "No puede consultar este documento." });
+    await authorizeDocumentRead(
+      { id: ctx.user.id, tenantId: ctx.user.tenantId, role: ctx.user.role },
+      doc as any,
+    );
     return doc;
   }),
 
@@ -67,6 +76,12 @@ export const documentosRouter = createRouter({
       const provider = await db.query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.usuarioId, ctx.user.id), eq(proveedores.activo, true)) });
       if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "El documento no pertenece a su expediente." });
       if (!["OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA"].includes(input.tipo)) throw new TRPCError({ code: "FORBIDDEN", message: "El rol proveedor sólo puede cargar oferta técnica, oferta económica o garantía." });
+      await assertOfertaUploadAllowed({
+        tenantId: ctx.user.tenantId,
+        proveedorId: provider.id,
+        licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null,
+        tipo: input.tipo,
+      });
       if (input.esPublico) throw new TRPCError({ code: "FORBIDDEN", message: "Los documentos de proveedor no pueden publicarse directamente." });
     }
     if (input.reemplazaDocumentoId && !expediente) throw new TRPCError({ code: "BAD_REQUEST", message: "La sustitución documental requiere expediente." });

@@ -142,7 +142,7 @@ export function mapDocTipoToRol(tipo: string): PropDocRol | null {
   if (tipo === "OFERTA_TECNICA") return "OFERTA_TECNICA";
   if (tipo === "OFERTA_ECONOMICA") return "OFERTA_ECONOMICA";
   if (tipo === "GARANTIA") return "GARANTIA_SERIEDAD";
-  if (tipo === "ANEXO" || tipo.startsWith("ANEXO")) return "ANEXO";
+  if (tipo === "ANEXO" || tipo.startsWith("ANEXO") || tipo === "OTRO") return "ANEXO";
   return null;
 }
 

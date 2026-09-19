@@ -27,6 +27,7 @@ services:
       - ./db/migrations/0013_preprod_p0p1.sql:/docker-entrypoint-initdb.d/13.sql:ro
       - ./db/migrations/0014_sobre_economico.sql:/docker-entrypoint-initdb.d/14.sql:ro
       - ./db/migrations/0015_procedure_authority.sql:/docker-entrypoint-initdb.d/15.sql:ro
+      - ./db/migrations/0016_four_eyes_requests.sql:/docker-entrypoint-initdb.d/16.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s

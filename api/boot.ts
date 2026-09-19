@@ -10,7 +10,8 @@ import { createContext } from "./context";
 import { env } from "./lib/env";
 import { authenticateRequest } from "./lib/security";
 import { getDb } from "./queries/connection";
-import { documentos} from "@db/schema";
+import { documentos } from "@db/schema";
+import { authorizeDocumentRead, assertPublicDocumentReadable } from "./lib/document-access";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 app.use(bodyLimit({ maxSize: 30 * 1024 * 1024 }));
@@ -27,7 +28,15 @@ app.get("/api/documents/:id/download", async (c) => {
     with: { proveedor: true },
   });
   if (!doc) return c.json({ error: "Documento no encontrado" }, 404);
-  if (user.role === "proveedor" && !doc.esPublico && doc.proveedor?.usuarioId !== user.id) return c.json({ error: "Sin permiso" }, 403);
+    try {
+    await authorizeDocumentRead(
+      { id: user.id, tenantId: user.tenantId, role: user.role },
+      doc as any,
+    );
+  } catch (e: any) {
+    const code = e?.code === "NOT_FOUND" ? 404 : 403;
+    return c.json({ error: e?.message ?? "Sin permiso" }, code);
+  }
   try {
     const data = await readFile(path.resolve(env.storagePath, doc.storageKey));
     return new Response(data, { headers: { "content-type": doc.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(doc.nombreArchivo)}`, "cache-control": "private, no-store" } });
@@ -35,6 +44,29 @@ app.get("/api/documents/:id/download", async (c) => {
     return c.json({ error: "Archivo no disponible" }, 404);
   }
 });
+
+app.get("/api/public/documents/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "Documento inválido" }, 400);
+  const db = getDb();
+  const doc = await db.query.documentos.findFirst({
+    where: eq(documentos.id, id),
+    with: { licitacion: true, proveedor: true },
+  });
+  if (!doc) return c.json({ error: "Documento no encontrado" }, 404);
+  try {
+    await assertPublicDocumentReadable(doc as any);
+  } catch (e: any) {
+    return c.json({ error: e?.message ?? "No disponible públicamente" }, 403);
+  }
+  try {
+    const data = await readFile(path.resolve(env.storagePath, doc.storageKey));
+    return new Response(data, { headers: { "content-type": doc.mimeType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(doc.nombreArchivo)}`, "cache-control": "public, max-age=300" } });
+  } catch {
+    return c.json({ error: "Archivo no disponible" }, 404);
+  }
+});
+
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 export default app;
 

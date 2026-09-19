@@ -4,17 +4,17 @@ import { TRPCError } from "@trpc/server";
 import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
 import { licitacionIdFromApertura, licitacionIdFromInput } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
-import { aperturas, aperturaRegistros, participaciones, licitaciones, documentos, proposiciones, proposicionDocumentos, licitacionReglasVersion } from "@db/schema";
+import { aperturas, aperturaRegistros, participaciones, licitaciones, proposiciones, proposicionDocumentos, licitacionReglasVersion } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { assertAperturaTransition } from "../lib/phase2-transitions";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { buildProposicionManifest, buildAperturaSealFromProposicionManifests, mapDocTipoToRol, assertProposicionDocsCompletos, assertProposicionSelladaCompleta } from "../lib/proposicion";
+import { buildProposicionManifest, buildAperturaSealFromProposicionManifests, assertProposicionDocsCompletos, assertProposicionSelladaCompleta } from "../lib/proposicion";
 import { parseRequisitos } from "../lib/procedure-policy";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
 import { loadSobreForParticipacion, revelarSobresEconomicos } from "../lib/sobre-economico";
-import { ENVELOPE_PLACEHOLDER_MONTO, ciphertextHash } from "../lib/envelope-crypto";
+import { ciphertextHash } from "../lib/envelope-crypto";
 
 export const aperturasRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -72,75 +72,57 @@ export const aperturasRouter = createRouter({
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
     assertAperturaTransition(apertura.estado as any, "SELLADA");
     const offers = await db.query.participaciones.findMany({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, apertura.licitacionId)) });
-    const docs = await db.query.documentos.findMany({
-      where: and(eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.licitacionId, apertura.licitacionId), eq(documentos.esVersionVigente, true)),
-    });
     const frozen = await db.query.licitacionReglasVersion.findFirst({
       where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, apertura.licitacionId)),
       orderBy: [desc(licitacionReglasVersion.version)],
     });
     const requisitos = parseRequisitos(frozen?.requisitos);
     const manifests: Array<{ proposicionId: number; proveedorId: number; manifestHash: string }> = [];
+    // P0-01: verify existing proposicion_documentos + manifestHash — do NOT rebuild from live docs bag.
+    for (const o of offers) {
+      const prop = await db.query.proposiciones.findFirst({
+        where: and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, o.id)),
+      });
+      if (!prop) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Participación #${o.id} sin proposición presentada; no se puede sellar.` });
+      }
+      if (!prop.manifestHash) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Proposición #${prop.id} sin manifestHash; presente incompleto.` });
+      }
+      const sealedDocs = await db.query.proposicionDocumentos.findMany({
+        where: and(eq(proposicionDocumentos.tenantId, ctx.user.tenantId), eq(proposicionDocumentos.proposicionId, prop.id)),
+      });
+      const propDocs = sealedDocs.map((d) => ({ documentoId: d.documentoId, rol: d.rol as any, sha256: d.sha256 }));
+      assertProposicionDocsCompletos(propDocs, requisitos);
+      const sobre = await loadSobreForParticipacion(db, ctx.user.tenantId, o.id);
+      if (!sobre?.ciphertext) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Participación #${o.id} sin sobre económico sellado.` });
+      }
+      const ctHash = ciphertextHash(sobre.ciphertext);
+      const { manifestHash } = buildProposicionManifest({
+        proposicionId: prop.id,
+        participacionId: o.id,
+        proveedorId: o.proveedorId,
+        ciphertextHash: ctHash,
+        recibidoAt: prop.recibidoAt,
+        documentos: propDocs,
+      });
+      if (manifestHash !== prop.manifestHash) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Proposición #${prop.id}: manifestHash almacenado no coincide con proposicion_documentos + sobre (posible manipulación).`,
+        });
+      }
+      manifests.push({ proposicionId: prop.id, proveedorId: o.proveedorId, manifestHash: prop.manifestHash });
+    }
     let selloHash = "";
     await db.transaction(async (tx) => {
-      for (const o of offers) {
-        const propDocs = docs
-          .filter((d) => d.proveedorId === o.proveedorId)
-          .map((d) => {
-            const rol = mapDocTipoToRol(d.tipo);
-            return rol ? { documentoId: d.id, rol, sha256: d.sha256 } : null;
-          })
-          .filter((x): x is { documentoId: number; rol: "OFERTA_TECNICA" | "OFERTA_ECONOMICA" | "ANEXO" | "GARANTIA_SERIEDAD"; sha256: string } => !!x);
-        assertProposicionDocsCompletos(propDocs, requisitos);
-        let prop = await tx.query.proposiciones.findFirst({
-          where: and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, o.id)),
-        });
-        // recibidoAt from participación (authoritative at create), never seal time.
-        const recibidoAt = (o as any).recibidoAt ?? prop?.recibidoAt ?? new Date();
-        if (!prop) {
-          // Keep placeholder — seal must NOT decrypt. Reveal only on abrir/registrarOfertas.
-          const ins = await tx.insert(proposiciones).values({
-            tenantId: ctx.user.tenantId,
-            licitacionId: apertura.licitacionId,
-            proveedorId: o.proveedorId,
-            participacionId: o.id,
-            estado: "RECIBIDA",
-            montoOferta: ENVELOPE_PLACEHOLDER_MONTO,
-            recibidoAt,
-          } as any);
-          const propId = Number(ins[0].insertId);
-          prop = await tx.query.proposiciones.findFirst({ where: and(eq(proposiciones.id, propId), eq(proposiciones.tenantId, ctx.user.tenantId)) });
-        }
-        const sobre = await loadSobreForParticipacion(tx, ctx.user.tenantId, o.id);
-        if (!sobre?.ciphertext) {
-          throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Participación #${o.id} sin sobre económico sellado; no se puede sellar con plaintext.` });
-        }
-        const ctHash = ciphertextHash(sobre.ciphertext);
-        const { manifestHash } = buildProposicionManifest({
-          proposicionId: prop!.id,
-          participacionId: o.id,
-          proveedorId: o.proveedorId,
-          ciphertextHash: ctHash,
-          recibidoAt: prop!.recibidoAt ?? recibidoAt,
-          documentos: propDocs,
-        });
-        await tx.delete(proposicionDocumentos).where(and(eq(proposicionDocumentos.tenantId, ctx.user.tenantId), eq(proposicionDocumentos.proposicionId, prop!.id)));
-        for (const d of propDocs) {
-          await tx.insert(proposicionDocumentos).values({
-            tenantId: ctx.user.tenantId,
-            proposicionId: prop!.id,
-            documentoId: d.documentoId,
-            rol: d.rol,
-            sha256: d.sha256,
-          } as any);
-        }
+      for (const m of manifests) {
         await tx.update(proposiciones).set({
-          manifestHash, sealHash: manifestHash, sealedAt: new Date(), estado: "SELLADA",
-        } as any).where(and(eq(proposiciones.id, prop!.id), eq(proposiciones.tenantId, ctx.user.tenantId)));
-        manifests.push({ proposicionId: prop!.id, proveedorId: o.proveedorId, manifestHash });
+          sealHash: m.manifestHash, sealedAt: new Date(), estado: "SELLADA",
+        } as any).where(and(eq(proposiciones.id, m.proposicionId), eq(proposiciones.tenantId, ctx.user.tenantId)));
       }
       selloHash = buildAperturaSealFromProposicionManifests(manifests);
-      // Seal read+write + apertura transition in SAME TX.
       const result = await tx.update(aperturas).set({ estado: "SELLADA", fechaSellado: new Date(), selloHash } as any)
         .where(and(eq(aperturas.id, apertura.id), eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.estado, apertura.estado)));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La apertura cambió de estado." });

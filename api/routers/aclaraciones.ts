@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { and, count, desc, eq, asc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, proveedorQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, proveedorQuery, authedQuery, ctxForAudit, procedureMutation } from "../middleware";
 import { getDb } from "../queries/connection";
 import { aclaracionesJuntas, aclaracionesPreguntas, aclaracionesRespuestas, proveedores, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
+import { licitacionIdFromInput, licitacionIdFromJunta } from "../lib/procedure-resolvers";
 import { assertAclaracionJuntaTransition } from "../lib/phase2-transitions";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
@@ -39,7 +40,7 @@ export const aclaracionesRouter = createRouter({
     return junta;
   }),
 
-  crearJunta: capabilityQuery("publicar").input(z.object({
+  crearJunta: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({
     licitacionId: z.number().int().positive(),
     nombre: z.string().trim().min(3).default("Junta de aclaraciones"),
     modalidad: z.enum(["PRESENCIAL", "VIRTUAL", "MIXTA"]).default("VIRTUAL"),
@@ -72,7 +73,7 @@ export const aclaracionesRouter = createRouter({
     return created;
   }),
 
-  transicionarJunta: capabilityQuery("publicar").input(z.object({
+  transicionarJunta: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromJunta(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     siguiente: z.enum(["ABIERTA", "CERRADA_PREGUNTAS", "EN_RESPUESTA", "ACTA_EMITIDA", "PUBLICADA", "CANCELADA"]),
     actaResumen: z.string().trim().min(10).optional(),
@@ -118,7 +119,7 @@ export const aclaracionesRouter = createRouter({
     return getDb().query.aclaracionesPreguntas.findFirst({ where: and(eq(aclaracionesPreguntas.id, id), eq(aclaracionesPreguntas.tenantId, ctx.user.tenantId)) });
   }),
 
-  responderPregunta: capabilityQuery("publicar").input(z.object({
+  responderPregunta: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromJunta(i, ctx.user!.tenantId) }).input(z.object({
     preguntaId: z.number().int().positive(),
     respuesta: z.string().trim().min(5).max(8000),
     esPublica: z.boolean().default(true),

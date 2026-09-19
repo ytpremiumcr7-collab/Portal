@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { eq, desc, and, count, sql } from "drizzle-orm";
+import { eq, desc, and, count, sql, inArray } from "drizzle-orm";
 import { createRouter, procedureMutation, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { participaciones, proveedores, licitacionReglasVersion, proposiciones, coiDeclaraciones, actosDesempate } from "@db/schema";
+import { participaciones, proveedores, licitacionReglasVersion, proposiciones, proposicionDocumentos, documentos, coiDeclaraciones, actosDesempate } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertLicitacionExists, validateRubric } from "../lib/domain";
 import { assertPositiveDays, assertScore } from "../lib/security";
@@ -11,8 +11,8 @@ import { writeAudit } from "../lib/security";
 import { detectLicitacionRisks } from "../lib/detection";
 import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
 import { computeScoresAndOrden, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
-import { mapEvalToProposicionEstado } from "../lib/proposicion";
-import { parseTieBreakPolicy } from "../lib/procedure-policy";
+import { mapEvalToProposicionEstado, buildProposicionManifest, mapDocTipoToRol, assertProposicionDocsCompletos } from "../lib/proposicion";
+import { parseTieBreakPolicy, parseRequisitos } from "../lib/procedure-policy";
 import { assertRecepcionDentroDeVentana } from "../lib/calendario-gates";
 import {
   loadAperturaEstado,
@@ -23,6 +23,7 @@ import {
   isLegacyPlaintextCandidate,
   ENVELOPE_PLACEHOLDER_MONTO,
 } from "../lib/sobre-economico";
+import { ciphertextHash } from "../lib/envelope-crypto";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { licitacionIdFromParticipacion } from "../lib/procedure-resolvers";
 
@@ -124,7 +125,13 @@ export const participacionesRouter = createRouter({
     });
   }),
 
-  create: proveedorQuery.input(z.object({ licitacionId: z.number().int().positive(), montoOferta: money, plazoEjecucion: z.number().int().positive(), observaciones: z.string().trim().optional() })).mutation(async ({ input, ctx }) => {
+  create: proveedorQuery.input(z.object({
+    licitacionId: z.number().int().positive(),
+    montoOferta: money,
+    plazoEjecucion: z.number().int().positive(),
+    observaciones: z.string().trim().optional(),
+    documentoIds: z.array(z.number().int().positive()).min(2),
+  })).mutation(async ({ input, ctx }) => {
     const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
@@ -135,13 +142,43 @@ export const participacionesRouter = createRouter({
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
     if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });
+
+    const uniqueDocIds = [...new Set(input.documentoIds)];
+    const docs = await db.query.documentos.findMany({
+      where: and(eq(documentos.tenantId, ctx.user.tenantId), inArray(documentos.id, uniqueDocIds)),
+    });
+    if (docs.length !== uniqueDocIds.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Uno o más documentoIds no existen o no pertenecen al tenant." });
+    }
+    const ALLOWED_DOC_ESTADOS = new Set(["APROBADO", "PENDIENTE", "VALIDANDO"]);
+    for (const d of docs) {
+      if (d.proveedorId !== provider.id) throw new TRPCError({ code: "FORBIDDEN", message: `Documento #${d.id} no pertenece al proveedor.` });
+      if (d.licitacionId !== input.licitacionId) throw new TRPCError({ code: "BAD_REQUEST", message: `Documento #${d.id} no pertenece a esta licitación.` });
+      if (!d.esVersionVigente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Documento #${d.id} no es versión vigente.` });
+      if (!ALLOWED_DOC_ESTADOS.has(d.estado)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Documento #${d.id} en estado no permitido (${d.estado}).` });
+    }
+    const propDocs = docs.map((d) => {
+      const rol = mapDocTipoToRol(d.tipo);
+      if (!rol) throw new TRPCError({ code: "BAD_REQUEST", message: `Documento #${d.id} tipo ${d.tipo} no es rol de proposición.` });
+      return { documentoId: d.id, rol, sha256: d.sha256 };
+    });
+    const frozen = await db.query.licitacionReglasVersion.findFirst({
+      where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, input.licitacionId)),
+      orderBy: [desc(licitacionReglasVersion.version)],
+    });
+    const requisitos = parseRequisitos(frozen?.requisitos);
+    assertProposicionDocsCompletos(propDocs, requisitos);
+
+    const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
+    if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
+
     const recibidoAt = new Date();
     let id = 0;
     let created: any = null;
+    let manifestHashOut = "";
     await db.transaction(async (tx) => {
       const result = await tx.insert(participaciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
-        // Placeholder until apertura reveal — plaintext lives only in sobres_economicos ciphertext.
         montoOferta: ENVELOPE_PLACEHOLDER_MONTO, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion,
         estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null, recibidoAt,
       } as any);
@@ -151,26 +188,55 @@ export const participacionesRouter = createRouter({
         participacionId: id, estado: "RECIBIDA", montoOferta: ENVELOPE_PLACEHOLDER_MONTO, recibidoAt,
       } as any);
       const proposicionId = Number(propIns[0].insertId);
-      await insertSobreEconomico(tx, {
+      const seal = await insertSobreEconomico(tx, {
         tenantId: ctx.user.tenantId,
         licitacionId: input.licitacionId,
         participacionId: id,
         proposicionId,
         monto: input.montoOferta,
       });
+      const ctHash = ciphertextHash(seal.ciphertext);
+      for (const d of propDocs) {
+        await tx.insert(proposicionDocumentos).values({
+          tenantId: ctx.user.tenantId,
+          proposicionId,
+          documentoId: d.documentoId,
+          rol: d.rol,
+          sha256: d.sha256,
+        } as any);
+      }
+      const { manifestHash } = buildProposicionManifest({
+        proposicionId,
+        participacionId: id,
+        proveedorId: provider.id,
+        ciphertextHash: ctHash,
+        recibidoAt,
+        documentos: propDocs,
+      });
+      manifestHashOut = manifestHash;
+      await tx.update(proposiciones).set({
+        manifestHash, sealHash: manifestHash, sealedAt: recibidoAt, estado: "RECIBIDA",
+      } as any).where(and(eq(proposiciones.id, proposicionId), eq(proposiciones.tenantId, ctx.user.tenantId)));
       await tx.update(proveedores).set({
         licitacionesParticipadas: sql`${proveedores.licitacionesParticipadas} + 1`,
       } as any).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
       created = (await tx.query.participaciones.findFirst({ where: and(eq(participaciones.id, id), eq(participaciones.tenantId, ctx.user.tenantId)) })) as any;
+      await appendExpedienteEvent(tx, ctx, {
+        expedienteId: expediente.id,
+        tipo: "PROPOSICION_PRESENTADA",
+        estadoAnterior: null,
+        estadoNuevo: "RECIBIDA",
+        motivo: "Presentación atómica de proposición con manifiesto documental",
+        payload: { participacionId: id, proposicionId, manifestHash, documentoIds: uniqueDocIds },
+      });
       await writeAudit({
         ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "participaciones", entidadId: id,
-        valorNuevo: { ...created, montoOferta: "[SELLADO]" },
+        valorNuevo: { ...created, montoOferta: "[SELLADO]", manifestHash, proposicionId },
         tx,
       });
     });
     await detectLicitacionRisks(ctx.user.tenantId, input.licitacionId);
-    // Owner response includes submitted monto (never persisted plaintext pre-apertura).
-    return { ...created, montoOferta: input.montoOferta, sobreEconomicoSellado: true };
+    return { ...created, montoOferta: input.montoOferta, sobreEconomicoSellado: true, manifestHash: manifestHashOut };
   }),
 
   evaluar: procedureMutation({

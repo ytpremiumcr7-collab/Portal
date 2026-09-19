@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, procedureMutation, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
 import { licitacionIdFromInput, licitacionIdFromFallo } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { fallos, dictamenes, licitaciones, participaciones } from "@db/schema";
@@ -79,10 +79,10 @@ export const fallosRouter = createRouter({
   emitir: procedureMutation({ capability: "autorizar_fallo", role: "autorizador_fallo", resolveLicitacionId: (i, ctx) => (i as any).licitacionId ? licitacionIdFromInput(i) : licitacionIdFromFallo(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "EMITIDO", input.motivo, { emitidoPor: ctx.user.id, emitidoAt: new Date() });
   }),
-  aprobar: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  aprobar: procedureMutation({ capability: "autorizar_fallo", role: "autorizador_fallo", resolveLicitacionId: (i, ctx) => licitacionIdFromFallo(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "APROBADO", input.motivo, { aprobadoPor: ctx.user.id, aprobadoAt: new Date() });
   }),
-  publicar: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: procedureMutation({ capability: "autorizar_fallo", role: "autorizador_fallo", resolveLicitacionId: (i, ctx) => licitacionIdFromFallo(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "PUBLICADO", input.motivo, { publicadoAt: new Date() });
   }),
 });

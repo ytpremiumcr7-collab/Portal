@@ -1,0 +1,51 @@
+-- 0016: Real four-eyes — request/approve tables (no declarative approvedBy on grant/assign)
+
+CREATE TABLE IF NOT EXISTS `capability_grant_requests` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `tenant_id` bigint(20) unsigned NOT NULL,
+  `user_id` bigint(20) unsigned NOT NULL,
+  `capability` varchar(64) NOT NULL,
+  `granted` tinyint(1) NOT NULL DEFAULT 1,
+  `override_sod` tinyint(1) NOT NULL DEFAULT 0,
+  `justificacion_override` text NULL,
+  `expires_at` timestamp NULL DEFAULT NULL,
+  `status` enum('PENDING','APPROVED','REJECTED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  `requested_by` bigint(20) unsigned NOT NULL,
+  `approved_by` bigint(20) unsigned DEFAULT NULL,
+  `approved_at` timestamp NULL DEFAULT NULL,
+  `motivo` varchar(500) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `cgr_tenant_id_uq` (`tenant_id`,`id`),
+  KEY `cgr_status_idx` (`tenant_id`,`status`),
+  KEY `cgr_user_idx` (`tenant_id`,`user_id`),
+  CONSTRAINT `cgr_tenant_fk` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `cgr_user_fk` FOREIGN KEY (`tenant_id`,`user_id`) REFERENCES `users` (`tenant_id`,`id`) ON DELETE RESTRICT,
+  CONSTRAINT `cgr_requester_fk` FOREIGN KEY (`tenant_id`,`requested_by`) REFERENCES `users` (`tenant_id`,`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `sod_assignment_requests` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `tenant_id` bigint(20) unsigned NOT NULL,
+  `licitacion_id` bigint(20) unsigned NOT NULL,
+  `user_id` bigint(20) unsigned NOT NULL,
+  `rol` varchar(64) NOT NULL,
+  `override_sod` tinyint(1) NOT NULL DEFAULT 0,
+  `justificacion_override` text NULL,
+  `status` enum('PENDING','APPROVED','REJECTED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  `requested_by` bigint(20) unsigned NOT NULL,
+  `approved_by` bigint(20) unsigned DEFAULT NULL,
+  `approved_at` timestamp NULL DEFAULT NULL,
+  `motivo` varchar(500) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `sar_tenant_id_uq` (`tenant_id`,`id`),
+  KEY `sar_status_idx` (`tenant_id`,`status`),
+  KEY `sar_lic_idx` (`tenant_id`,`licitacion_id`),
+  CONSTRAINT `sar_tenant_fk` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `sar_lic_fk` FOREIGN KEY (`tenant_id`,`licitacion_id`) REFERENCES `licitaciones` (`tenant_id`,`id`) ON DELETE RESTRICT,
+  CONSTRAINT `sar_user_fk` FOREIGN KEY (`tenant_id`,`user_id`) REFERENCES `users` (`tenant_id`,`id`) ON DELETE RESTRICT,
+  CONSTRAINT `sar_requester_fk` FOREIGN KEY (`tenant_id`,`requested_by`) REFERENCES `users` (`tenant_id`,`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

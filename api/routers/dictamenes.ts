@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, procedureMutation, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
 import { licitacionIdFromInput, licitacionIdFromDictamen } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { dictamenes, dictamenFirmantes, participaciones, licitaciones } from "@db/schema";
@@ -125,7 +125,7 @@ export const dictamenesRouter = createRouter({
     return updated;
   }),
 
-  aprobar: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  aprobar: procedureMutation({ capability: "emitir_dictamen", role: "dictaminador", resolveLicitacionId: (i, ctx) => licitacionIdFromDictamen(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Dictamen no encontrado." });
@@ -140,7 +140,7 @@ export const dictamenesRouter = createRouter({
     return updated;
   }),
 
-  rechazar: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  rechazar: procedureMutation({ capability: "emitir_dictamen", role: "dictaminador", resolveLicitacionId: (i, ctx) => licitacionIdFromDictamen(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Dictamen no encontrado." });

@@ -176,3 +176,27 @@ export async function licitacionIdFromFiniquito(input: unknown, tenantId: number
   if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Finiquito no encontrado." });
   return licitacionIdFromContrato({ id: row.contratoId }, tenantId);
 }
+
+export async function licitacionIdFromJunta(input: unknown, tenantId: number): Promise<number> {
+  const i = input as { id?: number; juntaId?: number; preguntaId?: number };
+  const { aclaracionesJuntas, aclaracionesPreguntas } = await import("@db/schema");
+  const { and, eq } = await import("drizzle-orm");
+  const { getDb } = await import("../queries/connection");
+  const db = getDb();
+  let juntaId = Number(i.juntaId ?? (i.preguntaId ? NaN : i.id));
+  if (i.preguntaId) {
+    const preg = await db.query.aclaracionesPreguntas.findFirst({
+      where: and(eq(aclaracionesPreguntas.id, Number(i.preguntaId)), eq(aclaracionesPreguntas.tenantId, tenantId)),
+      columns: { juntaId: true },
+    });
+    if (!preg) throw new Error("Pregunta no encontrada");
+    juntaId = preg.juntaId;
+  }
+  if (!Number.isFinite(juntaId) || juntaId <= 0) throw new Error("juntaId inválido");
+  const row = await db.query.aclaracionesJuntas.findFirst({
+    where: and(eq(aclaracionesJuntas.id, juntaId), eq(aclaracionesJuntas.tenantId, tenantId)),
+    columns: { licitacionId: true },
+  });
+  if (!row) throw new Error("Junta no encontrada");
+  return row.licitacionId;
+}

@@ -352,12 +352,18 @@ const sod15 = fs.readFileSync("api/routers/sod.ts", "utf8");
 if (!sod15.includes("requestBreakGlass") || !sod15.includes("approveBreakGlass")) {
   throw new Error("sod must expose request/approve break_glass two-step");
 }
-if (!sod15.includes("userId === ctx.user.id") || !sod15.includes("approvedBy")) {
-  throw new Error("grantBreakGlass must forbid self and require approvedBy / two-step");
+if (sod15.includes("approvedBy: z.number") && sod15.includes("grantBreakGlass") && !sod15.includes("grantBreakGlass de un solo paso está deshabilitado")) {
+  throw new Error("grantBreakGlass must not accept declarative approvedBy; use request/approve only");
+}
+if (!sod15.includes("requestAsignar") || !sod15.includes("approveAsignar")) {
+  throw new Error("sod must expose requestAsignar / approveAsignar four-eyes");
 }
 const cap15 = fs.readFileSync("api/routers/capabilities.ts", "utf8");
-if (!cap15.includes("isProceduralCapability") || !cap15.includes("approvedBy")) {
-  throw new Error("capabilities.grant must block self procedural grant / store approvedBy");
+if (!cap15.includes("requestGrant") || !cap15.includes("approveGrant")) {
+  throw new Error("capabilities must expose requestGrant / approveGrant four-eyes");
+}
+if (cap15.includes("approvedBy: z.number")) {
+  throw new Error("capabilities must not accept declarative approvedBy input");
 }
 const env15 = fs.readFileSync("api/lib/envelope-crypto.ts", "utf8");
 if (!env15.includes("setAAD") || !env15.includes("buildEnvelopeAad")) {
@@ -388,3 +394,56 @@ const dc15 = fs.readFileSync("docker-compose.yml", "utf8");
 if (!dc15.includes("0015_procedure_authority.sql")) throw new Error("docker-compose must mount 0015");
 const mig15 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
 if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-local.sh missing 0015");
+
+// ---- P0 tranche: atomic present, document access, real four-eyes, migrate 0016 ----
+{
+  const sodP0 = fs.readFileSync("api/routers/sod.ts", "utf8");
+  if (!sodP0.includes("requestAsignar") || !sodP0.includes("approveAsignar")) {
+    throw new Error("sod must expose requestAsignar / approveAsignar");
+  }
+  if (!sodP0.includes("requestBreakGlass") || !sodP0.includes("approveBreakGlass")) {
+    throw new Error("sod must expose break_glass two-step");
+  }
+  if (sodP0.includes("approvedBy: z.number") && !sodP0.includes("grantBreakGlass de un solo paso está deshabilitado")) {
+    throw new Error("grantBreakGlass must not rely on declarative approvedBy");
+  }
+  const capP0 = fs.readFileSync("api/routers/capabilities.ts", "utf8");
+  if (!capP0.includes("requestGrant") || !capP0.includes("approveGrant")) {
+    throw new Error("capabilities must expose requestGrant / approveGrant");
+  }
+  if (capP0.includes("approvedBy: z.number")) {
+    throw new Error("capabilities must not accept declarative approvedBy");
+  }
+  const migP0 = fs.readFileSync("db/migrations/0016_four_eyes_requests.sql", "utf8");
+  if (!migP0.includes("capability_grant_requests") || !migP0.includes("sod_assignment_requests")) {
+    throw new Error("0016 must create four-eyes request tables");
+  }
+  const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
+  if (!migSh.includes("0016_four_eyes_requests.sql")) throw new Error("migrate-local.sh must list 0016");
+  if (!/0014_sobre_economico\.sql\s*\\/.test(migSh)) throw new Error("migrate-local.sh missing backslash after 0014");
+  const docPol = fs.readFileSync("api/lib/document-access.ts", "utf8");
+  if (!docPol.includes("authorizeDocumentRead") || !docPol.includes("assertPublicDocumentReadable")) {
+    throw new Error("DocumentAccessPolicy missing");
+  }
+  const bootP0 = fs.readFileSync("api/boot.ts", "utf8");
+  if (!bootP0.includes("authorizeDocumentRead") || !bootP0.includes("/api/public/documents/")) {
+    throw new Error("boot must gate download + public docs endpoint");
+  }
+  const partP0 = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+  if (!partP0.includes("documentoIds") || !partP0.includes("proposicionDocumentos") || !partP0.includes("buildProposicionManifest")) {
+    throw new Error("participaciones.create must accept documentoIds and seal manifest atomically");
+  }
+  const apP0 = fs.readFileSync("api/routers/aperturas.ts", "utf8");
+  if (apP0.includes("delete(proposicionDocumentos)")) {
+    throw new Error("aperturas.sellar must not rebuild proposicion_documentos from live docs");
+  }
+  const dictP0 = fs.readFileSync("api/routers/dictamenes.ts", "utf8");
+  if (/aprobar:\s*adminQuery/.test(dictP0) || /rechazar:\s*adminQuery/.test(dictP0)) {
+    throw new Error("dictamenes.aprobar/rechazar must use procedureMutation");
+  }
+  const falP0 = fs.readFileSync("api/routers/fallos.ts", "utf8");
+  if (/aprobar:\s*adminQuery/.test(falP0) || /publicar:\s*adminQuery/.test(falP0)) {
+    throw new Error("fallos.aprobar/publicar must use procedureMutation");
+  }
+  console.log("governance: P0-01/02/03 + migrate 0016 OK");
+}
