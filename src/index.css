@@ -2,71 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ARES — institutional procurement portal (dark, official) */
+/* ARES — light formal governmental portal (es-MX) */
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 20% 96%;
-    --card: 222 40% 9%;
-    --card-foreground: 210 20% 96%;
-    --popover: 222 40% 9%;
-    --popover-foreground: 210 20% 96%;
-    --primary: 215 55% 42%;
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 47% 20%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 222 30% 14%;
-    --secondary-foreground: 210 20% 92%;
-    --muted: 222 25% 14%;
-    --muted-foreground: 215 12% 58%;
-    --accent: 38 70% 48%;
-    --accent-foreground: 222 47% 6%;
-    --destructive: 0 65% 48%;
+    --secondary: 210 25% 94%;
+    --secondary-foreground: 222 40% 18%;
+    --muted: 210 20% 95%;
+    --muted-foreground: 215 16% 40%;
+    --accent: 152 45% 36%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 65% 42%;
     --destructive-foreground: 0 0% 98%;
-    --border: 222 25% 18%;
-    --input: 222 25% 16%;
-    --ring: 215 55% 42%;
-    --radius: 0.375rem;
-    --sidebar-background: 222 45% 7%;
-    --sidebar-foreground: 210 15% 82%;
-    --sidebar-primary: 215 55% 42%;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 222 47% 28%;
+    --radius: 0.25rem;
+    --sidebar-background: 222 47% 16%;
+    --sidebar-foreground: 210 20% 96%;
+    --sidebar-primary: 152 45% 42%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 30% 12%;
+    --sidebar-accent: 222 40% 22%;
     --sidebar-accent-foreground: 210 20% 96%;
-    --sidebar-border: 222 25% 14%;
-    --sidebar-ring: 215 55% 42%;
-    --ares-navy: 222 47% 8%;
-    --ares-navy-elevated: 222 40% 11%;
-    --ares-gold: 38 70% 48%;
-    --ares-gold-muted: 38 45% 28%;
-  }
-
-  .dark {
-    --background: 222 47% 6%;
-    --foreground: 210 20% 96%;
-    --card: 222 40% 9%;
-    --card-foreground: 210 20% 96%;
-    --popover: 222 40% 9%;
-    --popover-foreground: 210 20% 96%;
-    --primary: 215 55% 42%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 222 30% 14%;
-    --secondary-foreground: 210 20% 92%;
-    --muted: 222 25% 14%;
-    --muted-foreground: 215 12% 58%;
-    --accent: 38 70% 48%;
-    --accent-foreground: 222 47% 6%;
-    --destructive: 0 62% 42%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 222 25% 18%;
-    --input: 222 25% 16%;
-    --ring: 215 55% 42%;
-    --sidebar-background: 222 45% 7%;
-    --sidebar-foreground: 210 15% 82%;
-    --sidebar-primary: 215 55% 42%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 30% 12%;
-    --sidebar-accent-foreground: 210 20% 96%;
-    --sidebar-border: 222 25% 14%;
-    --sidebar-ring: 215 55% 42%;
+    --sidebar-border: 222 35% 22%;
+    --sidebar-ring: 152 45% 42%;
+    --ares-navy: 222 47% 16%;
+    --ares-navy-deep: 222 50% 12%;
+    --ares-ok: 152 45% 36%;
+    --ares-danger: 0 65% 42%;
   }
 }
 
@@ -77,25 +47,23 @@
 
   html {
     @apply antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   body {
     @apply bg-background text-foreground;
     font-family:
-      Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Source Sans 3", "Segoe UI", ui-sans-serif, system-ui, -apple-system, Roboto,
       "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   }
 
-  /* Institutional focus ring */
   :focus-visible {
-    @apply outline-none ring-2 ring-primary/50 ring-offset-1 ring-offset-background;
+    @apply outline-none ring-2 ring-primary/40 ring-offset-1 ring-offset-background;
   }
 }
 
 @layer components {
   .ares-panel {
-    @apply rounded-md border border-slate-700/80 bg-slate-900/80 shadow-sm;
+    @apply rounded border border-slate-200 bg-white shadow-sm;
   }
 
   .ares-table {
@@ -103,19 +71,19 @@
   }
 
   .ares-table thead tr {
-    @apply border-b border-slate-700/80 bg-slate-900/60;
+    @apply border-b border-slate-200 bg-slate-50;
   }
 
   .ares-table th {
-    @apply px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400;
+    @apply px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600;
   }
 
   .ares-table td {
-    @apply px-3 py-2.5 text-slate-200;
+    @apply px-3 py-2.5 text-slate-800;
   }
 
   .ares-table tbody tr {
-    @apply border-b border-slate-800/80 transition-colors hover:bg-slate-800/40;
+    @apply border-b border-slate-100 transition-colors hover:bg-slate-50;
   }
 
   .ares-empty {
@@ -123,7 +91,7 @@
   }
 
   .ares-empty-title {
-    @apply text-sm font-medium text-slate-300;
+    @apply text-sm font-medium text-slate-700;
   }
 
   .ares-empty-desc {
@@ -131,15 +99,15 @@
   }
 
   .ares-cta {
-    @apply !bg-amber-600 !text-white hover:!bg-amber-500 focus-visible:!ring-amber-500/40;
+    @apply !bg-[hsl(var(--ares-navy))] !text-white hover:!bg-[hsl(222_47%_22%)] focus-visible:!ring-slate-400/40;
   }
 
   .ares-input {
-    @apply border-slate-600 bg-slate-800/80 text-slate-100 placeholder:text-slate-500;
+    @apply border-slate-300 bg-white text-slate-900 placeholder:text-slate-400;
   }
 
   .ares-label {
-    @apply text-xs font-medium text-slate-300;
+    @apply text-xs font-medium text-slate-700;
   }
 
   .ares-help {
@@ -148,6 +116,10 @@
 
   .ares-required::after {
     content: " *";
-    @apply text-amber-500;
+    @apply text-red-600;
+  }
+
+  .ares-gov-header {
+    @apply border-b-4 border-[hsl(var(--ares-ok))] bg-[hsl(var(--ares-navy))] text-white;
   }
 }

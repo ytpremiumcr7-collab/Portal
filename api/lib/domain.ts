@@ -80,9 +80,21 @@ export async function assertLicitacionReadyForPublish(tenantId: number, id: numb
   const present = new Set(docs.map(d => d.tipo));
   const missing = required.filter((x) => !present.has(x));
   if (missing.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Expediente incompleto. Faltan documentos aprobados: ${missing.join(", ")}.` });
-  const clarification = await db.query.hitos.findFirst({ where: and(eq(hitos.tenantId, tenantId), eq(hitos.licitacionId, id), eq(hitos.tipo, "JUNTA_ACLARACIONES"), ne(hitos.estado, "CANCELADO")) });
-  if (!clarification) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Debe existir un hito de Junta de Aclaraciones antes de publicar." });
+  // JUNTA_ACLARACIONES is gated by ProcedurePolicy.actosObligatorios at publish (IR/AD may skip).
   return lic;
+}
+
+export async function listHitosTiposConfigurados(tenantId: number, licitacionId: number): Promise<string[]> {
+  const db = getDb();
+  const rows = await db.query.hitos.findMany({ where: and(eq(hitos.tenantId, tenantId), eq(hitos.licitacionId, licitacionId), ne(hitos.estado, "CANCELADO")) });
+  return rows.map((h: { tipo: string }) => h.tipo);
+}
+
+export async function assertJuntaSiPoliticaLoExige(tenantId: number, licitacionId: number, requireJunta: boolean) {
+  if (!requireJunta) return;
+  const db = getDb();
+  const clarification = await db.query.hitos.findFirst({ where: and(eq(hitos.tenantId, tenantId), eq(hitos.licitacionId, licitacionId), eq(hitos.tipo, "JUNTA_ACLARACIONES"), ne(hitos.estado, "CANCELADO")) });
+  if (!clarification) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La política exige hito de Junta de Aclaraciones antes de publicar." });
 }
 
 export async function assertLicitacionExists(tenantId: number, id: number) {

@@ -10,7 +10,7 @@ import { pageInput, pageResult } from "../lib/pagination";
 
 /** Official notification hooks for key acts. */
 export const NOTIF_EVENTOS = [
-  "FALLO_PUBLICADO", "ADJUDICACION", "CONTRATO_FORMALIZADO", "SANCION_EMITIDA", "INCONFORMIDAD_PRESENTADA", "INCONFORMIDAD_RESUELTA",
+  "FALLO_PUBLICADO", "ADJUDICACION", "CONTRATO_FORMALIZADO", "CONTRATO_RESCINDIDO", "SANCION_EMITIDA", "INCONFORMIDAD_PRESENTADA", "INCONFORMIDAD_RESUELTA",
 ] as const;
 
 export const notificacionesRouter = createRouter({
@@ -101,10 +101,16 @@ export const notificacionesRouter = createRouter({
     if (!owns && ctx.user.role !== "admin") {
       throw new TRPCError({ code: "FORBIDDEN", message: "No puede acusar recibo de una notificación ajena." });
     }
-    await db.update(notificacionDestinatarios).set({ deliveryStatus: "ACKNOWLEDGED", acknowledgedAt: new Date() })
-      .where(and(eq(notificacionDestinatarios.id, input.destinatarioId), eq(notificacionDestinatarios.tenantId, ctx.user.tenantId)));
-    await db.update(notificaciones).set({ estado: "ACKNOWLEDGED" })
-      .where(and(eq(notificaciones.id, dest.notificacionId), eq(notificaciones.tenantId, ctx.user.tenantId)));
+    await db.transaction(async (tx) => {
+      await tx.update(notificacionDestinatarios).set({ deliveryStatus: "ACKNOWLEDGED", acknowledgedAt: new Date() })
+        .where(and(eq(notificacionDestinatarios.id, input.destinatarioId), eq(notificacionDestinatarios.tenantId, ctx.user.tenantId)));
+      const all = await tx.query.notificacionDestinatarios.findMany({
+        where: and(eq(notificacionDestinatarios.tenantId, ctx.user.tenantId), eq(notificacionDestinatarios.notificacionId, dest.notificacionId)),
+      });
+      const allAck = all.length > 0 && all.every((d) => d.id === input.destinatarioId || d.deliveryStatus === "ACKNOWLEDGED");
+      await tx.update(notificaciones).set({ estado: allAck ? "ACKNOWLEDGED" : "PARCIAL" } as any)
+        .where(and(eq(notificaciones.id, dest.notificacionId), eq(notificaciones.tenantId, ctx.user.tenantId)));
+    });
     return db.query.notificacionDestinatarios.findFirst({ where: and(eq(notificacionDestinatarios.id, input.destinatarioId), eq(notificacionDestinatarios.tenantId, ctx.user.tenantId)) });
   }),
 });

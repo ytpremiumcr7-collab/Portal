@@ -3,7 +3,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { incidencias, contratos } from "@db/schema";
+import { incidencias, contratos, licitaciones, proveedores, users } from "@db/schema";
 import { assertIncidenciaTransition } from "../lib/phase3-transitions";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
@@ -34,16 +34,36 @@ export const incidenciasRouter = createRouter({
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     let expedienteId: number | null = null;
+    let licitacionId = input.licitacionId ?? null;
+    let proveedorId = input.proveedorId ?? null;
     if (input.contratoId) {
       const c = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.contratoId), eq(contratos.tenantId, ctx.user.tenantId)) });
       if (!c) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
       expedienteId = c.expedienteId;
+      // Aggregate consistency: contrato → licitacion / proveedor
+      if (licitacionId != null && Number(licitacionId) !== Number(c.licitacionId)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "licitacionId no coincide con el contrato." });
+      }
+      if (proveedorId != null && Number(proveedorId) !== Number(c.proveedorId)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "proveedorId no coincide con el contrato." });
+      }
+      licitacionId = c.licitacionId;
+      proveedorId = c.proveedorId;
+    } else {
+      if (licitacionId != null) {
+        const lic = await db.query.licitaciones.findFirst({ where: and(eq(licitaciones.id, licitacionId), eq(licitaciones.tenantId, ctx.user.tenantId)) });
+        if (!lic) throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada." });
+      }
+      if (proveedorId != null) {
+        const prov = await db.query.proveedores.findFirst({ where: and(eq(proveedores.id, proveedorId), eq(proveedores.tenantId, ctx.user.tenantId)) });
+        if (!prov) throw new TRPCError({ code: "NOT_FOUND", message: "Proveedor no encontrado." });
+      }
     }
     let id = 0;
     await db.transaction(async (tx) => {
       const result = await tx.insert(incidencias).values({
-        tenantId: ctx.user.tenantId, contratoId: input.contratoId ?? null, licitacionId: input.licitacionId ?? null,
-        proveedorId: input.proveedorId ?? null, tipo: input.tipo, titulo: input.titulo, descripcion: input.descripcion,
+        tenantId: ctx.user.tenantId, contratoId: input.contratoId ?? null, licitacionId,
+        proveedorId, tipo: input.tipo, titulo: input.titulo, descripcion: input.descripcion,
         estado: "ABIERTA", reportadaPor: ctx.user.id,
       });
       id = Number(result[0].insertId);
@@ -69,7 +89,11 @@ export const incidenciasRouter = createRouter({
     assertIncidenciaTransition(cur.estado as any, input.to);
     const patch: Record<string, unknown> = { estado: input.to };
     if (input.accionCorrectiva) patch.accionCorrectiva = input.accionCorrectiva;
-    if (input.asignadaA) patch.asignadaA = input.asignadaA;
+    if (input.asignadaA) {
+      const assignee = await db.query.users.findFirst({ where: and(eq(users.id, input.asignadaA), eq(users.tenantId, ctx.user.tenantId), eq(users.activo, true)) });
+      if (!assignee) throw new TRPCError({ code: "BAD_REQUEST", message: "asignadaA debe ser un usuario activo del tenant." });
+      patch.asignadaA = input.asignadaA;
+    }
     if (input.to === "RESUELTA" || input.to === "CERRADA") patch.resueltaAt = new Date();
     let expedienteId: number | null = null;
     if (cur.contratoId) {

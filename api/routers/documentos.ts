@@ -107,10 +107,14 @@ export const documentosRouter = createRouter({
     const allowed: Record<string,string[]> = { PENDIENTE:["VALIDANDO","RECHAZADO"], VALIDANDO:["APROBADO","RECHAZADO"], RECHAZADO:["VALIDANDO"], APROBADO:["OBSOLETO"], OBSOLETO:[] };
     if (!allowed[current.estado]?.includes(input.estado)) throw new TRPCError({ code: "CONFLICT", message: `Transición documental no permitida: ${current.estado} → ${input.estado}.` });
     const data = input.estado === "RECHAZADO" ? { estado: input.estado, motivoRechazo: input.motivo } : { estado: input.estado, motivoRechazo: null, ...(input.estado === "OBSOLETO" ? { esVersionVigente: false } : {}) };
-    await db.update(documentos).set(data).where(and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)));
+    await db.transaction(async (tx) => {
+      await tx.update(documentos).set(data).where(and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)));
+      if (current.expedienteId) {
+        await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId!, tipo: "ESTADO_DOCUMENTAL", motivo: input.motivo, payload: { documentoId: current.id, from: current.estado, to: input.estado, version: current.version } });
+      }
+    });
     const updated = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true } });
     if (current.expedienteId) await refreshRequirementStatuses(db, ctx.user.tenantId, current.expedienteId);
-    if (current.expedienteId) await db.transaction(async tx => { await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId!, tipo: "ESTADO_DOCUMENTAL", motivo: input.motivo, payload: { documentoId: current.id, from: current.estado, to: input.estado, version: current.version } }); });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "CAMBIAR_ESTADO", entidad: "documentos", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
     return updated;
   }),

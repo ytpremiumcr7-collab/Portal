@@ -28,6 +28,8 @@ import {
   SplitSquareVertical,
   FolderOpen,
   ScrollText,
+  Landmark,
+  Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMemo, useState } from "react";
@@ -46,75 +48,67 @@ type NavGroup = {
   items: NavItem[];
 };
 
+/** Four IA worlds: público (always linked), licitante, dependencia, auditoría */
 const navGroups: NavGroup[] = [
   {
-    id: "inicio",
-    label: "Inicio",
+    id: "portal",
+    label: "Portal público",
     items: [
-      { path: "/", label: "Tablero ejecutivo", icon: LayoutDashboard, roles: ["admin", "licitante", "proveedor"] },
+      { path: "/portal", label: "Inicio público", icon: Landmark, roles: ["admin", "licitante", "proveedor"] },
+      { path: "/convocatorias", label: "Convocatorias", icon: Globe, roles: ["admin", "licitante", "proveedor"] },
+      { path: "/consulta-publica", label: "Consulta pública", icon: Search, roles: ["admin", "licitante", "proveedor"] },
     ],
   },
   {
-    id: "planeacion",
-    label: "Planeación",
+    id: "licitante",
+    label: "Área licitante / proveedor",
     items: [
-      { path: "/planeacion", label: "Necesidades", icon: ClipboardList, roles: ["admin", "licitante"] },
-      { path: "/investigacion-mercado", label: "Investigación de mercado", icon: Search, roles: ["admin", "licitante"] },
-      { path: "/entidades", label: "Entidades contratantes", icon: Building2, roles: ["admin", "licitante"] },
-      { path: "/proveedores", label: "Proveedores", icon: Users, roles: ["admin", "licitante", "proveedor"] },
-    ],
-  },
-  {
-    id: "procedimiento",
-    label: "Procedimiento",
-    items: [
-      { path: "/licitaciones", label: "Licitaciones", icon: FileText, roles: ["admin", "licitante", "proveedor"] },
-      { path: "/expedientes", label: "Expedientes electrónicos", icon: FolderOpen, roles: ["admin", "licitante"] },
+      { path: "/oportunidades", label: "Oportunidades", icon: Briefcase, roles: ["proveedor"] },
       { path: "/documentos", label: "Documentos", icon: ScrollText, roles: ["admin", "licitante", "proveedor"] },
-      { path: "/hitos", label: "Hitos del procedimiento", icon: AlertTriangle, roles: ["admin", "licitante"] },
-      { path: "/aclaraciones", label: "Junta de aclaraciones", icon: MessageSquare, roles: ["admin", "licitante", "proveedor"] },
-      { path: "/aperturas", label: "Apertura de proposiciones", icon: PackageOpen, roles: ["admin", "licitante"] },
-      { path: "/dictamenes", label: "Dictámenes", icon: Scale, roles: ["admin", "licitante"] },
-      { path: "/fallos", label: "Fallos", icon: Gavel, roles: ["admin", "licitante"] },
-    ],
-  },
-  {
-    id: "contratacion",
-    label: "Contratación",
-    items: [
-      { path: "/contratos", label: "Contratos", icon: FileSignature, roles: ["admin", "licitante"] },
-      { path: "/garantias", label: "Garantías", icon: ShieldCheck, roles: ["admin", "licitante"] },
-      { path: "/ejecucion", label: "Ejecución contractual", icon: Wrench, roles: ["admin", "licitante"] },
-      { path: "/pagos", label: "Pagos y estimaciones", icon: Banknote, roles: ["admin", "licitante"] },
-    ],
-  },
-  {
-    id: "cumplimiento",
-    label: "Cumplimiento",
-    items: [
-      { path: "/incidencias", label: "Incidencias", icon: AlertCircle, roles: ["admin", "licitante"] },
-      { path: "/sanciones", label: "Sanciones e impedimentos", icon: Ban, roles: ["admin", "licitante"] },
+      { path: "/notificaciones", label: "Comunicaciones", icon: Bell, roles: ["admin", "licitante", "proveedor"] },
       { path: "/inconformidades", label: "Inconformidades", icon: FileWarning, roles: ["admin", "licitante", "proveedor"] },
-      { path: "/alertas", label: "Alertas de integridad", icon: AlertTriangle, roles: ["admin", "licitante"] },
-      { path: "/consulta-publica", label: "Consulta pública", icon: Globe, roles: ["admin", "licitante", "proveedor"] },
     ],
   },
   {
-    id: "sistema",
-    label: "Sistema",
+    id: "dependencia",
+    label: "Área dependencia",
     items: [
-      { path: "/notificaciones", label: "Notificaciones", icon: Bell, roles: ["admin", "licitante"] },
-      { path: "/auditoria", label: "Bitácora de auditoría", icon: Shield, roles: ["admin"] },
+      { path: "/", label: "Tablero", icon: LayoutDashboard, roles: ["admin", "licitante"] },
+      { path: "/planeacion", label: "Planeación", icon: ClipboardList, roles: ["admin", "licitante"] },
+      { path: "/investigacion-mercado", label: "Investigación de mercado", icon: Search, roles: ["admin", "licitante"] },
+      { path: "/licitaciones", label: "Procedimientos", icon: FileText, roles: ["admin", "licitante", "proveedor"] },
+      { path: "/aclaraciones", label: "Junta de aclaraciones", icon: MessageSquare, roles: ["admin", "licitante", "proveedor"] },
+      { path: "/aperturas", label: "Apertura", icon: PackageOpen, roles: ["admin", "licitante"] },
+      { path: "/dictamenes", label: "Evaluación / dictamen", icon: Scale, roles: ["admin", "licitante"] },
+      { path: "/fallos", label: "Fallo", icon: Gavel, roles: ["admin", "licitante"] },
+      { path: "/contratos", label: "Adjudicación / contrato", icon: FileSignature, roles: ["admin", "licitante"] },
+      { path: "/garantias", label: "Garantías", icon: ShieldCheck, roles: ["admin", "licitante"] },
+      { path: "/ejecucion", label: "Ejecución", icon: Wrench, roles: ["admin", "licitante"] },
+      { path: "/pagos", label: "Pagos", icon: Banknote, roles: ["admin", "licitante"] },
+      { path: "/entidades", label: "Entidades", icon: Building2, roles: ["admin", "licitante"] },
+      { path: "/proveedores", label: "Proveedores", icon: Users, roles: ["admin", "licitante", "proveedor"] },
+      { path: "/incidencias", label: "Incidencias", icon: AlertCircle, roles: ["admin", "licitante"] },
+      { path: "/sanciones", label: "Sanciones", icon: Ban, roles: ["admin", "licitante"] },
+      { path: "/alertas", label: "Alertas de integridad", icon: AlertTriangle, roles: ["admin", "licitante"] },
+    ],
+  },
+  {
+    id: "auditoria",
+    label: "Auditoría",
+    items: [
+      { path: "/expedientes", label: "Expedientes / trazabilidad", icon: FolderOpen, roles: ["admin", "licitante"] },
+      { path: "/hitos", label: "Hitos / evidencias", icon: AlertTriangle, roles: ["admin", "licitante"] },
+      { path: "/auditoria", label: "Bitácora de eventos", icon: Shield, roles: ["admin"] },
       { path: "/sod", label: "Segregación de funciones", icon: SplitSquareVertical, roles: ["admin"] },
-      { path: "/usuarios", label: "Usuarios y roles", icon: Users, roles: ["admin"] },
+      { path: "/usuarios", label: "Usuarios", icon: Users, roles: ["admin"] },
     ],
   },
 ];
 
 const roleLabel: Record<string, string> = {
   admin: "Administrador",
-  licitante: "Área contratante",
-  proveedor: "Proveedor",
+  licitante: "Dependencia / área contratante",
+  proveedor: "Licitante / proveedor",
 };
 
 function NavLink({
@@ -131,16 +125,16 @@ function NavLink({
       to={item.path}
       onClick={onNavigate}
       className={cn(
-        "group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+        "group flex items-center gap-2.5 rounded px-2.5 py-1.5 text-[13px] font-medium transition-colors",
         active
-          ? "border-l-2 border-amber-500 bg-slate-800/90 text-slate-50 pl-[8px]"
-          : "border-l-2 border-transparent text-slate-400 hover:bg-slate-800/50 hover:text-slate-200",
+          ? "border-l-[3px] border-emerald-400 bg-white/10 text-white pl-[7px]"
+          : "border-l-[3px] border-transparent text-slate-300 hover:bg-white/5 hover:text-white",
       )}
     >
       <item.icon
         className={cn(
           "h-3.5 w-3.5 shrink-0",
-          active ? "text-amber-500" : "text-slate-500 group-hover:text-slate-300",
+          active ? "text-emerald-300" : "text-slate-400 group-hover:text-slate-200",
         )}
       />
       <span className="truncate">{item.label}</span>
@@ -170,24 +164,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (isLoading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm text-slate-400">
-        Validando sesión…
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm text-slate-600">
+        Validando sesión institucional…
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100">
-      {/* Sidebar desktop */}
-      <aside className="fixed hidden h-full w-64 flex-col border-r border-slate-800 bg-slate-950 lg:flex">
-        <div className="flex items-center gap-3 border-b border-slate-800 px-4 py-3.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded border border-slate-700 bg-slate-900">
-            <Shield className="h-4.5 w-4.5 text-amber-500" style={{ width: 18, height: 18 }} />
+    <div className="flex min-h-screen bg-slate-100 text-slate-900">
+      <aside className="fixed hidden h-full w-64 flex-col bg-[hsl(222_47%_16%)] text-white lg:flex">
+        <div className="ares-gov-header flex items-center gap-3 px-4 py-3.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded border border-white/20 bg-white/10">
+            <Shield className="text-emerald-300" style={{ width: 18, height: 18 }} />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold tracking-wide text-slate-50">ARES</p>
-            <p className="truncate text-[10px] uppercase tracking-wider text-slate-500">
-              Adquisiciones · México
+            <p className="text-sm font-semibold tracking-wide">ARES</p>
+            <p className="truncate text-[10px] uppercase tracking-wider text-slate-300">
+              Contratación pública · MX
             </p>
           </div>
         </div>
@@ -195,7 +188,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 overflow-y-auto px-2.5 py-3">
           {filteredGroups.map((group) => (
             <div key={group.id} className="mb-3">
-              <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+              <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                 {group.label}
               </p>
               <div className="space-y-0.5">
@@ -207,22 +200,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
-        <div className="border-t border-slate-800 p-3">
+        <div className="border-t border-white/10 p-3">
           <div className="mb-2 flex items-center gap-2.5 px-1">
-            <div className="flex h-8 w-8 items-center justify-center rounded border border-slate-700 bg-slate-900 text-xs font-semibold text-slate-200">
+            <div className="flex h-8 w-8 items-center justify-center rounded border border-white/20 bg-white/10 text-xs font-semibold">
               {(user.name ?? "U").charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-slate-100">{user.name}</p>
-              <p className="truncate text-[11px] text-slate-500">
-                {roleLabel[user.role] ?? user.role}
-              </p>
+              <p className="truncate text-sm font-medium">{user.name}</p>
+              <p className="truncate text-[11px] text-slate-400">{roleLabel[user.role] ?? user.role}</p>
             </div>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-start text-slate-400 hover:bg-red-950/40 hover:text-red-300"
+            className="w-full justify-start text-slate-300 hover:bg-red-900/40 hover:text-red-200"
             onClick={() => logout()}
           >
             <LogOut className="mr-2 h-3.5 w-3.5" />
@@ -231,60 +222,33 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile header */}
-      <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-800 bg-slate-950 lg:hidden">
+      <div className="fixed left-0 right-0 top-0 z-50 ares-gov-header lg:hidden">
         <div className="flex items-center justify-between px-3 py-2.5">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded border border-slate-700 bg-slate-900">
-              <Shield className="h-4 w-4 text-amber-500" />
-            </div>
+            <Shield className="h-4 w-4 text-emerald-300" />
             <div>
-              <p className="text-sm font-semibold text-slate-50">ARES</p>
-              <p className="text-[10px] uppercase tracking-wider text-slate-500">Adquisiciones</p>
+              <p className="text-sm font-semibold">ARES</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-300">Contratación pública</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-slate-300"
-            onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label={mobileOpen ? "Cerrar menú" : "Abrir menú"}
-          >
+          <Button variant="ghost" size="icon" className="text-white" onClick={() => setMobileOpen(!mobileOpen)}>
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
         </div>
-
         {mobileOpen && (
-          <nav className="max-h-[75vh] overflow-y-auto border-t border-slate-800 px-2.5 py-3">
+          <nav className="max-h-[75vh] overflow-y-auto border-t border-white/10 bg-[hsl(222_47%_14%)] px-2.5 py-3">
             {filteredGroups.map((group) => (
               <div key={group.id} className="mb-3">
-                <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                   {group.label}
                 </p>
                 <div className="space-y-0.5">
                   {group.items.map((item) => (
-                    <NavLink
-                      key={item.path}
-                      item={item}
-                      active={isActive(item.path)}
-                      onNavigate={() => setMobileOpen(false)}
-                    />
+                    <NavLink key={item.path} item={item} active={isActive(item.path)} onNavigate={() => setMobileOpen(false)} />
                   ))}
                 </div>
               </div>
             ))}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2 w-full justify-start text-slate-400 hover:bg-red-950/40 hover:text-red-300"
-              onClick={() => {
-                logout();
-                setMobileOpen(false);
-              }}
-            >
-              <LogOut className="mr-2 h-3.5 w-3.5" />
-              Cerrar sesión
-            </Button>
           </nav>
         )}
       </div>

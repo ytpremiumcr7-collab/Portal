@@ -27,10 +27,18 @@ export type RequestContext = {
   requestId: string;
 };
 
-export function requestMeta(req: Request) {
-  const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+export function requestMeta(req: Request, opts?: { trustProxy?: boolean; socketIp?: string | null }) {
+  const trustProxy = opts?.trustProxy ?? process.env.ARES_TRUST_PROXY === "true";
+  let ipAddress: string | null = null;
+  if (trustProxy) {
+    const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    ipAddress = forwarded || req.headers.get("x-real-ip") || opts?.socketIp || null;
+  } else {
+    // Direct / socket only — do not trust client-controlled X-Forwarded-For.
+    ipAddress = opts?.socketIp || null;
+  }
   return {
-    ipAddress: forwarded || req.headers.get("x-real-ip") || null,
+    ipAddress,
     userAgent: req.headers.get("user-agent"),
     requestId: req.headers.get("x-request-id") || randomUUID(),
   };

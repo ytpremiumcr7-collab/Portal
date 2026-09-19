@@ -1,8 +1,9 @@
 import { getDb } from "../queries/connection";
-import { logAdapter, noopAdapter, processOutboxOnce, type DeliveryAdapter } from "./outbox";
+import { logAdapter, noopAdapter, smtpAdapter, processOutboxOnce, type DeliveryAdapter } from "./outbox";
 
 export function resolveAdapter(name?: string): DeliveryAdapter {
   if (name === "noop") return noopAdapter;
+  if (name === "smtp" || process.env.ARES_SMTP_URL) return smtpAdapter;
   return logAdapter;
 }
 

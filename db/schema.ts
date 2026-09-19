@@ -188,6 +188,7 @@ export const licitaciones = mysqlTable("licitaciones", {
   montoAdjudicado: decimal("monto_adjudicado", { precision: 18, scale: 2 }),
   policyId: bigint("policy_id", { mode: "number", unsigned: true }),
   policyVersionId: bigint("policy_version_id", { mode: "number", unsigned: true }),
+  cucopId: bigint("cucop_id", { mode: "number", unsigned: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => [
@@ -245,6 +246,7 @@ export const participaciones = mysqlTable("participaciones", {
   ordenMerito: int("orden_merito"),
   montoAdjudicadoFinal: decimal("monto_adjudicado_final", { precision: 18, scale: 2 }),
   observaciones: text("observaciones"),
+  recibidoAt: timestamp("recibido_at").defaultNow().notNull(),
   criteriosTecnicos: text("criterios_tecnicos"),
   evaluatedBy: bigint("evaluated_by", { mode: "number", unsigned: true }),
   evaluatedAt: timestamp("evaluated_at"),
@@ -634,6 +636,8 @@ export const contratos = mysqlTable("contratos", {
   causaRescision: text("causa_rescision"),
   resolucionRescision: text("resolucion_rescision"),
   documentoRescisionId: bigint("documento_rescision_id", { mode: "number", unsigned: true }),
+  administradorContratoId: bigint("administrador_contrato_id", { mode: "number", unsigned: true }),
+  penasConvencionales: json("penas_convencionales"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => [
@@ -648,6 +652,7 @@ export const contratos = mysqlTable("contratos", {
   foreignKey({ name: "contratos_actor_fk", columns: [t.tenantId, t.formalizadoPor], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
   foreignKey({ name: "contratos_documento_fk", columns: [t.tenantId, t.documentoContratoId], foreignColumns: [documentos.tenantId, documentos.id] }).onDelete("restrict"),
   foreignKey({ name: "contratos_documento_rescision_fk", columns: [t.tenantId, t.documentoRescisionId], foreignColumns: [documentos.tenantId, documentos.id] }).onDelete("restrict"),
+  foreignKey({ name: "contratos_admin_fk", columns: [t.tenantId, t.administradorContratoId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
   check("contrato_monto_nonneg", sql`${t.monto} >= 0`),
 ]);
 
@@ -660,6 +665,7 @@ export const garantias = mysqlTable("garantias", {
   tipo: mysqlEnum("tipo", ["CUMPLIMIENTO", "ANTICIPO", "VICIOS_OCULTOS", "SERIEDAD"]).notNull(),
   estado: mysqlEnum("estado", ["REQUERIDA", "PRESENTADA", "VIGENTE", "LIBERADA", "EJECUTADA", "VENCIDA"]).default("REQUERIDA").notNull(),
   monto: decimal("monto", { precision: 18, scale: 2 }).notNull(),
+  porcentaje: decimal("porcentaje", { precision: 5, scale: 2 }),
   moneda: mysqlEnum("moneda", ["MXN"]).default("MXN").notNull(),
   instrumento: varchar("instrumento", { length: 120 }),
   numeroPoliza: varchar("numero_poliza", { length: 80 }),
@@ -1129,6 +1135,7 @@ export const incidencias = mysqlTable("incidencias", {
   foreignKey({ name: "incidencia_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
   foreignKey({ name: "incidencia_prov_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
   foreignKey({ name: "incidencia_actor_fk", columns: [t.tenantId, t.reportadaPor], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  foreignKey({ name: "incidencia_asignada_fk", columns: [t.tenantId, t.asignadaA], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
 ]);
 
 export const investigacionesSancion = mysqlTable("investigaciones_sancion", {
@@ -1250,7 +1257,7 @@ export const notificaciones = mysqlTable("notificaciones", {
   entidadRef: varchar("entidad_ref", { length: 80 }),
   entidadId: bigint("entidad_id", { mode: "number", unsigned: true }),
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }),
-  estado: mysqlEnum("estado", ["BORRADOR", "REGISTRADA", "ENVIADA", "ENVIADA_EXTERNA", "ENTREGADA", "FALLIDA", "ACKNOWLEDGED"]).default("BORRADOR").notNull(),
+  estado: mysqlEnum("estado", ["BORRADOR", "REGISTRADA", "ENVIADA", "ENVIADA_EXTERNA", "ENTREGADA", "FALLIDA", "ACKNOWLEDGED", "PARCIAL"]).default("BORRADOR").notNull(),
   creadaPor: bigint("creada_por", { mode: "number", unsigned: true }).notNull(),
   enviadaAt: timestamp("enviada_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -1342,7 +1349,7 @@ export const proposicionDocumentos = mysqlTable("proposicion_documentos", {
   ...tenantColumns,
   proposicionId: bigint("proposicion_id", { mode: "number", unsigned: true }).notNull(),
   documentoId: bigint("documento_id", { mode: "number", unsigned: true }).notNull(),
-  rol: mysqlEnum("rol", ["OFERTA_TECNICA", "OFERTA_ECONOMICA", "ANEXO"]).notNull(),
+  rol: mysqlEnum("rol", ["OFERTA_TECNICA", "OFERTA_ECONOMICA", "ANEXO", "GARANTIA_SERIEDAD"]).notNull(),
   sha256: varchar("sha256", { length: 64 }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
@@ -1388,5 +1395,114 @@ export const domainOutbox = mysqlTable("domain_outbox", {
   index("outbox_pending_idx").on(t.status, t.nextAttemptAt),
   index("outbox_agg_idx").on(t.tenantId, t.aggregateType, t.aggregateId),
   foreignKey({ name: "outbox_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+]);
+
+export const catalogoCucop = mysqlTable("catalogo_cucop", {
+  id: serial("id").primaryKey(),
+  codigo: varchar("codigo", { length: 40 }).notNull(),
+  descripcion: varchar("descripcion", { length: 300 }).notNull(),
+  capitulo: varchar("capitulo", { length: 80 }),
+  activo: boolean("activo").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cucop_codigo_uq").on(t.codigo),
+]);
+
+export const actoAdjudicacion = mysqlTable("acto_adjudicacion", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  expedienteId: bigint("expediente_id", { mode: "number", unsigned: true }).notNull(),
+  propuestaRankingJson: json("propuesta_ranking_json").notNull(),
+  proveedorPropuestoId: bigint("proveedor_propuesto_id", { mode: "number", unsigned: true }).notNull(),
+  proveedorDecididoId: bigint("proveedor_decidido_id", { mode: "number", unsigned: true }),
+  fundamento: text("fundamento"),
+  estado: mysqlEnum("estado", ["BORRADOR", "PROPUESTO", "PUBLICADO", "ANULADO"]).default("BORRADOR").notNull(),
+  validadoVsRanking: boolean("validado_vs_ranking").default(false).notNull(),
+  desviacionJustificada: boolean("desviacion_justificada").default(false).notNull(),
+  publicadoAt: timestamp("publicado_at"),
+  creadoPor: bigint("creado_por", { mode: "number", unsigned: true }).notNull(),
+  decididoPor: bigint("decidido_por", { mode: "number", unsigned: true }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("acto_adj_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("acto_adj_lic_uq").on(t.tenantId, t.licitacionId),
+  index("acto_adj_estado_idx").on(t.tenantId, t.estado),
+  foreignKey({ name: "acto_adj_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "acto_adj_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "acto_adj_actor_fk", columns: [t.tenantId, t.creadoPor], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const comisionEvaluadora = mysqlTable("comision_evaluadora", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  userId: bigint("user_id", { mode: "number", unsigned: true }).notNull(),
+  rol: mysqlEnum("rol", ["PRESIDENTE", "SECRETARIO", "VOCAL_TECNICO", "VOCAL_ECONOMICO", "VOCAL"]).default("VOCAL").notNull(),
+  activa: boolean("activa").default(true).notNull(),
+  designadoPor: bigint("designado_por", { mode: "number", unsigned: true }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("comision_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("comision_lic_user_uq").on(t.tenantId, t.licitacionId, t.userId),
+  foreignKey({ name: "comision_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "comision_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "comision_user_fk", columns: [t.tenantId, t.userId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const coiDeclaraciones = mysqlTable("coi_declaraciones", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  comisionMiembroId: bigint("comision_miembro_id", { mode: "number", unsigned: true }).notNull(),
+  userId: bigint("user_id", { mode: "number", unsigned: true }).notNull(),
+  proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }),
+  tieneConflicto: boolean("tiene_conflicto").default(false).notNull(),
+  descripcion: text("descripcion").notNull(),
+  recusado: boolean("recusado").default(false).notNull(),
+  declaradoAt: timestamp("declarado_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("coi_tenant_id_uq").on(t.tenantId, t.id),
+  index("coi_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "coi_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "coi_miembro_fk", columns: [t.tenantId, t.comisionMiembroId], foreignColumns: [comisionEvaluadora.tenantId, comisionEvaluadora.id] }).onDelete("restrict"),
+  foreignKey({ name: "coi_user_fk", columns: [t.tenantId, t.userId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const actosTerminacion = mysqlTable("actos_terminacion", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  expedienteId: bigint("expediente_id", { mode: "number", unsigned: true }).notNull(),
+  tipo: mysqlEnum("tipo", ["CANCELACION", "DESIERTO"]).notNull(),
+  causa: text("causa").notNull(),
+  fundamento: text("fundamento").notNull(),
+  documentoId: bigint("documento_id", { mode: "number", unsigned: true }),
+  estado: mysqlEnum("estado", ["BORRADOR", "PUBLICADO"]).default("BORRADOR").notNull(),
+  publicadoAt: timestamp("publicado_at"),
+  creadoPor: bigint("creado_por", { mode: "number", unsigned: true }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("acto_term_tenant_id_uq").on(t.tenantId, t.id),
+  index("acto_term_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "acto_term_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "acto_term_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+]);
+
+export const calendarioActos = mysqlTable("calendario_actos", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  acto: varchar("acto", { length: 60 }).notNull(),
+  ventanaInicio: timestamp("ventana_inicio").notNull(),
+  ventanaFin: timestamp("ventana_fin").notNull(),
+  obligatorio: boolean("obligatorio").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cal_acto_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("cal_acto_lic_acto_uq").on(t.tenantId, t.licitacionId, t.acto),
+  foreignKey({ name: "cal_acto_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "cal_acto_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
 ]);
 

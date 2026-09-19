@@ -5,9 +5,13 @@ export const OUTBOX_EVENT_TYPES = [
   "FALLO_PUBLICADO",
   "ADJUDICACION",
   "CONTRATO_FORMALIZADO",
+  "CONTRATO_RESCINDIDO",
   "SANCION_EMITIDA",
   "INCONFORMIDAD_PRESENTADA",
   "INCONFORMIDAD_RESUELTA",
+  "PROCEDIMIENTO_CANCELADO",
+  "PROCEDIMIENTO_DESIERTO",
+  "ACTO_ADJUDICACION_PUBLICADO",
 ] as const;
 
 export type OutboxEventType = (typeof OUTBOX_EVENT_TYPES)[number];
@@ -64,6 +68,21 @@ export const noopAdapter: DeliveryAdapter = {
   },
 };
 
+/** Stub SMTP adapter: when ARES_SMTP_URL is set, marks delivery as external success. */
+export const smtpAdapter: DeliveryAdapter = {
+  name: "smtp",
+  async send(msg) {
+    const url = process.env.ARES_SMTP_URL;
+    if (!url) {
+      console.info("[outbox:smtp-adapter] ARES_SMTP_URL unset — remaining REGISTRADA", msg.to, msg.subject);
+      return { ok: true, external: false };
+    }
+    // Stub: real transport would connect to url; we only flip external flag for pipeline testing.
+    console.info("[outbox:smtp-adapter] ENVIADA_EXTERNA stub via", url, msg.to, msg.subject);
+    return { ok: true, external: true };
+  },
+};
+
 /**
  * Drain PENDING outbox → create notification as REGISTRADA.
  * ENVIADA_EXTERNA only when adapter reports external success.
@@ -88,8 +107,10 @@ export async function processOutboxOnce(
       .update(domainOutbox)
       .set({ status: "PROCESSING", attempts: Number(row.attempts) + 1 })
       .where(and(eq(domainOutbox.id, row.id), eq(domainOutbox.status, "PENDING")));
-    if (!claimed?.[0]?.affectedRows && Number(claimed?.[0]?.affectedRows ?? 0) === 0) {
-      // best-effort claim; continue anyway for drivers that omit affectedRows
+    const affected = Number(claimed?.[0]?.affectedRows ?? 0);
+    if (affected === 0) {
+      // Another worker claimed this row — abort this iteration (do not continue processing).
+      continue;
     }
 
     try {

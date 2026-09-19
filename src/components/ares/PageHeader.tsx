@@ -26,18 +26,18 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <header className={cn("space-y-3 border-b border-slate-800 pb-4", className)}>
+    <header className={cn("space-y-3 border-b border-slate-200 pb-4", className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
         <nav aria-label="Miga de pan" className="flex flex-wrap items-center gap-1 text-xs text-slate-500">
           {breadcrumbs.map((crumb, i) => (
             <span key={`${crumb.label}-${i}`} className="flex items-center gap-1">
-              {i > 0 && <ChevronRight className="h-3 w-3 text-slate-600" aria-hidden />}
+              {i > 0 && <ChevronRight className="h-3 w-3 text-slate-400" aria-hidden />}
               {crumb.href ? (
-                <Link to={crumb.href} className="hover:text-slate-300 transition-colors">
+                <Link to={crumb.href} className="hover:text-slate-700 transition-colors">
                   {crumb.label}
                 </Link>
               ) : (
-                <span className="text-slate-400">{crumb.label}</span>
+                <span className="text-slate-600">{crumb.label}</span>
               )}
             </span>
           ))}
@@ -45,11 +45,11 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-50 sm:text-2xl">
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
             {title}
           </h1>
           {description && (
-            <p className="max-w-3xl text-sm text-slate-400 leading-relaxed">{description}</p>
+            <p className="max-w-3xl text-sm text-slate-600 leading-relaxed">{description}</p>
           )}
           {meta && <div className="flex flex-wrap items-center gap-2 pt-1">{meta}</div>}
         </div>
@@ -60,3 +60,5 @@ export function PageHeader({
     </header>
   );
 }
+
+export default PageHeader;

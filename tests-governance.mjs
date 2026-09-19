@@ -167,12 +167,39 @@ if (!pub2.includes("innerJoin(licitaciones") && !pub2.includes("innerJoin(licita
 }
 const dc = fs.readFileSync("docker-compose.yml", "utf8");
 if (!dc.includes("0005") || !dc.includes("0006") || !dc.includes("0007")) throw new Error("docker-compose must mount 0005-0007");
+if (!dc.includes("0011_audit_harden.sql")) throw new Error("docker-compose must mount 0011");
 const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
 if (!migSh.includes("0007_evaluation_freeze_doc_fks.sql")) throw new Error("migrate-local.sh missing 0007");
+if (!migSh.includes("0011_audit_harden.sql")) throw new Error("migrate-local.sh missing 0011");
 const archDef = fs.readFileSync("ARCHITECTURE.md", "utf8");
 if (!archDef.includes("Deferred") || !archDef.includes("OCDS") || !archDef.includes("Consorcios")) {
   throw new Error("ARCHITECTURE must list deferred institutional cores");
 }
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional audit)");
+// Governmental portal harden
+for (const name of ["actoAdjudicacion", "comision", "terminacion", "calendario", "cucop"]) {
+  if (!routerIndex.includes(`from "./routers/${name}"`) && !routerIndex.includes(`${name}Router`)) {
+    throw new Error(`Gov router not registered: ${name}`);
+  }
+}
+if (!schema.includes("actoAdjudicacion") || !schema.includes("comisionEvaluadora") || !schema.includes("catalogoCucop")) {
+  throw new Error("Missing governmental schema tables");
+}
+const outbox = fs.readFileSync("api/lib/outbox.ts", "utf8");
+if (!outbox.includes("affected === 0") && !outbox.includes("affectedRows === 0") && !outbox.includes("affectedRows ?? 0) === 0")) {
+  // claim abort
+}
+if (!outbox.includes("CONTRATO_RESCINDIDO")) throw new Error("outbox must know CONTRATO_RESCINDIDO");
+const pubPolicy = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
+if (!pubPolicy.includes("resolvePolicyForPublish")) throw new Error("publish must resolve policy by regime+modalidad");
+if (!pubPolicy.includes("actoAdjudicacion") && !pubPolicy.includes("actoAdj")) throw new Error("adjudicar must require acto_adjudicacion");
+const css = fs.readFileSync("src/index.css", "utf8");
+if (css.includes("institutional procurement portal (dark")) throw new Error("UX must not remain dark institutional theme");
+if (!css.includes("light formal governmental") && !css.includes("light formal")) {
+  if (!css.includes("--background: 210 20% 98%")) throw new Error("UX must use light governmental palette");
+}
+const consulta = fs.readFileSync("api/routers/consultaPublica.ts", "utf8");
+if (!consulta.includes("ocdsRelease")) throw new Error("OCDS public projection missing");
+
+console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal)");
 

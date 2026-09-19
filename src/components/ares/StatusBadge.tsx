@@ -10,13 +10,13 @@ type Tone =
   | "purple";
 
 const toneClass: Record<Tone, string> = {
-  neutral: "bg-slate-700/80 text-slate-200 border-slate-600/60",
-  info: "bg-sky-950/70 text-sky-200 border-sky-800/60",
-  success: "bg-emerald-950/70 text-emerald-200 border-emerald-800/60",
-  warning: "bg-amber-950/60 text-amber-200 border-amber-800/50",
-  danger: "bg-red-950/70 text-red-200 border-red-800/60",
-  accent: "bg-amber-900/40 text-amber-100 border-amber-700/50",
-  purple: "bg-violet-950/70 text-violet-200 border-violet-800/60",
+  neutral: "bg-slate-100 text-slate-700 border-slate-300",
+  info: "bg-sky-50 text-sky-800 border-sky-200",
+  success: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  warning: "bg-amber-50 text-amber-900 border-amber-200",
+  danger: "bg-red-50 text-red-800 border-red-200",
+  accent: "bg-slate-800 text-white border-slate-700",
+  purple: "bg-violet-50 text-violet-800 border-violet-200",
 };
 
 const estadoTone: Record<string, Tone> = {

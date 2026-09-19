@@ -157,8 +157,26 @@ export const contratosRouter = createRouter({
       resolucionRescision: input.resolucion,
       documentoRescisionId: input.documentoRescisionId ?? null,
     }, { causa: input.causa, resolucion: input.resolucion, documentoRescisionId: input.documentoRescisionId ?? null });
+    await getDb().transaction(async (tx) => {
+      await enqueueOutbox(tx, {
+        tenantId: ctx.user.tenantId,
+        aggregateType: "contratos",
+        aggregateId: current.id,
+        eventType: "CONTRATO_RESCINDIDO",
+        payload: {
+          contratoId: current.id,
+          licitacionId: current.licitacionId,
+          proveedorId: current.proveedorId,
+          actorUserId: ctx.user.id,
+          asunto: `Contrato rescindido ${current.folio}`,
+          cuerpo: `Rescisión: ${input.causa}`,
+          entidadRef: "contratos",
+          entidadId: current.id,
+        },
+      });
+    });
     await tryNotifyEvent({
-      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, codigoEvento: "CONTRATO_FORMALIZADO",
+      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, codigoEvento: "CONTRATO_RESCINDIDO",
       asunto: `Contrato rescindido ${current.folio}`, cuerpo: `Rescisión: ${input.causa}`,
       entidadRef: "contratos", entidadId: current.id, licitacionId: current.licitacionId, proveedorId: current.proveedorId,
     });

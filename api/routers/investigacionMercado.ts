@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -118,14 +118,14 @@ export const investigacionMercadoRouter = createRouter({
     return db.query.cotizacionesMercado.findFirst({ where: and(eq(cotizacionesMercado.id, id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)) });
   }),
 
-  // Aggregates only VALIDADA + RECIBIDA (excludes DESCARTADA). Documented: RECIBIDA included until explicit validation workflow closes them.
+  // Comparativo only VALIDADA (explicit validate/discard transitions required).
   comparativo: authedQuery.input(z.object({ investigacionId: z.number().int().positive() })).query(async ({ input, ctx }) => {
     const db = getDb();
     const cotizaciones = await db.query.cotizacionesMercado.findMany({
       where: and(
         eq(cotizacionesMercado.tenantId, ctx.user.tenantId),
         eq(cotizacionesMercado.investigacionId, input.investigacionId),
-        inArray(cotizacionesMercado.estado, ["VALIDADA", "RECIBIDA"]),
+        eq(cotizacionesMercado.estado, "VALIDADA"),
       ),
       orderBy: [desc(cotizacionesMercado.monto)],
     });
@@ -133,6 +133,32 @@ export const investigacionMercadoRouter = createRouter({
     const min = montos.length ? Math.min(...montos) : null;
     const max = montos.length ? Math.max(...montos) : null;
     const avg = montos.length ? montos.reduce((a, b) => a + b, 0) / montos.length : null;
-    return { cotizaciones, min, max, avg, count: montos.length, incluidos: ["VALIDADA", "RECIBIDA"] as const, excluidos: ["DESCARTADA"] as const };
+    return { cotizaciones, min, max, avg, count: montos.length, incluidos: ["VALIDADA"] as const, excluidos: ["RECIBIDA", "DESCARTADA"] as const };
+  }),
+
+  validarCotizacion: capabilityQuery("investigar_mercado").input(z.object({
+    id: z.number().int().positive(), motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const cur = await db.query.cotizacionesMercado.findFirst({ where: and(eq(cotizacionesMercado.id, input.id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)) });
+    if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Cotización no encontrada." });
+    if (cur.estado !== "RECIBIDA") throw new TRPCError({ code: "CONFLICT", message: "Sólo cotizaciones RECIBIDA pueden validarse." });
+    await db.update(cotizacionesMercado).set({ estado: "VALIDADA" } as any)
+      .where(and(eq(cotizacionesMercado.id, input.id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId), eq(cotizacionesMercado.estado, "RECIBIDA")));
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "VALIDAR", entidad: "cotizaciones_mercado", entidadId: input.id, motivo: input.motivo });
+    return db.query.cotizacionesMercado.findFirst({ where: and(eq(cotizacionesMercado.id, input.id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)) });
+  }),
+
+  descartarCotizacion: capabilityQuery("investigar_mercado").input(z.object({
+    id: z.number().int().positive(), motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const cur = await db.query.cotizacionesMercado.findFirst({ where: and(eq(cotizacionesMercado.id, input.id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)) });
+    if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Cotización no encontrada." });
+    if (!["RECIBIDA", "VALIDADA"].includes(cur.estado)) throw new TRPCError({ code: "CONFLICT", message: "Estado no admite descarte." });
+    await db.update(cotizacionesMercado).set({ estado: "DESCARTADA" } as any)
+      .where(and(eq(cotizacionesMercado.id, input.id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)));
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "DESCARTAR", entidad: "cotizaciones_mercado", entidadId: input.id, motivo: input.motivo });
+    return db.query.cotizacionesMercado.findFirst({ where: and(eq(cotizacionesMercado.id, input.id), eq(cotizacionesMercado.tenantId, ctx.user.tenantId)) });
   }),
 });

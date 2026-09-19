@@ -33,11 +33,15 @@ import Inconformidades from "@/pages/Inconformidades";
 import Notificaciones from "@/pages/Notificaciones";
 import ConsultaPublica from "@/pages/ConsultaPublica";
 import SoD from "@/pages/SoD";
+import PortalPublico from "@/pages/PortalPublico";
+import Convocatorias from "@/pages/Convocatorias";
+import BuscadorPublico from "@/pages/BuscadorPublico";
+import Oportunidades from "@/pages/Oportunidades";
 
 function RoleGate({ roles, children }: { roles: Array<"admin" | "licitante" | "proveedor">; children: React.ReactNode }) {
   const { user, isLoading } = useAuth({ redirectOnUnauthenticated: true });
-  if (isLoading || !user) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Validando sesión…</div>;
-  if (!roles.includes(user.role)) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-red-400">No tienes permisos para acceder a este módulo.</div>;
+  if (isLoading || !user) return <div className="min-h-screen bg-slate-100 flex items-center justify-center text-slate-600">Validando sesión…</div>;
+  if (!roles.includes(user.role)) return <div className="min-h-screen bg-slate-100 flex items-center justify-center text-red-700">No tiene permisos para acceder a este módulo.</div>;
   return <>{children}</>;
 }
 
@@ -46,11 +50,16 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/registro" element={<Registro />} />
+      <Route path="/portal" element={<PortalPublico />} />
+      <Route path="/convocatorias" element={<Convocatorias />} />
+      <Route path="/licitaciones-publicas" element={<Convocatorias />} />
+      <Route path="/buscador" element={<BuscadorPublico />} />
       <Route path="/consulta-publica" element={<ConsultaPublica />} />
       <Route path="*" element={
         <AppLayout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/oportunidades" element={<RoleGate roles={["proveedor"]}><Oportunidades /></RoleGate>} />
             <Route path="/licitaciones" element={<Licitaciones />} />
             <Route path="/licitaciones/nueva" element={<RoleGate roles={["admin","licitante"]}><NuevaLicitacion /></RoleGate>} />
             <Route path="/licitaciones/:id" element={<LicitacionDetalle />} />
@@ -74,7 +83,7 @@ export default function App() {
             <Route path="/incidencias" element={<RoleGate roles={["admin","licitante"]}><Incidencias /></RoleGate>} />
             <Route path="/sanciones" element={<RoleGate roles={["admin","licitante"]}><Sanciones /></RoleGate>} />
             <Route path="/inconformidades" element={<RoleGate roles={["admin","licitante","proveedor"]}><Inconformidades /></RoleGate>} />
-            <Route path="/notificaciones" element={<RoleGate roles={["admin","licitante"]}><Notificaciones /></RoleGate>} />
+            <Route path="/notificaciones" element={<RoleGate roles={["admin","licitante","proveedor"]}><Notificaciones /></RoleGate>} />
             <Route path="/auditoria" element={<RoleGate roles={["admin"]}><Auditoria /></RoleGate>} />
             <Route path="/sod" element={<RoleGate roles={["admin"]}><SoD /></RoleGate>} />
             <Route path="/usuarios" element={<RoleGate roles={["admin"]}><Usuarios /></RoleGate>} />

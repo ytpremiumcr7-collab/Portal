@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { eq, desc, and, count } from "drizzle-orm";
+import { eq, desc, and, count, sql } from "drizzle-orm";
 import { createRouter, convocanteQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { participaciones, proveedores, licitacionReglasVersion } from "@db/schema";
+import { participaciones, proveedores, licitacionReglasVersion, proposiciones, coiDeclaraciones } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertLicitacionExists, validateRubric } from "../lib/domain";
 import { assertPositiveDays, assertScore } from "../lib/security";
@@ -12,6 +12,8 @@ import { detectLicitacionRisks } from "../lib/detection";
 import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
 import { assertProcedimientoAsignacion } from "../lib/sod";
 import { computeScoresAndOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
+import { mapEvalToProposicionEstado } from "../lib/proposicion";
+import { parseTieBreakPolicy } from "../lib/procedure-policy";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -56,9 +58,26 @@ export const participacionesRouter = createRouter({
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
     if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });
-    const result = await db.insert(participaciones).values({ tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id, montoOferta: input.montoOferta, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion, estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null });
-    const id = Number(result[0].insertId); const created = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, id), eq(participaciones.tenantId, ctx.user.tenantId)) });
-    await db.update(proveedores).set({ licitacionesParticipadas: (provider.licitacionesParticipadas ?? 0) + 1 }).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
+    const recibidoAt = new Date();
+    let id = 0;
+    await db.transaction(async (tx) => {
+      const result = await tx.insert(participaciones).values({
+        tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
+        montoOferta: input.montoOferta, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion,
+        estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null, recibidoAt,
+      } as any);
+      id = Number(result[0].insertId);
+      // Create proposición shell with authoritative recibidoAt (not seal time).
+      await tx.insert(proposiciones).values({
+        tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
+        participacionId: id, estado: "RECIBIDA", montoOferta: input.montoOferta, recibidoAt,
+      } as any);
+      // Atomic participation counter in same TX.
+      await tx.update(proveedores).set({
+        licitacionesParticipadas: sql`${proveedores.licitacionesParticipadas} + 1`,
+      } as any).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
+    });
+    const created = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, id), eq(participaciones.tenantId, ctx.user.tenantId)) });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "participaciones", entidadId: id, valorNuevo: created });
     await detectLicitacionRisks(ctx.user.tenantId, input.licitacionId);
     return created;
@@ -83,6 +102,11 @@ export const participacionesRouter = createRouter({
 
     // SoD: evaluador_tecnico (tech scoring) — economic recompute is derived from frozen rules.
     await assertProcedimientoAsignacion(ctx.user, lic.id, ["evaluador_tecnico", "evaluador_economico"]);
+    // COI gate: declared conflict without recusal blocks evaluation by that member.
+    const coi = await db.query.coiDeclaraciones.findFirst({
+      where: and(eq(coiDeclaraciones.tenantId, ctx.user.tenantId), eq(coiDeclaraciones.licitacionId, lic.id), eq(coiDeclaraciones.userId, ctx.user.id), eq(coiDeclaraciones.tieneConflicto, true), eq(coiDeclaraciones.recusado, false)),
+    });
+    if (coi) throw new TRPCError({ code: "FORBIDDEN", message: "Conflicto de interés declarado sin recusación: no puede evaluar." });
 
     // Read frozen reglas — not live mutable fields.
     const frozenRow = await db.query.licitacionReglasVersion.findFirst({
@@ -149,17 +173,19 @@ export const participacionesRouter = createRouter({
 
       const admissible = await tx.select({
         id: participaciones.id, montoOferta: participaciones.montoOferta, puntajeTecnico: participaciones.puntajeTecnico,
+        recibidoAt: participaciones.recibidoAt,
       }).from(participaciones)
         .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")));
 
-      // Ensure current row's technical is reflected for ranking (update already applied above).
       const forRank = admissible.map((c) => ({
         id: c.id,
         montoOferta: c.montoOferta,
         puntajeTecnico: c.id === input.id ? technical : c.puntajeTecnico,
+        recibidoAt: c.recibidoAt,
       }));
 
-      const patches = computeScoresAndOrden(frozen, forRank);
+      const tb = parseTieBreakPolicy((frozenRow as any).tieBreakPolicy);
+      const patches = computeScoresAndOrden(frozen, forRank, tb);
       for (const patch of patches) {
         assertScore(Number(patch.puntajeEconomico), "puntajeEconomico");
         assertScore(Number(patch.puntajeTotal), "puntajeTotal");
@@ -168,6 +194,12 @@ export const participacionesRouter = createRouter({
           puntajeTotal: patch.puntajeTotal,
           ordenMerito: patch.ordenMerito,
         }).where(and(eq(participaciones.id, patch.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      }
+      // Sync proposición estados with participación evaluation outcome.
+      const propEstado = mapEvalToProposicionEstado(input.estadoEvaluacion);
+      if (propEstado) {
+        await tx.update(proposiciones).set({ estado: propEstado } as any)
+          .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)));
       }
     });
 

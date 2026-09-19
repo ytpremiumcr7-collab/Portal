@@ -1,14 +1,23 @@
-# ARES Engine MX — Architecture (Phase 3 + P1 harden + SoD + Domain Authority A/B/C)
+# ARES Engine MX — Architecture (Governmental portal + Domain Authority + audit harden)
 
 ## Boundary (ARES only)
 
-ARES is Mexico’s **transactional public procurement** platform: planeación → investigación de mercado → convocatoria → aclaraciones → recepción/apertura → evaluación → dictamen → fallo → adjudicación → contrato → garantías → ejecución → pagos → incidencias / sanciones / inconformidades, con notificaciones oficiales y consulta pública.
+ARES is Mexico’s **transactional public procurement** platform: planeación → investigación de mercado → convocatoria → aclaraciones → recepción/apertura → evaluación → dictamen → fallo → acto de adjudicación → adjudicación → contrato → garantías → ejecución → pagos → incidencias / sanciones / inconformidades, con notificaciones oficiales y consulta pública.
 
 **Out of scope / never merge here:** Megalodon, BIM, APU, or any “preparation platform” features. MEGALODON prepares; ARES contracts, administers, and governs.
 
 Design rule: do **not** fake missing phases with more `hitos`, `tipo_documento`, or fields on `licitaciones`. Each act is a real transactional domain.
 
 **ALERTA ≠ SANCIÓN.** `alertas_seguridad` are risk signals. `sanciones` / `proveedores_impedidos` are legal acts with vigencia that gate participación and adjudicación.
+
+## Information architecture (four worlds)
+
+1. **Portal público** (unauthenticated): `/portal`, `/convocatorias`, `/licitaciones-publicas`, `/buscador`, `/consulta-publica`, OCDS (`consultaPublica.ocdsRelease`)
+2. **Área licitante/proveedor**: oportunidades, proposición/documentos, comunicaciones
+3. **Área dependencia**: crear procedimiento → evaluación → junta → fallo → acto adjudicación → contrato → ejecución
+4. **Auditoría**: expedientes, evidencias, bitácora, SoD
+
+UX: **light formal governmental** theme (white/off-white, deep navy headers, restrained green/red status). Spanish es-MX copy. No dark SaaS look.
 
 ## No-demo / production policy
 
@@ -18,141 +27,81 @@ Design rule: do **not** fake missing phases with more `hitos`, `tipo_documento`,
   - **production** (`NODE_ENV=production`): disabled unless `ARES_ALLOW_PUBLIC_REGISTER=true`
   - **development**: allowed unless `ARES_ALLOW_PUBLIC_REGISTER=false`
 - Default production posture: `ARES_ALLOW_PUBLIC_REGISTER=false`.
+- IP: trust `X-Forwarded-For` only when `ARES_TRUST_PROXY=true`; otherwise direct/socket.
+- SMTP outbox: `ARES_SMTP_URL` + adapter `smtp` can mark `ENVIADA_EXTERNA`; otherwise notifications remain `REGISTRADA`.
 
-## Conserved from Phase 1–2
+## Conserved from Phase 1–2 / Phase 3 ciclo completo / P1 / SoD / Domain Authority
 
 - Expediente electrónico gobernado + hash-chain events
 - Document versioning; publication gates
-- Phase 2: Aclaraciones, Apertura, Dictamen, Fallo, Contratos, Garantías
-- Adjudicación requires dictamen APROBADO + fallo PUBLICADO
+- Phase 2–3 transactional domains
+- Adjudicación requires dictamen APROBADO + fallo PUBLICADO + **acto_adjudicacion PUBLICADO**
 - Soft-delete `tenants.deleted_at`; ON DELETE RESTRICT on evidence tables
+- Finiquito only via `emitirFiniquito`; evaluation freeze at publish
+- ProcedurePolicy + Proposición + domain outbox
 
-## P1 integrity gates (closed)
+## Audit harden (0011) — closed
 
-1. **Apertura / recepción**: `registrarOfertas` requires complete documental offer (`OFERTA_TECNICA` + `OFERTA_ECONOMICA` APROBADO/vigente). Bare participación ≠ complete proposal (`api/lib/oferta-completa.ts`).
-2. **Finiquito**: only `emitirFiniquito()` may set `FINIQUITADA` (after `assertFiniquitoGates`); `transicionarEjecucion` / `assertEjecucionTransition` **reject** `to: FINIQUITADA`. Financial rule: cumulative **montoBruto** (PAGADA) vs `contrato.monto` (post-modificaciones); client `montoFinal` must match that bruto within ε (`api/lib/finiquito-gates.ts`).
-3. **Garantías**: present/receive (proveedor or convocante intake) vs validate/activar (convocante). Activar requires monto/vigencia/tipo/documento. `ponerVigente` on contrato requires required garantías VIGENTE when configured.
-4. **Contratos**: `formalizar` requires CONTRATO APROBADO/vigente doc; `rescindir` requires causa + resolución (+ optional documento); notify hooks when available.
-5. **Sanciones**: investigación ABIERTA → EN_TRAMITE → CERRADA_SIN_SANCION / escalate; sanción from alerta requires `investigacionId` (no free-only autoridad invent).
-6. **Impedimentos**: canonical active = vigencia window; `syncImpedimentosActivo` keeps `activo` aligned; gate + consulta pública use the window.
+| # | Fix |
+|---|-----|
+| P0-1 | Publish selects ProcedurePolicy by **modalidad + régime** (OBRA→LOPSRM else LAASSP), **highest version**; fail if none |
+| P0-2 | `registrarOfertas` / completeness use sealed `proposicion_documentos`; seal+apertura same TX; eval/adjudicación sync proposición estados |
+| P1-3 | `assertActosPermitidosPorPolitica` compares policy vs configured hitos |
+| P1-4 | `policyId` required at publish (NOT NULL) |
+| P1-5 | Honor `requisitos.garantiaSeriedad` in proposición completeness |
+| P1-6 | Junta only if policy actos include `JUNTA_ACLARACIONES` |
+| P1-7 | Authoritative `recibidoAt` on participación/proposición create; passed into ranking/adjudicar |
+| P1-8 | Outbox worker aborts claim when `affectedRows===0` |
+| P1-9 | Notification parent `ACKNOWLEDGED` only when all destinatarios ack; else `PARCIAL` |
+| P1-10 | Rescisión → `CONTRATO_RESCINDIDO` |
+| P1-11 | `documentos.cambiarEstado` update + expediente event same TX |
+| P1-12 | SoD capability check **fail-closed** on infra errors |
+| P1-13 | Atomic proveedor participation counter (same TX) |
+| P1-14 | IP trust proxy gated by `ARES_TRUST_PROXY` |
+| P1-15 | Market quotes comparativo **only VALIDADA**; validate/discard transitions |
+| P1-16 | Incidencias aggregate consistency + `asignadaA` FK |
 
-## Segregation of duties (SoD)
+## Ten governmental points (MVP)
 
-### Capability catalog
+1. **acto_adjudicacion** — ranking proposal + authority decision + publish gate; adjudicación requires published act
+2. **Comisión evaluadora + COI** — members + declarations; evaluar blocked if COI without recusal
+3. **Cancelación / desierto** — `actos_terminacion` with causa/fundamento/documento + outbox
+4. **BESA-lite** — garantía types + `%` / póliza; `penas_convencionales` + `administrador_contrato` on contract
+5. **Calendario jurídico** — `calendario_actos` windows gate RECEPCION / EVALUACION / ADJUDICACION when present
+6. **OCDS-like** — `consultaPublica.ocdsRelease` planning/tender/award/contract JSON
+7. **SMTP/outbox** — stub adapter marks `ENVIADA_EXTERNA` when `ARES_SMTP_URL` set
+8. **CUCoP-lite** — `catalogo_cucop` + link on licitación; seed codes
+9. **Modalities** — IR/AD skip junta via policy actos (#6)
+10. **Adversarial tests** — `api/lib/gov-audit.test.ts` (+ institutional cores)
 
-Includes: `crear_procedimiento`, `publicar`, `evaluar_tecnico`, `evaluar_economico`, `aprobar_juridico`, `emitir_dictamen`, `autorizar_fallo`, `formalizar_contrato`, `presentar_pago`, `aprobar_pago`, `resolver_incidencia`, `investigar_sancion`, `administrar_sancion`, `auditar`, `administrar_planeacion`, `investigar_mercado`, `administrar_ejecucion`, `resolver_inconformidad`, `notificar`, `consulta_publica_admin`.
-
-**Licitante default set is small** (crear/publicar/planeación/mercado/notificar). Extra ops capabilities are granted deliberately via `user_capabilities` or procedure roles.
-
-### Procedure-level assignments
-
-Table `procedimiento_asignaciones` (migration `0006`): roles per licitación (`creador`, `evaluador_tecnico`, `evaluador_economico`, `dictaminador`, `autorizador_fallo`, `presentar_pago`, `aprobar_pago`, `investigar_sancion`, `administrar_sancion`, `promovente`, `resolver_inconformidad`).
-
-Same user cannot hold incompatible roles on the **same** procedimiento unless admin override with justification logged to expediente (`SOD_OVERRIDE_ASIGNACION`).
-
-### Capability incompatibilities
-
-Table `capability_incompatibilidades` seeded with: evaluar↔autorizar_fallo; presentar_pago↔aprobar_pago; investigar_sancion↔administrar_sancion.
-
-Router: `sod.*` (+ UI `/sod`). Grant path: `capabilities.grant` with optional `overrideSod`.
-
-### SoD wired into operations
-
-Helper `assertProcedimientoAsignacion(user, licitacionId, role)` (admin full bypass; non-admin must hold assignment). Enforced on:
-
-- `participaciones.evaluar` → `evaluador_tecnico` | `evaluador_economico`
-- `dictamenes.emitir` / `aprobar` → `dictaminador`
-- `fallos.aprobar` / `publicar` → `autorizador_fallo`
-- `pagos.presentar` → `presentar_pago`; `pagos.autorizar`/`pagar`/… → `aprobar_pago`
-- `sanciones` investigar / administrar when `licitacionId` is known (input or via incidencia)
-
-`sod.asignar`: check+insert same TX with `FOR UPDATE`. `sod.revocar`: DELETE + expediente event same TX. Override justification persisted on `justificacion_override` + expediente payload.
-
-## Phase 3 domains
-
-| Domain | Tables | Key workflow |
-|--------|--------|--------------|
-| **Planeación** | `programas_anuales`, `partidas_presupuestarias`, `necesidades`, … | necesidad → vincularALicitacion |
-| **Inv. mercado** | `investigaciones_mercado`, … | Distinct from participación |
-| **Ejecución** | `modificaciones_contractuales`, `ejecuciones_contractuales`, `entregables`, `finiquitos` | finiquito gated |
-| **Pagos** | `estimaciones_pago` | PRESENTADA→…→PAGADA |
-| **Incidencias / Sanciones / Inconformidades / Notificaciones** | … | real transitions |
-| **Consulta pública** | reads | search/filter + `procedimientoDetalle` |
-| **SoD** | `procedimiento_asignaciones`, `capability_incompatibilidades` | per-procedure + capability pairs |
-
-### Public consult
-
-Unauthenticated `consultaPublica`: `procedimientos` (q/estado), `procedimientoDetalle`, `adjudicaciones`, `contratos`, `sancionados`, `documentosPublicos`, `resumen`.
-
-### Integrity
-
-- Material acts + `expediente_events` in **same transaction** where an expediente exists
-- Soft-delete / RESTRICT on evidence
-
-### Routers
-
-`planeacion`, `investigacionMercado`, `procedimiento`, `ejecucion`, `pagos`, `incidencias`, `sanciones`, `inconformidades`, `notificaciones`, `consultaPublica`, `capabilities`, `sod`.
-
-### Evaluation engine (published criterion)
-
-Frozen at publish into `licitacion_reglas_version` (hash of criterio, ponderaciones, modo, tipo, marco). Evaluation and adjudicación **read the frozen version**, not live mutable fields.
-
-| Criterio | Winner / orden de mérito |
-|----------|--------------------------|
-| `PRECIO_MAS_BAJO` | Min admissible economic offer (tech = pass/fail via ADMISIBLE) — **not** `max(puntajeTotal)` |
-| `MEJOR_RELACION_CALIDAD_PRECIO` | Weighted tech+econ total |
-| `MEJOR_VALOR_TECNICO` | Primary technical ranking among solvent; econ amount must be positive |
-
-Engine: `api/lib/evaluation-engine.ts`. Pre-dictamen/pre-fallo: all received proposiciones must have final eval status (not PENDIENTE).
-
-Migrations: `0004`–`0007` (prior) + `0008_procedure_policy.sql`, `0009_proposiciones.sql`, `0010_outbox.sql`.
-
-Transition / gate helpers: `api/lib/phase2-transitions.ts`, `phase3-transitions.ts`, `oferta-completa.ts`, `finiquito-gates.ts`, `garantia-gates.ts`, `sod.ts` (vitest, no live DB).
-
-## Sequence (full cycle)
-
-```
-PLANEACIÓN → (inv. mercado) → PROCEDIMIENTO → ACLARACIONES → APERTURA
-→ EVALUACIÓN → DICTAMEN → FALLO → ADJUDICACIÓN → CONTRATO → GARANTÍAS
-→ EJECUCIÓN / MODIFICACIONES → PAGOS → FINIQUITO
-(+ incidencias / sanciones / inconformidades / notificaciones)
-```
-
-## TODOs (light)
-
-- Hash-chain on `audit_log` (today chain lives on expediente events)
-- Full out-of-band email/SMS delivery adapters (status machine is real; transport is in-process)
-
-
-## Domain Authority (institutional cores A+B+C — landed)
+## Domain Authority
 
 ```
 LegalRegime (LAASSP / LOPSRM)
-    └─ ProcedurePolicy (per modalidad + version + hash)
-           └─ freeze on publicar → licitacion_reglas_version (+ policy snapshot)
+    └─ ProcedurePolicy (modalidad + version + hash) — highest version at publish
+           └─ freeze → licitacion_reglas_version (policyId required)
                   ├─ evaluation / adjudicación / dictamen / fallo READ snapshot only
-                  └─ tieBreakPolicy: precio | fechaRecepcion | sorteo_documentado (never silent id ASC)
+                  └─ tieBreakPolicy: precio | fechaRecepcion | sorteo_documentado
 
-Participación + docs → Proposición (manifestHash / sealHash)
-    └─ aperturas.sellar seals proposición manifests (not all licitación docs)
-           └─ proposicion_exclusiones (structured NO_ADMISIBLE / DESECHADA)
+Participación (recibidoAt) + docs → Proposición (manifestHash / sealHash)
+    └─ aperturas.sellar seals proposición manifests in same TX as apertura SELLADA
+           └─ registrarOfertas reads proposicion_documentos (not live documentos bag)
 
-Critical acts (same TX as state change)
-    └─ domain_outbox (PENDING → processOutboxOnce)
-           └─ notificaciones estado REGISTRADA
-                  └─ ENVIADA_EXTERNA only if delivery adapter reports external success
+Critical acts → domain_outbox → notificaciones REGISTRADA
+    └─ ENVIADA_EXTERNA only if adapter reports external success (SMTP stub when URL set)
 ```
 
-Migrations: `0008_procedure_policy.sql`, `0009_proposiciones.sql`, `0010_outbox.sql`.
+Migrations: `0008`–`0010` + **`0011_audit_harden.sql`**.
 
 ### Deferred — remaining institutional cores
 1. E-signature (advanced / qualified)
-2. OCDS export
-3. Consorcios / joint ventures
-4. COI declarations (structured conflicto de interés workflow)
-5. Real SMTP / SMS provider (transport adapter beyond log/noop)
-6. Multi-regime depth (state/municipal overlays beyond LAASSP/LOPSRM seeds)
+2. Consorcios / joint ventures
+3. Full production SMTP/SMS provider beyond stub
+4. Multi-regime depth (state/municipal overlays beyond LAASSP/LOPSRM seeds)
+5. Hash-chain on `audit_log` (today chain lives on expediente events)
+
+*(OCDS export: landed as public projection MVP.)*
 
 ## Stack
 
-Drizzle (MySQL) + tRPC + React. Spanish domain terms. ARES only — no Megalodon.
+Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES only — no Megalodon.

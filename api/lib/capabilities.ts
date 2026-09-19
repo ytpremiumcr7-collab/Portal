@@ -83,6 +83,11 @@ export async function assertCapabilityCompatibility(
     }
   } catch (e) {
     if (e instanceof TRPCError) throw e;
-    // Table may not exist yet — soft fail open only on infrastructure errors.
+    // Fail-closed on infrastructure errors for sensitive SoD grants.
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "No se pudo verificar segregación de funciones (fallo de infraestructura). Operación denegada.",
+      cause: e,
+    });
   }
 }
