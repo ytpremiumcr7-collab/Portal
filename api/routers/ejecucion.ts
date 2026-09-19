@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
+import { createRouter, authedQuery, procedureMutation, ctxForAudit } from "../middleware";
+import { licitacionIdFromContrato, licitacionIdFromModificacion, licitacionIdFromEjecucion, licitacionIdFromEntregable } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import {
   modificacionesContractuales, ejecucionesContractuales, entregables, finiquitos, contratos, licitaciones,
@@ -36,7 +37,7 @@ export const ejecucionRouter = createRouter({
     return pageResult(items, Number(totalRows[0]?.total ?? 0), page, pageSize);
   }),
 
-  crearModificacion: capabilityQuery("administrar_ejecucion").input(z.object({
+  crearModificacion: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(),
     tipo: z.enum(["CONVENIO", "AMPLIACION", "REDUCCION", "PRORROGA", "REPROGRAMACION"]),
     folio: z.string().trim().min(3).max(80), justificacion: z.string().trim().min(10),
@@ -61,7 +62,7 @@ export const ejecucionRouter = createRouter({
     return created;
   }),
 
-  transicionarModificacion: capabilityQuery("administrar_ejecucion").input(z.object({
+  transicionarModificacion: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromModificacion(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     to: z.enum(["EN_REVISION", "APROBADA", "RECHAZADA", "FORMALIZADA"]),
     motivo: z.string().trim().min(3),
@@ -98,7 +99,7 @@ export const ejecucionRouter = createRouter({
     });
   }),
 
-  iniciarEjecucion: capabilityQuery("administrar_ejecucion").input(z.object({
+  iniciarEjecucion: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(), fechaInicio: dateMx, motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const contrato = await contratoOrThrow(ctx.user.tenantId, input.contratoId);
@@ -123,7 +124,7 @@ export const ejecucionRouter = createRouter({
     return db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.id, id), eq(ejecucionesContractuales.tenantId, ctx.user.tenantId)) });
   }),
 
-  registrarAvance: capabilityQuery("administrar_ejecucion").input(z.object({
+  registrarAvance: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromEjecucion(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(),
     porcentajeAvance: z.number().min(0).max(100),
     /** Explicit governed rectificación — required to decrease porcentaje. */
@@ -153,7 +154,7 @@ export const ejecucionRouter = createRouter({
     return db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.id, ejec.id), eq(ejecucionesContractuales.tenantId, ctx.user.tenantId)) });
   }),
 
-  transicionarEjecucion: capabilityQuery("administrar_ejecucion").input(z.object({
+  transicionarEjecucion: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromEjecucion(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(),
     to: z.enum(["SUSPENDIDA", "EN_EJECUCION", "TERMINADA"]),
     motivo: z.string().trim().min(3),
@@ -172,7 +173,7 @@ export const ejecucionRouter = createRouter({
     return db.query.ejecucionesContractuales.findFirst({ where: and(eq(ejecucionesContractuales.id, ejec.id), eq(ejecucionesContractuales.tenantId, ctx.user.tenantId)) });
   }),
 
-  crearEntregable: capabilityQuery("administrar_ejecucion").input(z.object({
+  crearEntregable: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(), descripcion: z.string().trim().min(5),
     fechaProgramada: dateMx.optional(), motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
@@ -188,7 +189,7 @@ export const ejecucionRouter = createRouter({
     return db.query.entregables.findFirst({ where: and(eq(entregables.id, id), eq(entregables.tenantId, ctx.user.tenantId)) });
   }),
 
-  marcarEntregado: capabilityQuery("administrar_ejecucion").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  marcarEntregado: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromEntregable(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cur = await db.query.entregables.findFirst({ where: and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)) });
     if (!cur || cur.estado !== "PENDIENTE") throw new TRPCError({ code: "CONFLICT", message: "Sólo PENDIENTE → ENTREGADO." });
@@ -200,7 +201,7 @@ export const ejecucionRouter = createRouter({
     return db.query.entregables.findFirst({ where: and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)) });
   }),
 
-  aceptarEntregable: capabilityQuery("administrar_ejecucion").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  aceptarEntregable: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromEntregable(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cur = await db.query.entregables.findFirst({ where: and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)) });
     if (!cur || !["PENDIENTE", "ENTREGADO"].includes(cur.estado)) throw new TRPCError({ code: "CONFLICT", message: "Entregable no aceptable." });
@@ -212,7 +213,7 @@ export const ejecucionRouter = createRouter({
     return db.query.entregables.findFirst({ where: and(eq(entregables.id, input.id), eq(entregables.tenantId, ctx.user.tenantId)) });
   }),
 
-  emitirFiniquito: capabilityQuery("administrar_ejecucion").input(z.object({
+  emitirFiniquito: procedureMutation({ capability: "administrar_ejecucion", roles: ["administrar_ejecucion", "creador"], resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(), folio: z.string().trim().min(3).max(80),
     montoFinal: z.string().regex(/^\d+(\.\d{1,2})?$/), motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {

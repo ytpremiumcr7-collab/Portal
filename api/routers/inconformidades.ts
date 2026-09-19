@@ -2,7 +2,8 @@ import { enqueueOutbox } from "../lib/outbox";
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, authedQuery, capabilityQuery, proveedorQuery, ctxForAudit } from "../middleware";
+import { createRouter, authedQuery, procedureMutation, proveedorQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromInconformidad } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { inconformidades, proveedores, participaciones } from "@db/schema";
 import { assertInconformidadTransition } from "../lib/phase3-transitions";
@@ -109,7 +110,7 @@ export const inconformidadesRouter = createRouter({
     return created;
   }),
 
-  transicionar: capabilityQuery("resolver_inconformidad").input(z.object({
+  transicionar: procedureMutation({ capability: "resolver_inconformidad", role: "resolver_inconformidad", resolveLicitacionId: (i, ctx) => licitacionIdFromInconformidad(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     to: z.enum(["ADMITIDA", "EN_TRAMITE", "RESUELTA", "DESECHADA", "SOBRESEIDA"]),
     resolucion: z.string().trim().min(10).optional(),

@@ -1,7 +1,15 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 export const ENVELOPE_ALGORITHM = "AES-256-GCM" as const;
 export const ENVELOPE_PLACEHOLDER_MONTO = "0.00";
+
+export type EnvelopeAadContext = {
+  tenantId: number;
+  licitacionId: number;
+  participacionId: number;
+  proposicionId: number | null;
+  keyVersion: number;
+};
 
 export type EnvelopeSeal = {
   ciphertext: string;
@@ -9,6 +17,7 @@ export type EnvelopeSeal = {
   authTag: string;
   keyVersion: number;
   algorithm: typeof ENVELOPE_ALGORITHM;
+  aad?: string;
 };
 
 function parseKeyMaterial(raw: string): Buffer {
@@ -37,7 +46,6 @@ export function resolveEnvelopeKey(version: number): Buffer {
       if (process.env.NODE_ENV === "production") {
         throw new Error("ARES_ENVELOPE_KEY required in production");
       }
-      // Deterministic dev fallback (NOT for production) — 32 zero-ish derived bytes from label
       return parseKeyMaterial(Buffer.from("piedra-angular-dev-envelope-key!!").toString("base64"));
     }
     return parseKeyMaterial(raw);
@@ -47,16 +55,29 @@ export function resolveEnvelopeKey(version: number): Buffer {
   return parseKeyMaterial(legacy);
 }
 
-/** Encrypt monto (decimal string) with AES-256-GCM. */
-export function sealMontoOferta(monto: string | number): EnvelopeSeal {
+/** Canonical AAD binding: tenant:licitacion:participacion:proposicion:keyVersion */
+export function buildEnvelopeAad(ctx: EnvelopeAadContext): string {
+  const prop = ctx.proposicionId == null ? "0" : String(ctx.proposicionId);
+  return `${ctx.tenantId}:${ctx.licitacionId}:${ctx.participacionId}:${prop}:${ctx.keyVersion}`;
+}
+
+/** SHA-256 of ciphertext (base64 payload) for manifest/seal without decrypt. */
+export function ciphertextHash(ciphertextB64: string): string {
+  return createHash("sha256").update(ciphertextB64, "utf8").digest("hex");
+}
+
+/** Encrypt monto (decimal string) with AES-256-GCM + AAD binding. */
+export function sealMontoOferta(monto: string | number, aadCtx: EnvelopeAadContext): EnvelopeSeal {
   const plain = Number(monto).toFixed(2);
   if (!Number.isFinite(Number(plain)) || Number(plain) <= 0) {
     throw new Error("montoOferta inválido para sellado");
   }
-  const keyVersion = currentEnvelopeKeyVersion();
+  const keyVersion = aadCtx.keyVersion || currentEnvelopeKeyVersion();
   const key = resolveEnvelopeKey(keyVersion);
+  const aad = buildEnvelopeAad({ ...aadCtx, keyVersion });
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from(aad, "utf8"));
   const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return {
@@ -65,25 +86,31 @@ export function sealMontoOferta(monto: string | number): EnvelopeSeal {
     authTag: tag.toString("base64"),
     keyVersion,
     algorithm: ENVELOPE_ALGORITHM,
+    aad,
   };
 }
 
-/** Decrypt sealed envelope → decimal string with 2 places. */
-export function openMontoOferta(seal: {
-  ciphertext: string;
-  nonceIv: string;
-  authTag: string;
-  keyVersion: number;
-  algorithm?: string;
-}): string {
+/** Decrypt sealed envelope → decimal string with 2 places. AAD must match or GCM fails. */
+export function openMontoOferta(
+  seal: {
+    ciphertext: string;
+    nonceIv: string;
+    authTag: string;
+    keyVersion: number;
+    algorithm?: string;
+  },
+  aadCtx: EnvelopeAadContext,
+): string {
   if (seal.algorithm && seal.algorithm !== ENVELOPE_ALGORITHM) {
     throw new Error(`Unsupported envelope algorithm: ${seal.algorithm}`);
   }
   const key = resolveEnvelopeKey(seal.keyVersion);
+  const aad = buildEnvelopeAad({ ...aadCtx, keyVersion: seal.keyVersion });
   const iv = Buffer.from(seal.nonceIv, "base64");
   const tag = Buffer.from(seal.authTag, "base64");
   const data = Buffer.from(seal.ciphertext, "base64");
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAAD(Buffer.from(aad, "utf8"));
   decipher.setAuthTag(tag);
   const plain = Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
   const n = Number(plain);

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
-import { assertProcedimientoAsignacion } from "../lib/sod";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromApertura, licitacionIdFromInput } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { aperturas, aperturaRegistros, participaciones, licitaciones, documentos, proposiciones, proposicionDocumentos, licitacionReglasVersion } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -13,8 +13,8 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { buildProposicionManifest, buildAperturaSealFromProposicionManifests, mapDocTipoToRol, assertProposicionDocsCompletos, assertProposicionSelladaCompleta } from "../lib/proposicion";
 import { parseRequisitos } from "../lib/procedure-policy";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
-import { decryptMontoParticipacion, revelarSobresEconomicos } from "../lib/sobre-economico";
-import { ENVELOPE_PLACEHOLDER_MONTO } from "../lib/envelope-crypto";
+import { loadSobreForParticipacion, revelarSobresEconomicos } from "../lib/sobre-economico";
+import { ENVELOPE_PLACEHOLDER_MONTO, ciphertextHash } from "../lib/envelope-crypto";
 
 export const aperturasRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -39,9 +39,8 @@ export const aperturasRouter = createRouter({
     return item;
   }),
 
-  iniciar: capabilityQuery("publicar").input(z.object({ licitacionId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  iniciar: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({ licitacionId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
-    await assertProcedimientoAsignacion(ctx.user, input.licitacionId, "creador");
     await assertCalendarioPermite(ctx.user.tenantId, input.licitacionId, "RECEPCION");
     if (lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "La recepción sólo inicia en PUBLICADA." });
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
@@ -64,10 +63,10 @@ export const aperturasRouter = createRouter({
     return created;
   }),
 
-  cerrarRecepcion: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  cerrarRecepcion: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromApertura(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "RECEPCION_CERRADA", input.motivo, { fechaCierreRecepcion: new Date() });
   }),
-  sellar: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  sellar: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromApertura(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
@@ -99,32 +98,29 @@ export const aperturasRouter = createRouter({
         // recibidoAt from participación (authoritative at create), never seal time.
         const recibidoAt = (o as any).recibidoAt ?? prop?.recibidoAt ?? new Date();
         if (!prop) {
-          let montoProp = String(o.montoOferta);
-          if (montoProp === ENVELOPE_PLACEHOLDER_MONTO) {
-            montoProp = (await decryptMontoParticipacion(tx, ctx.user.tenantId, o.id)) ?? montoProp;
-          }
+          // Keep placeholder — seal must NOT decrypt. Reveal only on abrir/registrarOfertas.
           const ins = await tx.insert(proposiciones).values({
             tenantId: ctx.user.tenantId,
             licitacionId: apertura.licitacionId,
             proveedorId: o.proveedorId,
             participacionId: o.id,
             estado: "RECIBIDA",
-            montoOferta: montoProp,
+            montoOferta: ENVELOPE_PLACEHOLDER_MONTO,
             recibidoAt,
           } as any);
           const propId = Number(ins[0].insertId);
           prop = await tx.query.proposiciones.findFirst({ where: and(eq(proposiciones.id, propId), eq(proposiciones.tenantId, ctx.user.tenantId)) });
         }
-        let montoForSeal = String(o.montoOferta);
-        if (montoForSeal === ENVELOPE_PLACEHOLDER_MONTO || !montoForSeal) {
-          const decrypted = await decryptMontoParticipacion(tx, ctx.user.tenantId, o.id);
-          if (decrypted) montoForSeal = decrypted;
+        const sobre = await loadSobreForParticipacion(tx, ctx.user.tenantId, o.id);
+        if (!sobre?.ciphertext) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Participación #${o.id} sin sobre económico sellado; no se puede sellar con plaintext.` });
         }
+        const ctHash = ciphertextHash(sobre.ciphertext);
         const { manifestHash } = buildProposicionManifest({
           proposicionId: prop!.id,
           participacionId: o.id,
           proveedorId: o.proveedorId,
-          montoOferta: montoForSeal,
+          ciphertextHash: ctHash,
           recibidoAt: prop!.recibidoAt ?? recibidoAt,
           documentos: propDocs,
         });
@@ -149,12 +145,12 @@ export const aperturasRouter = createRouter({
         .where(and(eq(aperturas.id, apertura.id), eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.estado, apertura.estado)));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La apertura cambió de estado." });
       await appendExpedienteEvent(tx, ctx, { expedienteId: apertura.expedienteId, tipo: "APERTURA_SELLADA", estadoAnterior: apertura.estado, estadoNuevo: "SELLADA", motivo: input.motivo, payload: { aperturaId: apertura.id, selloHash, proposiciones: manifests.length } });
+      const updatedInTx = await tx.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "SELLAR", entidad: "aperturas", entidadId: input.id, valorNuevo: updatedInTx, motivo: input.motivo, tx });
     });
-    const updated = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "SELLAR", entidad: "aperturas", entidadId: input.id, valorNuevo: updated, motivo: input.motivo });
-    return updated;
+    return db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
   }),
-  abrir: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  abrir: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromApertura(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
@@ -176,12 +172,12 @@ export const aperturasRouter = createRouter({
         motivo: input.motivo,
         payload: { aperturaId: input.id, sobresRevelados: revealed.revelados },
       });
+      const updatedInTx = await tx.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "ABRIR_REVELAR", entidad: "aperturas", entidadId: input.id, valorAnterior: apertura, valorNuevo: updatedInTx, motivo: input.motivo, tx });
     });
-    const updated = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ABRIR_REVELAR", entidad: "aperturas", entidadId: input.id, valorAnterior: apertura, valorNuevo: updated, motivo: input.motivo });
-    return updated;
+    return db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
   }),
-  registrarOfertas: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  registrarOfertas: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromApertura(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.id, input.id), eq(aperturas.tenantId, ctx.user.tenantId)) });
     if (!apertura) throw new TRPCError({ code: "NOT_FOUND", message: "Apertura no encontrada." });
@@ -229,10 +225,10 @@ export const aperturasRouter = createRouter({
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "REGISTRAR", entidad: "aperturas", entidadId: input.id, valorNuevo: updated, motivo: input.motivo });
     return updated;
   }),
-  emitirActa: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), actaResumen: z.string().trim().min(10), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  emitirActa: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromApertura(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), actaResumen: z.string().trim().min(10), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "ACTA_EMITIDA", input.motivo, { fechaActa: new Date(), actaResumen: input.actaResumen });
   }),
-  publicar: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromApertura(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "PUBLICADA", input.motivo, { fechaPublicacion: new Date() });
   }),
 });

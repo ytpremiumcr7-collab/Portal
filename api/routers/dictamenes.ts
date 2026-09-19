@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, procedureMutation, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromInput, licitacionIdFromDictamen } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { dictamenes, dictamenFirmantes, participaciones, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -9,7 +10,6 @@ import { assertLicitacionExists } from "../lib/domain";
 import { assertDictamenTransition } from "../lib/phase2-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { assertProcedimientoAsignacion } from "../lib/sod";
 import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
@@ -37,7 +37,7 @@ export const dictamenesRouter = createRouter({
     return item;
   }),
 
-  crear: capabilityQuery("emitir_dictamen").input(z.object({
+  crear: procedureMutation({ capability: "emitir_dictamen", role: "dictaminador", resolveLicitacionId: (i, ctx) => (i as any).licitacionId ? licitacionIdFromInput(i) : licitacionIdFromDictamen(i, ctx.user!.tenantId) }).input(z.object({
     licitacionId: z.number().int().positive(),
     fundamento: z.string().trim().min(20),
     resultado: z.enum(["RECOMENDAR_ADJUDICACION", "DECLARAR_DESIERTO", "RECOMENDAR_CANCELACION"]),
@@ -87,7 +87,7 @@ export const dictamenesRouter = createRouter({
     return created;
   }),
 
-  firmar: capabilityQuery("emitir_dictamen").input(z.object({ dictamenId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  firmar: procedureMutation({ capability: "emitir_dictamen", role: "dictaminador", resolveLicitacionId: (i, ctx) => (i as any).licitacionId ? licitacionIdFromInput(i) : licitacionIdFromDictamen(i, ctx.user!.tenantId) }).input(z.object({ dictamenId: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const firmante = await db.query.dictamenFirmantes.findFirst({
       where: and(eq(dictamenFirmantes.tenantId, ctx.user.tenantId), eq(dictamenFirmantes.dictamenId, input.dictamenId), eq(dictamenFirmantes.usuarioId, ctx.user.id)),
@@ -103,7 +103,7 @@ export const dictamenesRouter = createRouter({
     return getDb().query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.dictamenId), eq(dictamenes.tenantId, ctx.user.tenantId)), with: { firmantes: true } });
   }),
 
-  emitir: capabilityQuery("emitir_dictamen").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  emitir: procedureMutation({ capability: "emitir_dictamen", role: "dictaminador", resolveLicitacionId: (i, ctx) => (i as any).licitacionId ? licitacionIdFromInput(i) : licitacionIdFromDictamen(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId)), with: { firmantes: true } });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Dictamen no encontrado." });
@@ -111,7 +111,6 @@ export const dictamenesRouter = createRouter({
     if (!current.firmantes.length || current.firmantes.some((f: any) => !f.firmado)) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Todos los firmantes deben haber firmado antes de emitir." });
     }
-    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "dictaminador");
     const offers = await db.select({ id: participaciones.id, estadoEvaluacion: participaciones.estadoEvaluacion })
       .from(participaciones)
       .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, current.licitacionId)));
@@ -131,7 +130,6 @@ export const dictamenesRouter = createRouter({
     const current = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Dictamen no encontrado." });
     assertDictamenTransition(current.estado as any, "APROBADO");
-    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "dictaminador");
     await db.transaction(async (tx) => {
       const result = await tx.update(dictamenes).set({ estado: "APROBADO", aprobadoPor: ctx.user.id, aprobadoAt: new Date() }).where(and(eq(dictamenes.id, input.id), eq(dictamenes.tenantId, ctx.user.tenantId), eq(dictamenes.estado, "EMITIDO")));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "El dictamen cambió de estado." });

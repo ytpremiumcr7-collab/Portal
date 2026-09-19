@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, authedQuery, ctxForAudit } from "../middleware";
+import { resolveCapabilities } from "../lib/capabilities";
+import { assertProcedimientoAsignacion, hasActiveBreakGlass } from "../lib/sod";
 import { getDb } from "../queries/connection";
 import { calendarioActos } from "@db/schema";
 import { assertLicitacionExists } from "../lib/domain";
@@ -14,7 +16,7 @@ export const calendarioRouter = createRouter({
     });
   }),
 
-  configurar: capabilityQuery("crear_procedimiento").input(z.object({
+  configurar: authedQuery.input(z.object({
     licitacionId: z.number().int().positive(),
     acto: z.string().trim().min(2).max(60),
     ventanaInicio: z.string().datetime(),
@@ -22,7 +24,29 @@ export const calendarioRouter = createRouter({
     obligatorio: z.boolean().default(true),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
-    await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
+    const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
+    const caps = await resolveCapabilities(ctx.user);
+    const hasAdminCal = caps.has("administrar_calendario");
+    const hasCrear = caps.has("crear_procedimiento");
+    if (!hasAdminCal && !hasCrear) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Se requiere administrar_calendario o crear_procedimiento + asignación creador." });
+    }
+    if (!hasAdminCal) {
+      await assertProcedimientoAsignacion(ctx.user, input.licitacionId, "creador");
+    }
+    // Freeze after PUBLICADA except active break_glass
+    if (!["BORRADOR", "CONSULTAS"].includes(lic.estado)) {
+      const bg = await hasActiveBreakGlass(ctx.user, {
+        licitacionId: input.licitacionId,
+        capability: hasAdminCal ? "administrar_calendario" : "crear_procedimiento",
+      });
+      if (!bg) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Calendario jurídico congelado tras PUBLICADA; requiere break_glass aprobado por otro usuario.",
+        });
+      }
+    }
     if (new Date(input.ventanaFin) <= new Date(input.ventanaInicio)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "ventanaFin debe ser posterior a ventanaInicio." });
     }

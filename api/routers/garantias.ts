@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromContrato, licitacionIdFromGarantia } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { garantias, contratos, documentos, proveedores } from "@db/schema";
 import { appendExpedienteEvent } from "../lib/expediente";
@@ -37,7 +38,7 @@ export const garantiasRouter = createRouter({
   }),
 
   /** Convocante requires a garantía (receive side configures expectation). */
-  requerir: capabilityQuery("formalizar_contrato").input(z.object({
+  requerir: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(),
     tipo: z.enum(["CUMPLIMIENTO", "ANTICIPO", "VICIOS_OCULTOS", "SERIEDAD"]),
     monto: money,
@@ -107,7 +108,7 @@ export const garantiasRouter = createRouter({
   }),
 
   /** Validate / activar — convocante capability only; requires complete fields + documento. */
-  activar: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  activar: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromGarantia(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.garantias.findFirst({ where: and(eq(garantias.id, input.id), eq(garantias.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Garantía no encontrada." });
@@ -133,10 +134,10 @@ export const garantiasRouter = createRouter({
     return transition(ctx, input.id, "VIGENTE", input.motivo, {});
   }),
 
-  liberar: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  liberar: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromGarantia(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "LIBERADA", input.motivo, { liberadaAt: new Date() });
   }),
-  ejecutar: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  ejecutar: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromGarantia(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "EJECUTADA", input.motivo, {});
   }),
 });
@@ -152,8 +153,8 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
     const result = await tx.update(garantias).set({ ...patch, estado: next } as any).where(and(eq(garantias.id, id), eq(garantias.tenantId, ctx.user.tenantId), eq(garantias.estado, current.estado)));
     if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La garantía cambió de estado." });
     await appendExpedienteEvent(tx, ctx, { expedienteId: contrato.expedienteId, tipo: `GARANTIA_${next}`, estadoAnterior: current.estado, estadoNuevo: next, motivo, payload: { garantiaId: id } });
+    const updatedInTx = await tx.query.garantias.findFirst({ where: and(eq(garantias.id, id), eq(garantias.tenantId, ctx.user.tenantId)) });
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "TRANSICION", entidad: "garantias", entidadId: id, valorAnterior: current, valorNuevo: updatedInTx, motivo, tx });
   });
-  const updated = await db.query.garantias.findFirst({ where: and(eq(garantias.id, id), eq(garantias.tenantId, ctx.user.tenantId)) });
-  await writeAudit({ ctx: ctxForAudit(ctx), accion: "TRANSICION", entidad: "garantias", entidadId: id, valorAnterior: current, valorNuevo: updated, motivo });
-  return updated;
+  return db.query.garantias.findFirst({ where: and(eq(garantias.id, id), eq(garantias.tenantId, ctx.user.tenantId)) });
 }

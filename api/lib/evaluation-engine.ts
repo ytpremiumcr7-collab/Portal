@@ -277,3 +277,108 @@ export function parseDesempateOrden(resultadoJson: unknown): Map<number, number>
   }
   return map;
 }
+
+
+/**
+ * Compute the exact set of participación IDs that remain tied after primary criterion
+ * and non-sorteo tie-break keys — i.e. the set that sorteo_documentado must order.
+ */
+
+/**
+ * Compute the exact set of participación IDs that remain tied after primary criterion
+ * and non-sorteo tie-break keys — i.e. the set that sorteo_documentado must order.
+ */
+export function computeEmpateSet(
+  criterio: CriterioEvaluacion,
+  offers: OfferForRanking[],
+  tieBreak: TieBreakKey[],
+): number[] {
+  if (offers.length < 2) return offers.map((o) => o.id);
+  const keysBeforeSorteo = tieBreak.filter((k) => k !== "sorteo_documentado");
+
+  let best: OfferForRanking[] = [];
+  if (criterio === "PRECIO_MAS_BAJO") {
+    const min = Math.min(...offers.map((o) => Number(o.montoOferta)));
+    best = offers.filter((o) => Number(o.montoOferta) === min);
+  } else if (criterio === "MEJOR_VALOR_TECNICO") {
+    const max = Math.max(...offers.map((o) => Number(o.puntajeTecnico ?? -Infinity)));
+    best = offers.filter((o) => Number(o.puntajeTecnico ?? -Infinity) === max);
+  } else {
+    const max = Math.max(...offers.map((o) => Number(o.puntajeTotal ?? -Infinity)));
+    best = offers.filter((o) => Number(o.puntajeTotal ?? -Infinity) === max);
+  }
+  if (best.length <= 1) return best.map((o) => o.id);
+
+  const primaryKey = (o: OfferForRanking): string => {
+    if (criterio === "PRECIO_MAS_BAJO") return Number(o.montoOferta).toFixed(2);
+    if (criterio === "MEJOR_VALOR_TECNICO") return Number(o.puntajeTecnico ?? 0).toFixed(2);
+    return Number(o.puntajeTotal ?? 0).toFixed(2);
+  };
+  const sig = (o: OfferForRanking) => {
+    const parts: string[] = [primaryKey(o)];
+    for (const key of keysBeforeSorteo) {
+      if (key === "precio") parts.push(`p:${Number(o.montoOferta).toFixed(2)}`);
+      if (key === "fechaRecepcion") {
+        parts.push(`f:${o.recibidoAt ? new Date(o.recibidoAt).toISOString() : ""}`);
+      }
+    }
+    return parts.join("|");
+  };
+  const counts = new Map<string, OfferForRanking[]>();
+  for (const o of best) {
+    const s = sig(o);
+    if (!counts.has(s)) counts.set(s, []);
+    counts.get(s)!.push(o);
+  }
+  const residual: number[] = [];
+  for (const group of counts.values()) {
+    if (group.length >= 2) residual.push(...group.map((o) => o.id));
+  }
+  return residual.sort((a, b) => a - b);
+}
+
+export function assertSorteoResultadoValid(input: {
+  policyRequiresSorteo: boolean;
+  metodo: string;
+  evidenciaDocId?: number | null;
+  orden: Array<{ participacionId: number; orden: number }>;
+  empateSet: number[];
+}) {
+  if (input.policyRequiresSorteo) {
+    if (input.metodo !== "SORTEO_DOCUMENTADO") {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "La política congelada exige sorteo_documentado; método OTRO rechazado.",
+      });
+    }
+    if (!input.evidenciaDocId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "sorteo_documentado requiere evidenciaDocId.",
+      });
+    }
+  }
+  const ids = input.orden.map((o) => o.participacionId).sort((a, b) => a - b);
+  const expected = [...input.empateSet].sort((a, b) => a - b);
+  if (ids.length !== expected.length || ids.some((id, i) => id !== expected[i])) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El orden debe cubrir exactamente el conjunto empatado [${expected.join(",")}]; recibido [${ids.join(",")}].`,
+    });
+  }
+  const ordenes = input.orden.map((o) => o.orden).sort((a, b) => a - b);
+  for (let i = 0; i < ordenes.length; i++) {
+    if (ordenes[i] !== i + 1) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "El orden debe ser contiguo 1..N sin huecos ni duplicados.",
+      });
+    }
+  }
+  if (new Set(ordenes).size !== ordenes.length) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "El orden de desempate no puede tener posiciones duplicadas.",
+    });
+  }
+}

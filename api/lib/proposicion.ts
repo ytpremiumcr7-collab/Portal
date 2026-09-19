@@ -13,12 +13,18 @@ export type ProposicionManifestInput = {
   proposicionId: number;
   participacionId: number;
   proveedorId: number;
-  montoOferta: string | number;
+  /** @deprecated Prefer ciphertextHash — seal must NOT require decrypt. */
+  montoOferta?: string | number;
+  /** SHA-256 of envelope ciphertext (or document+ciphertext binding). */
+  ciphertextHash?: string | null;
   recibidoAt: string | Date;
   documentos: PropDocForManifest[];
 };
 
-/** Canonical per-participant proposición document set hash. */
+/**
+ * Canonical per-participant proposición document set hash.
+ * Seal uses document hashes + ciphertext hash — NEVER decrypted monto.
+ */
 export function buildProposicionManifest(input: ProposicionManifestInput): {
   payload: Record<string, unknown>;
   manifestHash: string;
@@ -26,16 +32,29 @@ export function buildProposicionManifest(input: ProposicionManifestInput): {
   const docs = [...input.documentos]
     .map((d) => ({ documentoId: d.documentoId, rol: d.rol, sha256: d.sha256 }))
     .sort((a, b) => a.documentoId - b.documentoId);
-  const payload = {
+  const payload: Record<string, unknown> = {
     proposicionId: input.proposicionId,
     participacionId: input.participacionId,
     proveedorId: input.proveedorId,
-    montoOferta: Number(input.montoOferta).toFixed(2),
     recibidoAt: new Date(input.recibidoAt).toISOString(),
     documentos: docs,
   };
+  if (input.ciphertextHash) {
+    payload.ciphertextHash = input.ciphertextHash;
+  } else if (input.montoOferta != null) {
+    // Legacy fallback only for tests without envelope — production paths must pass ciphertextHash.
+    payload.montoOferta = Number(input.montoOferta).toFixed(2);
+  }
   const manifestHash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
   return { payload, manifestHash };
+}
+
+/** Pure: seal manifest does not need decrypted monto when ciphertextHash is present. */
+export function sealManifestRequiresDecrypt(input: {
+  ciphertextHash?: string | null;
+  montoOferta?: string | number | null;
+}): boolean {
+  return !input.ciphertextHash;
 }
 
 /** Apertura seal must cover proposición manifests — not the full licitación document bag. */

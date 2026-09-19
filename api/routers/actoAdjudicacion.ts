@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
-import { assertProcedimientoAsignacion } from "../lib/sod";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromActoAdjudicacion } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { actoAdjudicacion, participaciones, licitacionReglasVersion, actosDesempate } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -21,7 +21,7 @@ export const actoAdjudicacionRouter = createRouter({
   }),
 
   /** System ranking proposal + authority decision foundation. */
-  proponer: capabilityQuery("autorizar_fallo").input(z.object({
+  proponer: procedureMutation({ capability: "autorizar_fallo", roles: ["autorizador_fallo", "dictaminador"], resolveLicitacionId: (i, ctx) => licitacionIdFromActoAdjudicacion(i, ctx.user!.tenantId) }).input(z.object({
     licitacionId: z.number().int().positive(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
@@ -46,7 +46,6 @@ export const actoAdjudicacionRouter = createRouter({
       eq(participaciones.estadoEvaluacion, "ADMISIBLE"),
     ));
     if (!admisibles.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No hay ofertas admisibles." });
-    await assertProcedimientoAsignacion(ctx.user, input.licitacionId, ["autorizador_fallo", "dictaminador"]);
     const tb = parseTieBreakPolicy((frozen as any).tieBreakPolicy);
     const desempate = await db.query.actosDesempate.findFirst({
       where: and(eq(actosDesempate.tenantId, ctx.user.tenantId), eq(actosDesempate.licitacionId, input.licitacionId), eq(actosDesempate.estado, "REGISTRADO")),
@@ -90,7 +89,7 @@ export const actoAdjudicacionRouter = createRouter({
     return created;
   }),
 
-  decidir: capabilityQuery("autorizar_fallo").input(z.object({
+  decidir: procedureMutation({ capability: "autorizar_fallo", roles: ["autorizador_fallo", "dictaminador"], resolveLicitacionId: (i, ctx) => licitacionIdFromActoAdjudicacion(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     proveedorId: z.number().int().positive(),
     fundamento: z.string().trim().min(10),
@@ -125,7 +124,7 @@ export const actoAdjudicacionRouter = createRouter({
     return db.query.actoAdjudicacion.findFirst({ where: and(eq(actoAdjudicacion.id, input.id), eq(actoAdjudicacion.tenantId, ctx.user.tenantId)) });
   }),
 
-  publicar: capabilityQuery("autorizar_fallo").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: procedureMutation({ capability: "autorizar_fallo", roles: ["autorizador_fallo", "dictaminador"], resolveLicitacionId: (i, ctx) => licitacionIdFromActoAdjudicacion(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const acto = await db.query.actoAdjudicacion.findFirst({
       where: and(eq(actoAdjudicacion.id, input.id), eq(actoAdjudicacion.tenantId, ctx.user.tenantId)),

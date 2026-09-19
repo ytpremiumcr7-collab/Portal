@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, procedureMutation, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromInput, licitacionIdFromFallo } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { fallos, dictamenes, licitaciones, participaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -9,7 +10,6 @@ import { assertLicitacionExists } from "../lib/domain";
 import { assertFalloTransition, assertFalloRequiresDictamen } from "../lib/phase2-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { assertProcedimientoAsignacion } from "../lib/sod";
 import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
 import { enqueueOutbox } from "../lib/outbox";
 import { proposiciones } from "@db/schema";
@@ -37,7 +37,7 @@ export const fallosRouter = createRouter({
     return item;
   }),
 
-  emitirBorrador: capabilityQuery("autorizar_fallo").input(z.object({
+  emitirBorrador: procedureMutation({ capability: "autorizar_fallo", role: "autorizador_fallo", resolveLicitacionId: (i, ctx) => (i as any).licitacionId ? licitacionIdFromInput(i) : licitacionIdFromFallo(i, ctx.user!.tenantId) }).input(z.object({
     licitacionId: z.number().int().positive(),
     dictamenId: z.number().int().positive(),
     sentido: z.enum(["ADJUDICAR", "DESIERTO", "CANCELAR"]),
@@ -76,7 +76,7 @@ export const fallosRouter = createRouter({
     return created;
   }),
 
-  emitir: capabilityQuery("autorizar_fallo").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  emitir: procedureMutation({ capability: "autorizar_fallo", role: "autorizador_fallo", resolveLicitacionId: (i, ctx) => (i as any).licitacionId ? licitacionIdFromInput(i) : licitacionIdFromFallo(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "EMITIDO", input.motivo, { emitidoPor: ctx.user.id, emitidoAt: new Date() });
   }),
   aprobar: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
@@ -93,7 +93,6 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
   if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Fallo no encontrado." });
   assertFalloTransition(current.estado as any, next as any);
   if (next === "APROBADO" || next === "PUBLICADO") {
-    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "autorizador_fallo");
   }
   if (next === "PUBLICADO") {
     const offers = await db.select({ id: participaciones.id, estadoEvaluacion: participaciones.estadoEvaluacion })

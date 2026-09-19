@@ -8,7 +8,7 @@ import {
 } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import {
-  PROCEDIMIENTO_ROLES, isProcedimientoRole, assertNoRoleConflict, DEFAULT_ROLE_INCOMPATIBILIDADES,
+  PROCEDIMIENTO_ROLES, SENSITIVE_PROCEDIMIENTO_ROLES, isProcedimientoRole, assertNoRoleConflict, DEFAULT_ROLE_INCOMPATIBILIDADES,
 } from "../lib/sod";
 import { writeAudit } from "../lib/security";
 
@@ -39,10 +39,29 @@ export const sodRouter = createRouter({
     rol: z.string().trim().min(2),
     overrideSod: z.boolean().default(false),
     justificacionOverride: z.string().trim().min(10).optional(),
+    approvedBy: z.number().int().positive().optional(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     if (!isProcedimientoRole(input.rol)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: `Rol de procedimiento desconocido: ${input.rol}` });
+    }
+    // Second-person: self-assign of sensitive roles forbidden unless approvedBy != requester
+    const approvedBy = (input as any).approvedBy as number | undefined;
+    if (input.userId === ctx.user.id && (SENSITIVE_PROCEDIMIENTO_ROLES as readonly string[]).includes(input.rol)) {
+      if (!approvedBy || approvedBy === ctx.user.id) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No puede auto-asignarse un rol sensible de procedimiento; se requiere segundo aprobador (approvedBy).",
+        });
+      }
+    }
+    if (input.overrideSod) {
+      if (!approvedBy || approvedBy === ctx.user.id) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Override de SoD requiere segundo aprobador (approvedBy ≠ solicitante).",
+        });
+      }
     }
     const db = getDb();
     const lic = await db.query.licitaciones.findFirst({
@@ -82,9 +101,9 @@ export const sodRouter = createRouter({
         userId: input.userId,
         rol: input.rol,
         overrideSod: input.overrideSod,
-        // Persist SoD override justification on grant (column + expediente event payload).
         justificacionOverride: input.overrideSod ? (input.justificacionOverride ?? null) : null,
         asignadoPor: ctx.user.id,
+        approvedBy: input.approvedBy ?? null,
       });
       id = Number(result[0].insertId);
       if (expediente) {
@@ -153,7 +172,12 @@ export const sodRouter = createRouter({
     return getDb().query.breakGlassGrants.findMany({ where: and(...conditions), orderBy: [desc(breakGlassGrants.createdAt)] });
   }),
 
-  grantBreakGlass: capabilityQuery("break_glass").input(z.object({
+  /**
+   * Two-step break-glass (preferred): requestBreakGlass → approveBreakGlass by OTHER admin.
+   * Single-call grantBreakGlass only when approvedBy is passed and ≠ requester and ≠ beneficiary.
+   * FORBIDDEN: userId === ctx.user.id (self grant).
+   */
+  requestBreakGlass: capabilityQuery("break_glass").input(z.object({
     userId: z.number().int().positive(),
     licitacionId: z.number().int().positive().optional(),
     capability: z.string().trim().min(2).default("break_glass"),
@@ -161,6 +185,9 @@ export const sodRouter = createRouter({
     validUntil: z.string().datetime(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
+    if (input.userId === ctx.user.id) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "No puede solicitar break_glass para sí mismo." });
+    }
     const until = new Date(input.validUntil);
     if (!(until.getTime() > Date.now())) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "validUntil debe ser futuro (grant temporal)." });
@@ -173,6 +200,113 @@ export const sodRouter = createRouter({
       where: and(eq(users.id, input.userId), eq(users.tenantId, ctx.user.tenantId)),
     });
     if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Usuario no encontrado." });
+    const result = await db.insert(breakGlassGrants).values({
+      tenantId: ctx.user.tenantId,
+      userId: input.userId,
+      licitacionId: input.licitacionId ?? null,
+      capability: input.capability,
+      justificacion: input.justificacion,
+      status: "REQUESTED",
+      grantedBy: ctx.user.id,
+      requestedBy: ctx.user.id,
+      approvedBy: null,
+      approvedAt: null,
+      validFrom: new Date(),
+      validUntil: until,
+    } as any);
+    const id = Number(result[0].insertId);
+    await writeAudit({
+      ctx: ctxForAudit(ctx), accion: "BREAK_GLASS_REQUEST", entidad: "break_glass_grants", entidadId: id,
+      valorNuevo: { userId: input.userId, capability: input.capability, status: "REQUESTED" },
+      motivo: input.motivo,
+    });
+    return db.query.breakGlassGrants.findFirst({
+      where: and(eq(breakGlassGrants.id, id), eq(breakGlassGrants.tenantId, ctx.user.tenantId)),
+    });
+  }),
+
+  approveBreakGlass: capabilityQuery("break_glass").input(z.object({
+    id: z.number().int().positive(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const cur = await db.query.breakGlassGrants.findFirst({
+      where: and(eq(breakGlassGrants.id, input.id), eq(breakGlassGrants.tenantId, ctx.user.tenantId)),
+    });
+    if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Grant no encontrado." });
+    if (cur.status !== "REQUESTED") throw new TRPCError({ code: "CONFLICT", message: "Sólo se aprueban grants REQUESTED." });
+    const requester = cur.requestedBy ?? cur.grantedBy;
+    if (ctx.user.id === Number(requester) || ctx.user.id === Number(cur.userId)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "El aprobador de break_glass debe ser distinto del solicitante y del beneficiario.",
+      });
+    }
+    const expediente = cur.licitacionId
+      ? await findExpedienteByLicitacion(ctx.user.tenantId, cur.licitacionId)
+      : null;
+    await db.transaction(async (tx) => {
+      await tx.update(breakGlassGrants).set({
+        status: "APPROVED",
+        approvedBy: ctx.user.id,
+        approvedAt: new Date(),
+      } as any).where(and(eq(breakGlassGrants.id, input.id), eq(breakGlassGrants.tenantId, ctx.user.tenantId)));
+      if (expediente) {
+        await appendExpedienteEvent(tx, ctx, {
+          expedienteId: expediente.id,
+          tipo: "BREAK_GLASS_GRANT",
+          estadoAnterior: "REQUESTED",
+          estadoNuevo: "APPROVED",
+          motivo: input.motivo,
+          payload: { grantId: cur.id, userId: cur.userId, capability: cur.capability, approvedBy: ctx.user.id },
+        });
+      }
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "BREAK_GLASS_APPROVE", entidad: "break_glass_grants", entidadId: input.id,
+        valorAnterior: cur, motivo: input.motivo, tx,
+      });
+    });
+    return db.query.breakGlassGrants.findFirst({
+      where: and(eq(breakGlassGrants.id, input.id), eq(breakGlassGrants.tenantId, ctx.user.tenantId)),
+    });
+  }),
+
+  grantBreakGlass: capabilityQuery("break_glass").input(z.object({
+    userId: z.number().int().positive(),
+    licitacionId: z.number().int().positive().optional(),
+    capability: z.string().trim().min(2).default("break_glass"),
+    justificacion: z.string().trim().min(20),
+    validUntil: z.string().datetime(),
+    /** Required for single-call path; must differ from requester and beneficiary. */
+    approvedBy: z.number().int().positive().optional(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    if (input.userId === ctx.user.id) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "No puede otorgarse break_glass a sí mismo." });
+    }
+    // Prefer REQUESTED→APPROVED; single-call only if approvedBy passed and distinct.
+    if (!input.approvedBy || input.approvedBy === ctx.user.id || input.approvedBy === input.userId) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "grantBreakGlass de un solo paso requiere approvedBy distinto del solicitante y del beneficiario. Prefiera requestBreakGlass → approveBreakGlass.",
+      });
+    }
+    const until = new Date(input.validUntil);
+    if (!(until.getTime() > Date.now())) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "validUntil debe ser futuro (grant temporal)." });
+    }
+    if (until.getTime() - Date.now() > 7 * 24 * 60 * 60 * 1000) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "break_glass máximo 7 días." });
+    }
+    const db = getDb();
+    const user = await db.query.users.findFirst({
+      where: and(eq(users.id, input.userId), eq(users.tenantId, ctx.user.tenantId)),
+    });
+    if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Usuario no encontrado." });
+    const approver = await db.query.users.findFirst({
+      where: and(eq(users.id, input.approvedBy), eq(users.tenantId, ctx.user.tenantId)),
+    });
+    if (!approver) throw new TRPCError({ code: "NOT_FOUND", message: "Aprobador no encontrado." });
     const expediente = input.licitacionId
       ? await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId)
       : null;
@@ -184,7 +318,11 @@ export const sodRouter = createRouter({
         licitacionId: input.licitacionId ?? null,
         capability: input.capability,
         justificacion: input.justificacion,
+        status: "APPROVED",
         grantedBy: ctx.user.id,
+        requestedBy: ctx.user.id,
+        approvedBy: input.approvedBy,
+        approvedAt: new Date(),
         validFrom: new Date(),
         validUntil: until,
       } as any);
@@ -194,14 +332,14 @@ export const sodRouter = createRouter({
           expedienteId: expediente.id,
           tipo: "BREAK_GLASS_GRANT",
           estadoAnterior: null,
-          estadoNuevo: "ACTIVO",
+          estadoNuevo: "APPROVED",
           motivo: `${input.motivo} | ${input.justificacion}`,
-          payload: { grantId: id, userId: input.userId, capability: input.capability, validUntil: until.toISOString() },
+          payload: { grantId: id, userId: input.userId, capability: input.capability, approvedBy: input.approvedBy, validUntil: until.toISOString() },
         });
       }
       await writeAudit({
         ctx: ctxForAudit(ctx), accion: "BREAK_GLASS_GRANT", entidad: "break_glass_grants", entidadId: id,
-        valorNuevo: { userId: input.userId, capability: input.capability, licitacionId: input.licitacionId ?? null },
+        valorNuevo: { userId: input.userId, capability: input.capability, licitacionId: input.licitacionId ?? null, approvedBy: input.approvedBy },
         motivo: input.motivo, tx,
       });
     });
@@ -225,7 +363,7 @@ export const sodRouter = createRouter({
       : null;
     await db.transaction(async (tx) => {
       await tx.update(breakGlassGrants).set({
-        revokedAt: new Date(), revokedBy: ctx.user.id,
+        revokedAt: new Date(), revokedBy: ctx.user.id, status: "REVOKED",
       } as any).where(and(eq(breakGlassGrants.id, input.id), eq(breakGlassGrants.tenantId, ctx.user.tenantId)));
       if (expediente) {
         await appendExpedienteEvent(tx, ctx, {

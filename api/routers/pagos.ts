@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, authedQuery, capabilityQuery, ctxForAudit } from "../middleware";
+import { createRouter, authedQuery, procedureMutation, ctxForAudit } from "../middleware";
+import { licitacionIdFromContrato, licitacionIdFromEstimacion } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { estimacionesPago, contratos } from "@db/schema";
 import { assertEstimacionTransition } from "../lib/phase3-transitions";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { assertProcedimientoAsignacion } from "../lib/sod";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -27,7 +27,7 @@ export const pagosRouter = createRouter({
   }),
 
   /** Present / create estimation — segregated from review/authorize/pay (aprobar_pago). */
-  presentar: capabilityQuery("presentar_pago").input(z.object({
+  presentar: procedureMutation({ capability: "presentar_pago", role: "presentar_pago", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     contratoId: z.number().int().positive(), folio: z.string().trim().min(3).max(80),
     numero: z.number().int().positive(), montoBruto: money, retencion: money.default("0.00"),
     motivo: z.string().trim().min(3),
@@ -50,7 +50,6 @@ export const pagosRouter = createRouter({
       if (!contrato || !["VIGENTE", "FORMALIZADO"].includes(contrato.estado)) {
         throw new TRPCError({ code: "CONFLICT", message: "Contrato no admite estimaciones." });
       }
-      await assertProcedimientoAsignacion(ctx.user, contrato.licitacionId, "presentar_pago");
       // Cumulative sum of non-rejected estimaciones must not exceed contrato.monto
       const sumRows = await tx.select({
         total: sql<string>`COALESCE(SUM(${estimacionesPago.montoNeto}), 0)`,
@@ -78,16 +77,16 @@ export const pagosRouter = createRouter({
     return created;
   }),
 
-  revisar: capabilityQuery("aprobar_pago").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  revisar: procedureMutation({ capability: "aprobar_pago", role: "aprobar_pago", resolveLicitacionId: (i, ctx) => licitacionIdFromEstimacion(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "EN_REVISION", input.motivo, { revisadaPor: ctx.user.id });
   }),
-  autorizar: capabilityQuery("aprobar_pago").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  autorizar: procedureMutation({ capability: "aprobar_pago", role: "aprobar_pago", resolveLicitacionId: (i, ctx) => licitacionIdFromEstimacion(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "AUTORIZADA", input.motivo, { autorizadaPor: ctx.user.id });
   }),
-  pagar: capabilityQuery("aprobar_pago").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  pagar: procedureMutation({ capability: "aprobar_pago", role: "aprobar_pago", resolveLicitacionId: (i, ctx) => licitacionIdFromEstimacion(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "PAGADA", input.motivo, { pagadaAt: new Date() });
   }),
-  rechazar: capabilityQuery("aprobar_pago").input(z.object({ id: z.number().int().positive(), motivoRechazo: z.string().trim().min(5), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  rechazar: procedureMutation({ capability: "aprobar_pago", role: "aprobar_pago", resolveLicitacionId: (i, ctx) => licitacionIdFromEstimacion(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivoRechazo: z.string().trim().min(5), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "RECHAZADA", input.motivo, { motivoRechazo: input.motivoRechazo });
   }),
 });
@@ -100,7 +99,6 @@ async function transition(ctx: any, id: number, next: string, motivo: string, pa
   const contrato = await db.query.contratos.findFirst({ where: and(eq(contratos.id, current.contratoId), eq(contratos.tenantId, ctx.user.tenantId)) });
   if (!contrato) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
   if (["EN_REVISION", "AUTORIZADA", "PAGADA", "RECHAZADA"].includes(next)) {
-    await assertProcedimientoAsignacion(ctx.user, contrato.licitacionId, "aprobar_pago");
   }
   await db.transaction(async (tx) => {
     const result = await tx.update(estimacionesPago).set({ ...patch, estado: next } as any).where(and(eq(estimacionesPago.id, id), eq(estimacionesPago.tenantId, ctx.user.tenantId), eq(estimacionesPago.estado, current.estado)));

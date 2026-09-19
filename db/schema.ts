@@ -719,9 +719,9 @@ export const CAPABILITIES = [
   "crear_procedimiento", "publicar", "evaluar_tecnico", "evaluar_economico",
   "aprobar_juridico", "emitir_dictamen", "autorizar_fallo", "formalizar_contrato",
   "presentar_pago", "aprobar_pago", "resolver_incidencia", "investigar_sancion", "administrar_sancion", "auditar",
-  "administrar_planeacion", "investigar_mercado", "administrar_ejecucion",
+  "administrar_planeacion", "investigar_mercado", "administrar_ejecucion", "administrar_calendario",
   "resolver_inconformidad", "notificar", "consulta_publica_admin",
-  "break_glass", "emitir_desempate",
+  "break_glass", "emitir_desempate", "publicar_terminacion",
 ] as const;
 export type Capability = typeof CAPABILITIES[number];
 
@@ -747,6 +747,7 @@ export const procedimientoAsignaciones = mysqlTable("procedimiento_asignaciones"
   overrideSod: boolean("override_sod").default(false).notNull(),
   justificacionOverride: text("justificacion_override"),
   asignadoPor: bigint("asignado_por", { mode: "number", unsigned: true }).notNull(),
+  approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   uniqueIndex("proc_asig_tenant_id_uq").on(t.tenantId, t.id),
@@ -795,6 +796,10 @@ export const userCapabilities = mysqlTable("user_capabilities", {
   capability: varchar("capability", { length: 64 }).notNull(),
   granted: boolean("granted").default(true).notNull(),
   grantedBy: bigint("granted_by", { mode: "number", unsigned: true }),
+  overrideSod: boolean("override_sod").default(false).notNull(),
+  justificacion: text("justificacion"),
+  expiresAt: timestamp("expires_at"),
+  approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   uniqueIndex("user_caps_tenant_id_uq").on(t.tenantId, t.id),
@@ -1399,6 +1404,7 @@ export const domainOutbox = mysqlTable("domain_outbox", {
   processedAt: timestamp("processed_at"),
   lastError: text("last_error"),
   providerMessageId: varchar("provider_message_id", { length: 200 }),
+  deliveryAttempts: json("delivery_attempts"),
 }, (t) => [
   uniqueIndex("outbox_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("outbox_idem_uq").on(t.tenantId, t.idempotencyKey),
@@ -1605,7 +1611,11 @@ export const breakGlassGrants = mysqlTable("break_glass_grants", {
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }),
   capability: varchar("capability", { length: 64 }).notNull(),
   justificacion: text("justificacion").notNull(),
+  status: mysqlEnum("status", ["REQUESTED", "APPROVED", "REVOKED"]).default("REQUESTED").notNull(),
   grantedBy: bigint("granted_by", { mode: "number", unsigned: true }).notNull(),
+  requestedBy: bigint("requested_by", { mode: "number", unsigned: true }),
+  approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
+  approvedAt: timestamp("approved_at"),
   validFrom: timestamp("valid_from").defaultNow().notNull(),
   validUntil: timestamp("valid_until").notNull(),
   revokedAt: timestamp("revoked_at"),

@@ -154,9 +154,9 @@ describe("P1 outbox system actor sentinel", () => {
 describe("P0-2b envelope encryption residual", () => {
   it("ciphertext differs from plaintext and round-trips", () => {
     process.env.ARES_ENVELOPE_KEY ??= Buffer.from("piedra-angular-dev-envelope-key!!").toString("base64");
-    const seal = sealMontoOferta("42.00");
+    const seal = sealMontoOferta("42.00", { tenantId: 1, licitacionId: 1, participacionId: 1, proposicionId: 1, keyVersion: 1 });
     expect(ciphertextDiffersFromPlaintext(seal.ciphertext, "42.00")).toBe(true);
-    expect(openMontoOferta(seal)).toBe("42.00");
+    expect(openMontoOferta(seal, { tenantId: 1, licitacionId: 1, participacionId: 1, proposicionId: 1, keyVersion: 1 })).toBe("42.00");
   });
 });
 

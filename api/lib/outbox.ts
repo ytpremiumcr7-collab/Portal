@@ -58,8 +58,16 @@ export type DeliveryAdapter = {
     subject: string;
     body: string;
     eventType: string;
+    /** Outbox row id — used as Idempotency-Key to avoid double logical send. */
+    outboxId?: number;
   }) => Promise<{ ok: boolean; external: boolean; messageId?: string | null }>;
 };
+
+/**
+ * SMTP delivery is at-least-once: the worker may retry after lease reclaim or crash
+ * between provider accept and local SENT mark. Consumers MUST treat Idempotency-Key
+ * (outbox id) as the dedupe key. Webhook adapters receive the same header.
+ */
 
 export const logAdapter: DeliveryAdapter = {
   name: "log",
@@ -132,9 +140,14 @@ export const smtpAdapter: DeliveryAdapter = {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), Number(process.env.SMTP_TIMEOUT_MS ?? 15_000));
         try {
+          const headers: Record<string, string> = {
+            "content-type": "application/json",
+            accept: "application/json",
+          };
+          if (msg.outboxId != null) headers["Idempotency-Key"] = String(msg.outboxId);
           const res = await fetch(cfg.url, {
             method: "POST",
-            headers: { "content-type": "application/json", accept: "application/json" },
+            headers,
             body: JSON.stringify({
               to: msg.to,
               subject: msg.subject,
@@ -142,6 +155,7 @@ export const smtpAdapter: DeliveryAdapter = {
               eventType: msg.eventType,
               product: "Piedra Angular",
               from: cfg.from,
+              outboxId: msg.outboxId ?? null,
             }),
             signal: controller.signal,
           });
@@ -297,23 +311,27 @@ export async function processOutboxOnce(
         payload.actorUserId != null ? Number(payload.actorUserId) : opts.actorUserId ?? null;
       const actorResolved = await resolveSystemActorUserId(db, row.tenantId, preferredActor);
       if (actorResolved === SYSTEM_ACTOR_SENTINEL) {
-        // Cannot insert notificacion without FK actor — mark SENT with registry note, no fake user id.
-        console.warn("[outbox] system actor missing — notification skipped (no invented user id)", {
+        // Fail-closed for legal-effect events: never mark SENT without a real system actor.
+        const legal = efectoLegalFromEventType(row.eventType);
+        console.error("[outbox] system actor missing — fail-closed", {
           tenantId: row.tenantId,
           eventType: row.eventType,
-          hint: `seed user ${SYSTEM_ACTOR_EMAIL}`,
+          legal,
+          hint: `ensureSystemActor → ${systemActorEmail(row.tenantId)}`,
         });
         await db
           .update(domainOutbox)
           .set({
-            status: "SENT",
-            processedAt: new Date(),
+            status: legal ? "FAILED" : "PENDING",
+            processedAt: legal ? new Date() : null,
             claimedAt: null,
             claimedBy: null,
-            lastError: `no_system_actor:${SYSTEM_ACTOR_EMAIL}`,
+            lastError: `no_system_actor:${systemActorEmail(row.tenantId)}`,
+            nextAttemptAt: legal ? new Date() : new Date(Date.now() + 5 * 60_000),
           } as any)
           .where(eq(domainOutbox.id, row.id));
-        processed += 1;
+        // Do not count as successful process for legal events
+        if (!legal) processed += 1;
         continue;
       }
       const actorUserId = actorResolved;
@@ -349,7 +367,20 @@ export async function processOutboxOnce(
           subject: asunto,
           body: cuerpo,
           eventType: row.eventType,
+          outboxId: row.id,
         });
+        const prevAttempts = Array.isArray(row.deliveryAttempts) ? row.deliveryAttempts : (typeof row.deliveryAttempts === "string" ? JSON.parse(row.deliveryAttempts || "[]") : []);
+        const attemptLog = [
+          ...prevAttempts,
+          {
+            at: new Date().toISOString(),
+            adapter: adapter.name,
+            ok: result.ok,
+            external: result.external,
+            messageId: result.messageId ?? null,
+            to: email,
+          },
+        ];
         if (result.ok && result.external) {
           externalOk = true;
           providerMessageId = result.messageId ?? null;
@@ -362,6 +393,10 @@ export async function processOutboxOnce(
             .set({ deliveryStatus: "ENVIADO" } as any)
             .where(eq(notificacionDestinatarios.notificacionId, notifId));
         }
+        await db
+          .update(domainOutbox)
+          .set({ deliveryAttempts: attemptLog } as any)
+          .where(eq(domainOutbox.id, row.id));
       }
 
       await db

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
-import { assertProcedimientoAsignacion } from "../lib/sod";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromInput, licitacionIdFromContrato } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { contratos, fallos, licitaciones, documentos, garantias } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -37,7 +37,7 @@ export const contratosRouter = createRouter({
     return item;
   }),
 
-  crear: capabilityQuery("formalizar_contrato").input(z.object({
+  crear: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({
     licitacionId: z.number().int().positive(),
     folio: z.string().trim().min(3).max(80),
     objeto: z.string().trim().min(10).optional(),
@@ -73,13 +73,13 @@ export const contratosRouter = createRouter({
       id = Number(result[0].insertId);
       await tx.update(licitaciones).set({ etapa: "CONTRATACION" }).where(and(eq(licitaciones.id, input.licitacionId), eq(licitaciones.tenantId, ctx.user.tenantId)));
       await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: "CONTRATO_CREADO", estadoAnterior: null, estadoNuevo: "BORRADOR", motivo: input.motivo, payload: { contratoId: id, folio: input.folio } });
+      const createdInTx = await tx.query.contratos.findFirst({ where: and(eq(contratos.id, id), eq(contratos.tenantId, ctx.user.tenantId)) });
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "contratos", entidadId: id, valorNuevo: createdInTx, motivo: input.motivo, tx });
     });
-    const created = await getDb().query.contratos.findFirst({ where: and(eq(contratos.id, id), eq(contratos.tenantId, ctx.user.tenantId)) });
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "contratos", entidadId: id, valorNuevo: created, motivo: input.motivo });
-    return created;
+    return getDb().query.contratos.findFirst({ where: and(eq(contratos.id, id), eq(contratos.tenantId, ctx.user.tenantId)) });
   }),
 
-  formalizar: capabilityQuery("formalizar_contrato").input(z.object({
+  formalizar: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     fechaFirma: dateMx,
     documentoContratoId: z.number().int().positive(),
@@ -88,7 +88,6 @@ export const contratosRouter = createRouter({
     const db = getDb();
     const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
-    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "creador");
     const doc = await db.query.documentos.findFirst({
       where: and(eq(documentos.id, input.documentoContratoId), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)),
     });
@@ -123,7 +122,7 @@ export const contratosRouter = createRouter({
     return updated;
   }),
 
-  ponerVigente: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  ponerVigente: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
@@ -134,11 +133,11 @@ export const contratosRouter = createRouter({
     return transition(ctx, input.id, "VIGENTE", input.motivo, {});
   }),
 
-  terminar: capabilityQuery("formalizar_contrato").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  terminar: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     return transition(ctx, input.id, "TERMINADO", input.motivo, {});
   }),
 
-  rescindir: capabilityQuery("formalizar_contrato").input(z.object({
+  rescindir: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     causa: z.string().trim().min(10),
     resolucion: z.string().trim().min(10),
@@ -148,7 +147,6 @@ export const contratosRouter = createRouter({
     const db = getDb();
     const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
-    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "creador");
     if (input.documentoRescisionId) {
       const doc = await db.query.documentos.findFirst({
         where: and(eq(documentos.id, input.documentoRescisionId), eq(documentos.tenantId, ctx.user.tenantId)),
@@ -186,7 +184,7 @@ export const contratosRouter = createRouter({
     return updated;
   }),
   /** BESA-lite: administrador del contrato + penas convencionales. */
-  configurarBesa: capabilityQuery("formalizar_contrato").input(z.object({
+  configurarBesa: procedureMutation({ capability: "formalizar_contrato", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromContrato(i, ctx.user!.tenantId) }).input(z.object({
     id: z.number().int().positive(),
     administradorContratoId: z.number().int().positive().nullable().optional(),
     penasConvencionales: z.array(z.object({

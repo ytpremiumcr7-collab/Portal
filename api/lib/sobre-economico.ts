@@ -109,12 +109,21 @@ export async function insertSobreEconomico(
   tx: any,
   input: {
     tenantId: number;
+    licitacionId: number;
     participacionId: number;
     proposicionId?: number | null;
     monto: string | number;
   },
 ): Promise<EnvelopeSeal> {
-  const seal = sealMontoOferta(input.monto);
+  const { currentEnvelopeKeyVersion } = await import("./envelope-crypto");
+  const keyVersion = currentEnvelopeKeyVersion();
+  const seal = sealMontoOferta(input.monto, {
+    tenantId: input.tenantId,
+    licitacionId: input.licitacionId,
+    participacionId: input.participacionId,
+    proposicionId: input.proposicionId ?? null,
+    keyVersion,
+  });
   await tx.insert(sobresEconomicos).values({
     tenantId: input.tenantId,
     participacionId: input.participacionId,
@@ -142,7 +151,27 @@ export async function loadSobreForParticipacion(
   });
 }
 
-/** Decrypt monto from sobre (server-side; never return ciphertext to client). */
+async function resolveAadForParticipacion(
+  dbOrTx: any,
+  tenantId: number,
+  participacionId: number,
+  sobre: { proposicionId: number | null; keyVersion: number },
+): Promise<{ tenantId: number; licitacionId: number; participacionId: number; proposicionId: number | null; keyVersion: number }> {
+  const part = await dbOrTx.query.participaciones.findFirst({
+    where: and(eq(participaciones.id, participacionId), eq(participaciones.tenantId, tenantId)),
+    columns: { licitacionId: true },
+  });
+  if (!part) throw new Error(`Participación ${participacionId} no encontrada para AAD`);
+  return {
+    tenantId,
+    licitacionId: part.licitacionId,
+    participacionId,
+    proposicionId: sobre.proposicionId ?? null,
+    keyVersion: sobre.keyVersion,
+  };
+}
+
+/** Decrypt monto from sobre (server-side; never return ciphertext to client). AAD-bound. */
 export async function decryptMontoParticipacion(
   dbOrTx: any,
   tenantId: number,
@@ -150,13 +179,14 @@ export async function decryptMontoParticipacion(
 ): Promise<string | null> {
   const row = await loadSobreForParticipacion(dbOrTx, tenantId, participacionId);
   if (!row) return null;
+  const aadCtx = await resolveAadForParticipacion(dbOrTx, tenantId, participacionId, row);
   return openMontoOferta({
     ciphertext: row.ciphertext,
     nonceIv: row.nonceIv,
     authTag: row.authTag,
     keyVersion: row.keyVersion,
     algorithm: row.algorithm,
-  });
+  }, aadCtx);
 }
 
 /**
@@ -211,6 +241,12 @@ export async function revelarSobresEconomicos(
               authTag: sobre.authTag,
               keyVersion: sobre.keyVersion,
               algorithm: sobre.algorithm,
+            }, {
+              tenantId: input.tenantId,
+              licitacionId: input.licitacionId,
+              participacionId: sobre.participacionId,
+              proposicionId: sobre.proposicionId ?? null,
+              keyVersion: sobre.keyVersion,
             });
     } else {
       monto = openMontoOferta({
@@ -219,6 +255,12 @@ export async function revelarSobresEconomicos(
         authTag: sobre.authTag,
         keyVersion: sobre.keyVersion,
         algorithm: sobre.algorithm,
+      }, {
+        tenantId: input.tenantId,
+        licitacionId: input.licitacionId,
+        participacionId: sobre.participacionId,
+        proposicionId: sobre.proposicionId ?? null,
+        keyVersion: sobre.keyVersion,
       });
       await tx
         .update(sobresEconomicos)
@@ -309,7 +351,7 @@ export async function migrateLegacyPlaintextMontos(
   if (opts.tenantId != null) conditions.push(eq(participaciones.tenantId, opts.tenantId));
   const parts = await dbOrTx.query.participaciones.findMany({
     where: conditions.length ? and(...conditions) : undefined,
-    columns: { id: true, tenantId: true, montoOferta: true },
+    columns: { id: true, tenantId: true, licitacionId: true, montoOferta: true },
   });
   let scanned = 0;
   let migrated = 0;
@@ -337,6 +379,7 @@ export async function migrateLegacyPlaintextMontos(
     const monto = String(part.montoOferta);
     await insertSobreEconomico(dbOrTx, {
       tenantId: part.tenantId,
+      licitacionId: part.licitacionId,
       participacionId: part.id,
       monto,
     });

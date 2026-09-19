@@ -191,6 +191,51 @@ Convocante **operational** roles (`evaluar_*`, `autorizar_fallo`, `aprobar_pago`
 
 Admin does **not** auto-bypass SoD. Use `sod.bootstrapAsignaciones` only to seed `creador` on a new empty procedimiento.
 
+
+
+## Uniform procedure authority (0015)
+
+Juridical acts **cannot** run on global capability alone.
+
+```
+procedureMutation({ capability, role|roles[], resolveLicitacionId })
+  1. authenticated
+  2. tenant (ctx.user.tenantId)
+  3. assertCapability
+  4. assertProcedimientoAsignacion OR active APPROVED break_glass
+     (approvedBy ≠ beneficiary — second person)
+  5. optional assertCapabilityCompatibility
+```
+
+| Domain | Guard |
+|--------|-------|
+| licitaciones.publicar / iniciarEvaluacion / adjudicar | procedureMutation + creador / evaluador_* / autorizador_fallo |
+| aperturas.* | procedureMutation + creador |
+| contratos.crear / ponerVigente / terminar / configurarBesa / formalizar / rescindir | procedureMutation + creador |
+| garantias transitions | procedureMutation + creador |
+| terminacion.crear / publicar | procedureMutation + creador (capability `publicar`) |
+| calendario.configurar | administrar_calendario **or** crear_procedimiento+creador; freeze after PUBLICADA except break_glass |
+| ejecucion.* | procedureMutation + administrar_ejecucion\|creador |
+| inconformidades.transicionar | procedureMutation + resolver_inconformidad |
+| dictamenes / fallos / actoAdjudicacion / comision / pagos / desempate | procedureMutation (universal) |
+
+### Break-glass & grants — second person
+- `requestBreakGlass` → `approveBreakGlass` (preferred); `grantBreakGlass` only with `approvedBy` ≠ requester ≠ beneficiary
+- Self `grantBreakGlass` / self-grant of procedural capabilities **FORBIDDEN** without second approver
+- `sod.asignar` self-assign of sensitive roles requires `approvedBy`
+- Override metadata persisted on `user_capabilities` / `procedimiento_asignaciones`
+
+### Envelope AAD + seal without decrypt
+- AES-GCM AAD = `tenantId:licitacionId:participacionId:proposicionId:keyVersion`
+- Manifest/seal uses **ciphertext hash** (not decrypted monto); decrypt only on apertura reveal
+
+### Outbox
+- Fail-closed if no system actor for legal-effect events (`FAILED` / stay `PENDING`, never `SENT`)
+- Webhook `Idempotency-Key` = outbox id; `delivery_attempts` JSON; SMTP is **at-least-once**
+
+Migration: **`0015_procedure_authority.sql`**.
+
+
 ## Residual risks (intentionally open)
 
 1. **HSM / KMS for envelope keys** — `ARES_ENVELOPE_KEY` is env-material today (AES-256-GCM software). Production should move active keys to HSM/KMS with app-level unwrap; rotation stub (`ARES_ENVELOPE_KEY_V{n}`) remains software-side until then.

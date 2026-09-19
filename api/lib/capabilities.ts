@@ -6,9 +6,35 @@ import type { TrpcContext } from "../context";
 import { findCapabilityConflicts } from "./sod";
 
 export { CAPABILITIES, type Capability };
-// Catalog (schema): crear_procedimiento, autorizar_fallo, presentar_pago, aprobar_pago,
-// investigar_sancion, administrar_sancion, resolver_incidencia, auditar, break_glass, emitir_desempate, …
 
+/**
+ * Procedural capabilities that cannot be self-granted without a second approver.
+ * Global capability alone is never enough for juridical acts — procedureMutation
+ * also requires procedimiento_asignaciones or APPROVED break_glass.
+ */
+export const PROCEDURAL_CAPABILITIES: readonly Capability[] = [
+  "crear_procedimiento",
+  "publicar",
+  "publicar_terminacion",
+  "evaluar_tecnico",
+  "evaluar_economico",
+  "aprobar_juridico",
+  "emitir_dictamen",
+  "autorizar_fallo",
+  "formalizar_contrato",
+  "presentar_pago",
+  "aprobar_pago",
+  "investigar_sancion",
+  "administrar_sancion",
+  "administrar_ejecucion",
+  "administrar_calendario",
+  "resolver_inconformidad",
+  "emitir_desempate",
+] as const;
+
+export function isProceduralCapability(cap: string): boolean {
+  return (PROCEDURAL_CAPABILITIES as readonly string[]).includes(cap);
+}
 
 /**
  * Default capability grants by coarse role.
@@ -23,9 +49,8 @@ export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capa
     "consulta_publica_admin",
     "break_glass",
   ],
-  // Narrow defaults — operational acts (evaluar_*, autorizar_fallo, aprobar_pago, …)
-  // need explicit user_capabilities AND procedimiento_asignaciones (or break_glass).
-  // Do NOT restore full procedural caps here. Use sod.bootstrapAsignaciones for creador only.
+  // Narrow defaults — operational acts need explicit user_capabilities AND
+  // procedimiento_asignaciones (or break_glass).
   licitante: [
     "crear_procedimiento",
     "publicar",
@@ -38,13 +63,14 @@ export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capa
 
 export async function resolveCapabilities(user: NonNullable<TrpcContext["user"]>): Promise<Set<Capability>> {
   const base = new Set<Capability>(ROLE_CAPABILITIES[user.role] ?? []);
-  // Admin no longer auto-receives CAPABILITIES; overrides apply to all roles.
   const overrides = await getDb().query.userCapabilities.findMany({
     where: and(eq(userCapabilities.tenantId, user.tenantId), eq(userCapabilities.userId, user.id)),
   });
+  const now = Date.now();
   for (const row of overrides) {
     const cap = row.capability as Capability;
     if (!CAPABILITIES.includes(cap)) continue;
+    if (row.expiresAt && new Date(row.expiresAt).getTime() <= now) continue;
     if (row.granted) base.add(cap);
     else base.delete(cap);
   }

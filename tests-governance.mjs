@@ -284,7 +284,7 @@ const migSh14 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
 if (!migSh14.includes("0014_sobre_economico.sql")) throw new Error("migrate-local.sh missing 0014");
 const fallos14 = fs.readFileSync("api/routers/fallos.ts", "utf8");
 if (fallos14.includes("emitir: convocanteQuery") || fallos14.includes("emitirBorrador: convocanteQuery")) {
-  throw new Error("fallos mutations must use capabilityQuery");
+  throw new Error("fallos mutations must use capabilityQuery or procedureMutation");
 }
 const dict14 = fs.readFileSync("api/routers/dictamenes.ts", "utf8");
 if (dict14.includes("crear: convocanteQuery") || dict14.includes("emitir: convocanteQuery")) {
@@ -329,6 +329,49 @@ if (!archTime.includes("Autoridad canónica de tiempo") || !archTime.includes("H
   throw new Error("ARCHITECTURE must document canonical time authority + HSM residual");
 }
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal + preprod P0/P1 + 0014 residual + dual-clock/legacy close-out)");
+// --- 0015 uniform procedure authority ---
+const mw15 = fs.readFileSync("api/middleware.ts", "utf8");
+if (!mw15.includes("procedureMutation")) throw new Error("middleware must export procedureMutation");
+if (!mw15.includes("assertProcedimientoAsignacion")) throw new Error("procedureMutation must call assertProcedimientoAsignacion");
 
+const lic15 = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
+if (!lic15.includes("procedureMutation") || !lic15.includes('capability: "publicar"')) {
+  throw new Error("licitaciones.publicar must use procedureMutation");
+}
+const ap15 = fs.readFileSync("api/routers/aperturas.ts", "utf8");
+if (!ap15.includes("procedureMutation") || ap15.includes("decryptMontoParticipacion")) {
+  throw new Error("aperturas must use procedureMutation and seal without decryptMontoParticipacion");
+}
+const sod15 = fs.readFileSync("api/routers/sod.ts", "utf8");
+if (!sod15.includes("requestBreakGlass") || !sod15.includes("approveBreakGlass")) {
+  throw new Error("sod must expose request/approve break_glass two-step");
+}
+if (!sod15.includes("userId === ctx.user.id") || !sod15.includes("approvedBy")) {
+  throw new Error("grantBreakGlass must forbid self and require approvedBy / two-step");
+}
+const cap15 = fs.readFileSync("api/routers/capabilities.ts", "utf8");
+if (!cap15.includes("isProceduralCapability") || !cap15.includes("approvedBy")) {
+  throw new Error("capabilities.grant must block self procedural grant / store approvedBy");
+}
+const env15 = fs.readFileSync("api/lib/envelope-crypto.ts", "utf8");
+if (!env15.includes("setAAD") || !env15.includes("buildEnvelopeAad")) {
+  throw new Error("envelope must setAAD with tenant:lic:part:prop:keyVersion");
+}
+const out15 = fs.readFileSync("api/lib/outbox.ts", "utf8");
+if (!out15.includes("Idempotency-Key") || !out15.includes("FAILED") || !out15.includes("no_system_actor")) {
+  throw new Error("outbox must fail-closed without system actor and send Idempotency-Key");
+}
+if (!out15.includes("at-least-once")) {
+  throw new Error("outbox must document SMTP at-least-once");
+}
+const des15 = fs.readFileSync("api/routers/desempate.ts", "utf8");
+if (!des15.includes("assertSorteoResultadoValid") || !des15.includes("computeEmpateSet")) {
+  throw new Error("desempate.registrarResultado must validate empate set / sorteo");
+}
+console.log("0015 procedure authority governance OK");
+console.log("governance static assertions: PASS (phase1..0015 procedure authority)");
 
+const dc15 = fs.readFileSync("docker-compose.yml", "utf8");
+if (!dc15.includes("0015_procedure_authority.sql")) throw new Error("docker-compose must mount 0015");
+const mig15 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
+if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-local.sh missing 0015");

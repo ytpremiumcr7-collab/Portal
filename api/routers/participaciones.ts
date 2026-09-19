@@ -153,6 +153,7 @@ export const participacionesRouter = createRouter({
       const proposicionId = Number(propIns[0].insertId);
       await insertSobreEconomico(tx, {
         tenantId: ctx.user.tenantId,
+        licitacionId: input.licitacionId,
         participacionId: id,
         proposicionId,
         monto: input.montoOferta,

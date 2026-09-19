@@ -16,8 +16,21 @@ export const PROCEDIMIENTO_ROLES = [
   "aprobar_pago",
   "promovente",
   "resolver_inconformidad",
+  "administrar_ejecucion",
 ] as const;
 export type ProcedimientoRole = typeof PROCEDIMIENTO_ROLES[number];
+
+/** Roles that forbid self-assignment without a second approver. */
+export const SENSITIVE_PROCEDIMIENTO_ROLES: readonly ProcedimientoRole[] = [
+  "evaluador_tecnico",
+  "evaluador_economico",
+  "dictaminador",
+  "autorizador_fallo",
+  "aprobar_pago",
+  "administrar_sancion",
+  "resolver_inconformidad",
+  "administrar_ejecucion",
+];
 
 export function isProcedimientoRole(v: string): v is ProcedimientoRole {
   return (PROCEDIMIENTO_ROLES as readonly string[]).includes(v);
@@ -97,6 +110,7 @@ export type SodUser = {
 /** Map procedimiento role → capability used for break-glass scope checks. */
 export function capabilityForProcedimientoRole(role: ProcedimientoRole): string | null {
   const map: Partial<Record<ProcedimientoRole, string>> = {
+    creador: "crear_procedimiento",
     evaluador_tecnico: "evaluar_tecnico",
     evaluador_economico: "evaluar_economico",
     dictaminador: "emitir_dictamen",
@@ -106,6 +120,7 @@ export function capabilityForProcedimientoRole(role: ProcedimientoRole): string 
     investigar_sancion: "investigar_sancion",
     administrar_sancion: "administrar_sancion",
     resolver_inconformidad: "resolver_inconformidad",
+    administrar_ejecucion: "administrar_ejecucion",
   };
   return map[role] ?? null;
 }
@@ -119,6 +134,7 @@ export async function hasActiveBreakGlass(
   const conditions = [
     eq(breakGlassGrants.tenantId, user.tenantId),
     eq(breakGlassGrants.userId, user.id),
+    eq(breakGlassGrants.status, "APPROVED"),
     isNull(breakGlassGrants.revokedAt),
     gt(breakGlassGrants.validUntil, now),
   ];
@@ -133,9 +149,14 @@ export async function hasActiveBreakGlass(
   const rows = await db.query.breakGlassGrants.findMany({
     where: and(...conditions),
   });
-  if (!rows.length) return false;
+  // Second-person rule: approvedBy must be a different user than the beneficiary.
+  const valid = rows.filter((r) => {
+    const approver = r.approvedBy ?? r.grantedBy;
+    return Number(approver) !== Number(user.id);
+  });
+  if (!valid.length) return false;
   if (opts.licitacionId == null) return true;
-  return rows.some(
+  return valid.some(
     (r) => r.licitacionId == null || Number(r.licitacionId) === Number(opts.licitacionId),
   );
 }

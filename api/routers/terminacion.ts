@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
+import { licitacionIdFromInput, licitacionIdFromTerminacion } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { actosTerminacion, licitaciones } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -16,7 +17,7 @@ export const terminacionRouter = createRouter({
     });
   }),
 
-  crear: capabilityQuery("publicar").input(z.object({
+  crear: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({
     licitacionId: z.number().int().positive(),
     tipo: z.enum(["CANCELACION", "DESIERTO"]),
     causa: z.string().trim().min(10),
@@ -40,7 +41,7 @@ export const terminacionRouter = createRouter({
     return db.query.actosTerminacion.findFirst({ where: and(eq(actosTerminacion.id, id), eq(actosTerminacion.tenantId, ctx.user.tenantId)) });
   }),
 
-  publicar: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i, ctx) => licitacionIdFromTerminacion(i, ctx.user!.tenantId) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const acto = await db.query.actosTerminacion.findFirst({
       where: and(eq(actosTerminacion.id, input.id), eq(actosTerminacion.tenantId, ctx.user.tenantId)),
@@ -69,9 +70,9 @@ export const terminacionRouter = createRouter({
           cuerpo: acto.causa, entidadRef: "actos_terminacion", entidadId: input.id,
         },
       });
+      const updatedInTx = await tx.query.actosTerminacion.findFirst({ where: and(eq(actosTerminacion.id, input.id), eq(actosTerminacion.tenantId, ctx.user.tenantId)) });
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "actos_terminacion", entidadId: input.id, valorNuevo: updatedInTx, motivo: input.motivo, tx });
     });
-    const updated = await db.query.actosTerminacion.findFirst({ where: and(eq(actosTerminacion.id, input.id), eq(actosTerminacion.tenantId, ctx.user.tenantId)) });
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "actos_terminacion", entidadId: input.id, valorNuevo: updated, motivo: input.motivo });
-    return updated;
+    return db.query.actosTerminacion.findFirst({ where: and(eq(actosTerminacion.id, input.id), eq(actosTerminacion.tenantId, ctx.user.tenantId)) });
   }),
 });

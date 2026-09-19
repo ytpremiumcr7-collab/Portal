@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { eq, desc, like, and, count, sql } from "drizzle-orm";
-import { createRouter, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, procedureMutation, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion, actosDesempate } from "@db/schema";
+import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion, actosDesempate, procedimientoAsignaciones } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, listHitosTiposConfigurados, assertJuntaSiPoliticaLoExige } from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
@@ -11,7 +11,7 @@ import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { hashReglas, assertIsPrimerLugar, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
-import { assertProcedimientoAsignacion } from "../lib/sod";
+import { licitacionIdFromInput } from "../lib/procedure-resolvers";
 import { parseTieBreakPolicy, parseActosObligatorios, assertActosPermitidosPorPolitica, resolvePolicyForPublish, policyRequiresJunta } from "../lib/procedure-policy";
 import { enqueueOutbox } from "../lib/outbox";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
@@ -85,13 +85,17 @@ export const licitacionesRouter = createRouter({
       const result = await tx.insert(licitaciones).values({ tenantId: ctx.user.tenantId, codigo, titulo: input.titulo, objeto: input.objeto, descripcionDetallada: input.descripcionDetallada ?? null, entidadId: input.entidadId, categoriaId: input.categoriaId, convocanteId, tipoLicitacion: input.tipoLicitacion, tipoContratacion: input.tipoContratacion, montoPresupuestado: input.montoPresupuestado, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION", fechaPublicacion: input.fechaPublicacion ? new Date(input.fechaPublicacion) : null, fechaCierre: input.fechaCierre ? new Date(input.fechaCierre) : null, fechaApertura: input.fechaApertura ? new Date(input.fechaApertura) : null, criterioEvaluacion: input.criterioEvaluacion, ponderacionTecnica: input.ponderacionTecnica, ponderacionEconomica: input.ponderacionEconomica, rubricaTecnica: input.rubricaTecnica ?? null, modoEvaluacion: input.modoEvaluacion });
       createdId = Number(result[0].insertId);
       await createExpedienteForLicitacion(tx, ctx, { ...input, id: createdId, convocanteId, codigo, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION" } as any);
+      await tx.insert(procedimientoAsignaciones).values({
+        tenantId: ctx.user.tenantId, licitacionId: createdId, userId: ctx.user.id,
+        rol: "creador", overrideSod: false, justificacionOverride: null, asignadoPor: ctx.user.id,
+      } as any);
     });
     const created = await getByTenant(createdId, ctx.user.tenantId);
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "licitaciones", entidadId: createdId, valorNuevo: created });
     return { id: createdId, codigo, item: created };
   }),
 
-  update: capabilityQuery("crear_procedimiento").input(z.object({
+  update: procedureMutation({ capability: "crear_procedimiento", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({
     id: z.number().int().positive(), titulo: z.string().trim().min(5).max(300).optional(), objeto: z.string().trim().min(10).optional(), descripcionDetallada: z.string().nullable().optional(), montoPresupuestado: money.optional(), fechaPublicacion: dateMx.nullable().optional(), fechaCierre: dateMx.nullable().optional(), fechaApertura: dateMx.nullable().optional(), criterioEvaluacion: z.enum(["PRECIO_MAS_BAJO","MEJOR_RELACION_CALIDAD_PRECIO","MEJOR_VALOR_TECNICO"]).optional(), ponderacionTecnica: money.optional(), ponderacionEconomica: money.optional(), rubricaTecnica: z.string().nullable().optional(), modoEvaluacion: z.enum(["MANUAL","HIBRIDA","AUTOMATICA"]).optional(), motivo: z.string().trim().min(3).optional(),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
@@ -110,7 +114,7 @@ export const licitacionesRouter = createRouter({
     return updated;
   }),
 
-  agregarJunta: capabilityQuery("crear_procedimiento").input(z.object({ id: z.number().int().positive(), fechaProgramada: z.string().datetime(), nombre: z.string().trim().min(3).default("Junta de Aclaraciones"), motivo: z.string().optional() })).mutation(async ({ input, ctx }) => {
+  agregarJunta: procedureMutation({ capability: "crear_procedimiento", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({ id: z.number().int().positive(), fechaProgramada: z.string().datetime(), nombre: z.string().trim().min(3).default("Junta de Aclaraciones"), motivo: z.string().optional() })).mutation(async ({ input, ctx }) => {
     const lic = await assertLicitacionExists(ctx.user.tenantId, input.id);
     if (lic.estado !== "BORRADOR") throw new TRPCError({ code: "CONFLICT", message: "La junta se configura antes de publicar." });
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id); if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La licitación no tiene expediente electrónico." });
@@ -120,7 +124,7 @@ export const licitacionesRouter = createRouter({
     return created;
   }),
 
-  publicar: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionReadyForPublish(ctx.user.tenantId, input.id);
     const db = getDb();
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
@@ -176,13 +180,13 @@ export const licitacionesRouter = createRouter({
         estadoAnterior: "BORRADOR", estadoNuevo: "PUBLICADA", motivo: input.motivo,
         payload: { reglasHash, criterioEvaluacion: frozen.criterioEvaluacion, version: 1, policyId: policy.id, policyHash: policy.hash },
       });
+      const updatedInTx = await tx.query.licitaciones.findFirst({ where: and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId)) });
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updatedInTx, motivo: input.motivo, tx });
     });
-    const updated = await getByTenant(input.id, ctx.user.tenantId);
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
-    return updated;
+    return getByTenant(input.id, ctx.user.tenantId);
   }),
 
-  iniciarEvaluacion: capabilityQuery("evaluar_tecnico").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  iniciarEvaluacion: procedureMutation({ capability: "evaluar_tecnico", roles: ["evaluador_tecnico", "creador"], resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
     await assertCalendarioPermite(ctx.user.tenantId, input.id, "EVALUACION");
     if (!['PUBLICADA','CONSULTAS'].includes(current.estado)) throw new TRPCError({ code: "CONFLICT", message: "Sólo una licitación publicada puede pasar a evaluación." });
@@ -203,7 +207,7 @@ export const licitacionesRouter = createRouter({
     return updated;
   }),
 
-  adjudicar: capabilityQuery("autorizar_fallo").input(z.object({ id: z.number().int().positive(), proveedorGanadorId: z.number().int().positive(), montoAdjudicado: money, motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  adjudicar: procedureMutation({ capability: "autorizar_fallo", roles: ["autorizador_fallo", "dictaminador"], resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({ id: z.number().int().positive(), proveedorGanadorId: z.number().int().positive(), montoAdjudicado: money, motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     assertNonNegativeDecimal(input.montoAdjudicado, "montoAdjudicado");
     const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
     if (current.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "La licitación debe estar EN_EVALUACION antes de adjudicar." });
@@ -237,7 +241,6 @@ export const licitacionesRouter = createRouter({
     ));
     // NO universal max(puntajeTotal) when criterion is PRECIO_MAS_BAJO / MEJOR_VALOR_TECNICO.
     const tb = parseTieBreakPolicy((frozenRow as any).tieBreakPolicy);
-    await assertProcedimientoAsignacion(ctx.user, input.id, ["autorizador_fallo", "dictaminador"]);
     const desempate = await db.query.actosDesempate.findFirst({
       where: and(eq(actosDesempate.tenantId, ctx.user.tenantId), eq(actosDesempate.licitacionId, input.id), eq(actosDesempate.estado, "REGISTRADO")),
     });
