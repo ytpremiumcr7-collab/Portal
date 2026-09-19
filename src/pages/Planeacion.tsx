@@ -3,6 +3,11 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ares/PageHeader";
+import { StatusBadge } from "@/components/ares/StatusBadge";
+import { EmptyState } from "@/components/ares/EmptyState";
+import { ClipboardList } from "lucide-react";
 
 export default function Planeacion() {
   const [page, setPage] = useState(1);
@@ -17,66 +22,204 @@ export default function Planeacion() {
   const list = trpc.planeacion.listNecesidades.useQuery({ page, pageSize: 20 });
   const crear = trpc.planeacion.crearNecesidad.useMutation({ onSuccess: () => list.refetch() });
   const trans = trpc.planeacion.transicionarNecesidad.useMutation({ onSuccess: () => list.refetch() });
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-white">Planeación</h2>
-      <p className="text-sm text-slate-400">Necesidades → revisión → aprobación → vinculación a procedimiento.</p>
-      <Card className="border-slate-700 bg-slate-800/50">
-        <CardHeader><CardTitle className="text-white">Nueva necesidad</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Input placeholder="Entidad ID" value={entidadId} onChange={e => setEntidadId(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[8rem]" />
-          <Input placeholder="Folio" value={folio} onChange={e => setFolio(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
-          <Input placeholder="Título" value={titulo} onChange={e => setTitulo(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-sm" />
-          <Input placeholder="Monto estimado" value={monto} onChange={e => setMonto(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[10rem]" />
-          <Input placeholder="Descripción" value={descripcion} onChange={e => setDescripcion(e.target.value)} className="bg-slate-700 border-slate-600 text-white flex-1 min-w-[12rem]" />
-          <Input placeholder="Justificación" value={justificacion} onChange={e => setJustificacion(e.target.value)} className="bg-slate-700 border-slate-600 text-white flex-1 min-w-[12rem]" />
-          <Button className="bg-amber-600" disabled={crear.isPending || !folio || !titulo || !entidadId || !monto}
-            onClick={() => crear.mutate({
-              entidadId: Number(entidadId), folio, titulo,
-              descripcion: descripcion || "Necesidad operativa registrada",
-              justificacion: justificacion || "Justificación de la necesidad operativa",
-              montoEstimado: monto, tipoContratacion: "BIENES", motivo: "Alta de necesidad",
-            })}>Crear</Button>
+    <div className="space-y-5">
+      <PageHeader
+        title="Planeación"
+        description="Registro y autorización de necesidades de contratación previo al procedimiento."
+        breadcrumbs={[
+          { label: "Planeación", href: "/planeacion" },
+          { label: "Necesidades" },
+        ]}
+      />
+
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">Nueva necesidad</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 sm:px-5">
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Entidad (ID)</Label>
+            <Input value={entidadId} onChange={(e) => setEntidadId(e.target.value)} className="ares-input" />
+            <p className="ares-help">Identificador de la entidad contratante.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Folio</Label>
+            <Input value={folio} onChange={(e) => setFolio(e.target.value)} className="ares-input" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Título</Label>
+            <Input value={titulo} onChange={(e) => setTitulo(e.target.value)} className="ares-input" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Monto estimado</Label>
+            <Input value={monto} onChange={(e) => setMonto(e.target.value)} className="ares-input" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label className="ares-label">Descripción</Label>
+            <Input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} className="ares-input" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label className="ares-label">Justificación</Label>
+            <Input value={justificacion} onChange={(e) => setJustificacion(e.target.value)} className="ares-input" />
+          </div>
+          <div className="flex items-end">
+            <Button
+              className="ares-cta"
+              disabled={crear.isPending || !folio || !titulo || !entidadId || !monto}
+              onClick={() =>
+                crear.mutate({
+                  entidadId: Number(entidadId),
+                  folio,
+                  titulo,
+                  descripcion: descripcion || "Necesidad operativa registrada",
+                  justificacion: justificacion || "Justificación de la necesidad operativa",
+                  montoEstimado: monto,
+                  tipoContratacion: "BIENES",
+                  motivo: "Alta de necesidad",
+                })
+              }
+            >
+              Registrar necesidad
+            </Button>
+          </div>
         </CardContent>
       </Card>
-      <Card className="border-slate-700 bg-slate-800/50">
-        <CardHeader><CardTitle className="text-white">Transicionar necesidad</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Input placeholder="ID necesidad" value={necId} onChange={e => setNecId(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[8rem]" />
-          <Input placeholder="EN_REVISION | APROBADA | RECHAZADA" value={to} onChange={e => setTo(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
-          <Button disabled={!necId || trans.isPending} onClick={() => trans.mutate({ id: Number(necId), to: to as any, motivo: `Transición a ${to}` })}>Aplicar</Button>
+
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">Transicionar necesidad</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3 p-4 sm:px-5">
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">ID necesidad</Label>
+            <Input value={necId} onChange={(e) => setNecId(e.target.value)} className="ares-input max-w-[8rem]" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Estado destino</Label>
+            <Input
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder="EN_REVISION | APROBADA | RECHAZADA"
+              className="ares-input max-w-xs"
+            />
+            <p className="ares-help">Use EN_REVISION, APROBADA o RECHAZADA.</p>
+          </div>
+          <Button
+            variant="outline"
+            className="border-slate-600 text-slate-300"
+            disabled={!necId || trans.isPending}
+            onClick={() =>
+              trans.mutate({ id: Number(necId), to: to as any, motivo: `Transición a ${to}` })
+            }
+          >
+            Aplicar transición
+          </Button>
         </CardContent>
       </Card>
-      <Card className="border-slate-700 bg-slate-800/50">
-        <CardHeader><CardTitle className="text-white">Necesidades</CardTitle></CardHeader>
+
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">Necesidades registradas</CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
-          <table className="w-full">
-            <thead><tr className="border-b border-slate-700">
-              <th className="p-3 text-left text-xs text-slate-400">ID</th>
-              <th className="p-3 text-left text-xs text-slate-400">Folio / Título</th>
-              <th className="p-3 text-left text-xs text-slate-400">Estado</th>
-              <th className="p-3 text-right text-xs text-slate-400">Acción</th>
-            </tr></thead>
-            <tbody>
-              {(list.data?.items ?? []).map((row: any) => (
-                <tr key={row.id} className="border-b border-slate-800">
-                  <td className="p-3 text-sm text-white">{row.id}</td>
-                  <td className="p-3 text-sm text-slate-300">{row.folio} — {row.titulo}</td>
-                  <td className="p-3 text-xs text-slate-300">{row.estado}</td>
-                  <td className="p-3 text-right space-x-2">
-                    {row.estado === "BORRADOR" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "EN_REVISION", motivo: "Enviar a revisión" })}>Revisar</Button>}
-                    {row.estado === "EN_REVISION" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "APROBADA", motivo: "Aprobar necesidad" })}>Aprobar</Button>}
-                  </td>
-                </tr>
-              ))}
-              {!list.data?.items?.length && <tr><td colSpan={4} className="p-4 text-slate-500 text-sm">Sin registros</td></tr>}
-            </tbody>
-          </table>
+          {(list.data?.items ?? []).length === 0 ? (
+            <EmptyState
+              title="Sin necesidades registradas"
+              description="Registre la primera necesidad de contratación para iniciar el proceso de planeación."
+              icon={<ClipboardList className="h-5 w-5" />}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="ares-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Folio / Título</th>
+                    <th>Estado</th>
+                    <th className="text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(list.data?.items ?? []).map((row: any) => (
+                    <tr key={row.id}>
+                      <td className="tabular-nums text-slate-400">{row.id}</td>
+                      <td className="text-slate-200">
+                        <span className="font-mono text-xs text-slate-500">{row.folio}</span>
+                        <span className="mx-1.5 text-slate-600">—</span>
+                        {row.titulo}
+                      </td>
+                      <td>
+                        <StatusBadge status={row.estado} />
+                      </td>
+                      <td className="space-x-2 text-right">
+                        {row.estado === "BORRADOR" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 border-slate-600 text-xs text-slate-300"
+                            onClick={() =>
+                              trans.mutate({
+                                id: row.id,
+                                to: "EN_REVISION",
+                                motivo: "Enviar a revisión",
+                              })
+                            }
+                          >
+                            Enviar a revisión
+                          </Button>
+                        )}
+                        {row.estado === "EN_REVISION" && (
+                          <Button
+                            size="sm"
+                            className="ares-cta h-7 text-xs"
+                            onClick={() => {
+                              if (
+                                !window.confirm(
+                                  "¿Confirma aprobar esta necesidad? Quedará disponible para vincular a un procedimiento.",
+                                )
+                              )
+                                return;
+                              trans.mutate({
+                                id: row.id,
+                                to: "APROBADA",
+                                motivo: "Aprobar necesidad",
+                              });
+                            }}
+                          >
+                            Aprobar
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
+
       <div className="flex justify-end gap-2">
-        <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Anterior</Button>
-        <Button variant="outline" disabled={!list.data || page >= (list.data.pageCount ?? 1)} onClick={() => setPage(p => p + 1)}>Siguiente</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-600 text-slate-300"
+          disabled={page <= 1}
+          onClick={() => setPage((p) => p - 1)}
+        >
+          Anterior
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-600 text-slate-300"
+          disabled={!list.data || page >= (list.data.pageCount ?? 1)}
+          onClick={() => setPage((p) => p + 1)}
+        >
+          Siguiente
+        </Button>
       </div>
     </div>
   );

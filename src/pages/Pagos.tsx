@@ -3,6 +3,11 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ares/PageHeader";
+import { StatusBadge } from "@/components/ares/StatusBadge";
+import { EmptyState } from "@/components/ares/EmptyState";
+import { Banknote } from "lucide-react";
 
 export default function Pagos() {
   const [page, setPage] = useState(1);
@@ -16,56 +21,179 @@ export default function Pagos() {
   const autorizar = trpc.pagos.autorizar.useMutation({ onSuccess: () => list.refetch() });
   const pagar = trpc.pagos.pagar.useMutation({ onSuccess: () => list.refetch() });
   const rechazar = trpc.pagos.rechazar.useMutation({ onSuccess: () => list.refetch() });
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-white">Pagos / Estimaciones</h2>
-      <p className="text-sm text-slate-400">SoD: presentar_pago ≠ aprobar_pago. Flujo PRESENTADA → EN_REVISION → AUTORIZADA → PAGADA.</p>
-      <Card className="border-slate-700 bg-slate-800/50">
-        <CardHeader><CardTitle className="text-white">Presentar estimación</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Input placeholder="Contrato ID" value={contratoId} onChange={e => setContratoId(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[8rem]" />
-          <Input placeholder="Folio" value={folio} onChange={e => setFolio(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
-          <Input placeholder="Número" value={numero} onChange={e => setNumero(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[6rem]" />
-          <Input placeholder="Monto bruto" value={monto} onChange={e => setMonto(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-[10rem]" />
-          <Button className="bg-amber-600" disabled={!contratoId || !folio || !monto || presentar.isPending}
-            onClick={() => presentar.mutate({ contratoId: Number(contratoId), folio, numero: Number(numero), montoBruto: monto, retencion: "0.00", motivo: "Presentación de estimación" })}>Presentar</Button>
+    <div className="space-y-5">
+      <PageHeader
+        title="Pagos y estimaciones"
+        description="Flujo de estimaciones con segregación de funciones: presentar ≠ autorizar. PRESENTADA → EN_REVISION → AUTORIZADA → PAGADA."
+        breadcrumbs={[
+          { label: "Contratación", href: "/contratos" },
+          { label: "Pagos" },
+        ]}
+      />
+
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">Presentar estimación</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3 p-4 sm:px-5">
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Contrato (ID)</Label>
+            <Input
+              value={contratoId}
+              onChange={(e) => setContratoId(e.target.value)}
+              className="ares-input max-w-[8rem]"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Folio</Label>
+            <Input value={folio} onChange={(e) => setFolio(e.target.value)} className="ares-input max-w-xs" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label">Número</Label>
+            <Input
+              value={numero}
+              onChange={(e) => setNumero(e.target.value)}
+              className="ares-input max-w-[6rem]"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Monto bruto</Label>
+            <Input value={monto} onChange={(e) => setMonto(e.target.value)} className="ares-input max-w-[10rem]" />
+          </div>
+          <Button
+            className="ares-cta"
+            disabled={!contratoId || !folio || !monto || presentar.isPending}
+            onClick={() =>
+              presentar.mutate({
+                contratoId: Number(contratoId),
+                folio,
+                numero: Number(numero),
+                montoBruto: monto,
+                retencion: "0.00",
+                motivo: "Presentación de estimación",
+              })
+            }
+          >
+            Presentar
+          </Button>
         </CardContent>
       </Card>
-      <Card className="border-slate-700 bg-slate-800/50">
+
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">Estimaciones</CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
-          <table className="w-full">
-            <thead><tr className="border-b border-slate-700">
-              <th className="p-3 text-left text-xs text-slate-400">ID</th>
-              <th className="p-3 text-left text-xs text-slate-400">Folio</th>
-              <th className="p-3 text-left text-xs text-slate-400">Neto</th>
-              <th className="p-3 text-left text-xs text-slate-400">Estado</th>
-              <th className="p-3 text-right text-xs text-slate-400">Acción</th>
-            </tr></thead>
-            <tbody>
-              {(list.data?.items ?? []).map((row: any) => (
-                <tr key={row.id} className="border-b border-slate-800">
-                  <td className="p-3 text-sm text-white">{row.id}</td>
-                  <td className="p-3 text-sm text-slate-300">{row.folio}</td>
-                  <td className="p-3 text-sm text-slate-300">${row.montoNeto}</td>
-                  <td className="p-3 text-xs text-slate-300">{row.estado}</td>
-                  <td className="p-3 text-right space-x-2">
-                    {row.estado === "PRESENTADA" && <Button size="sm" onClick={() => revisar.mutate({ id: row.id, motivo: "Pasar a revisión" })}>Revisar</Button>}
-                    {row.estado === "EN_REVISION" && <>
-                      <Button size="sm" onClick={() => autorizar.mutate({ id: row.id, motivo: "Autorizar pago" })}>Autorizar</Button>
-                      <Button size="sm" variant="outline" onClick={() => rechazar.mutate({ id: row.id, motivoRechazo: "No procede la estimación presentada", motivo: "Rechazo" })}>Rechazar</Button>
-                    </>}
-                    {row.estado === "AUTORIZADA" && <Button size="sm" onClick={() => pagar.mutate({ id: row.id, motivo: "Registrar pago" })}>Pagar</Button>}
-                  </td>
-                </tr>
-              ))}
-              {!list.data?.items?.length && <tr><td colSpan={5} className="p-4 text-slate-500 text-sm">Sin registros</td></tr>}
-            </tbody>
-          </table>
+          {(list.data?.items ?? []).length === 0 ? (
+            <EmptyState
+              title="Sin estimaciones"
+              description="Presente una estimación vinculada a un contrato vigente para iniciar el flujo de pago."
+              icon={<Banknote className="h-5 w-5" />}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="ares-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Folio</th>
+                    <th>Neto</th>
+                    <th>Estado</th>
+                    <th className="text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(list.data?.items ?? []).map((row: any) => (
+                    <tr key={row.id}>
+                      <td className="tabular-nums text-slate-400">{row.id}</td>
+                      <td className="font-medium text-slate-200">{row.folio}</td>
+                      <td className="tabular-nums text-slate-300">${row.montoNeto}</td>
+                      <td>
+                        <StatusBadge status={row.estado} />
+                      </td>
+                      <td className="space-x-2 text-right">
+                        {row.estado === "PRESENTADA" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 border-slate-600 text-xs text-slate-300"
+                            onClick={() => revisar.mutate({ id: row.id, motivo: "Pasar a revisión" })}
+                          >
+                            Revisar
+                          </Button>
+                        )}
+                        {row.estado === "EN_REVISION" && (
+                          <>
+                            <Button
+                              size="sm"
+                              className="ares-cta h-7 text-xs"
+                              onClick={() => {
+                                if (!window.confirm("¿Confirma autorizar este pago?")) return;
+                                autorizar.mutate({ id: row.id, motivo: "Autorizar pago" });
+                              }}
+                            >
+                              Autorizar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 border-red-900/50 text-xs text-red-300"
+                              onClick={() => {
+                                if (!window.confirm("¿Confirma rechazar esta estimación?")) return;
+                                rechazar.mutate({
+                                  id: row.id,
+                                  motivoRechazo: "No procede la estimación presentada",
+                                  motivo: "Rechazo",
+                                });
+                              }}
+                            >
+                              Rechazar
+                            </Button>
+                          </>
+                        )}
+                        {row.estado === "AUTORIZADA" && (
+                          <Button
+                            size="sm"
+                            className="ares-cta h-7 text-xs"
+                            onClick={() => {
+                              if (!window.confirm("¿Confirma registrar el pago ejecutado?")) return;
+                              pagar.mutate({ id: row.id, motivo: "Registrar pago" });
+                            }}
+                          >
+                            Registrar pago
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
+
       <div className="flex justify-end gap-2">
-        <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Anterior</Button>
-        <Button variant="outline" disabled={!list.data || page >= (list.data.pageCount ?? 1)} onClick={() => setPage(p => p + 1)}>Siguiente</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-600 text-slate-300"
+          disabled={page <= 1}
+          onClick={() => setPage((p) => p - 1)}
+        >
+          Anterior
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-600 text-slate-300"
+          disabled={!list.data || page >= (list.data.pageCount ?? 1)}
+          onClick={() => setPage((p) => p + 1)}
+        >
+          Siguiente
+        </Button>
       </div>
     </div>
   );

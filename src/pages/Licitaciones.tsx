@@ -3,33 +3,45 @@ import { trpc } from "@/providers/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  FileText, Plus, Search, Eye, Trash2, CheckCircle,
-} from "lucide-react";
+import { PageHeader } from "@/components/ares/PageHeader";
+import { StatusBadge } from "@/components/ares/StatusBadge";
+import { EmptyState } from "@/components/ares/EmptyState";
+import { FileText, Plus, Search, Eye, Trash2, CheckCircle } from "lucide-react";
 import { Link } from "react-router";
 
-type LicEstado = "BORRADOR" | "CONSULTAS" | "PUBLICADA" | "EN_EVALUACION" | "ADJUDICADA" | "DESIERTA" | "CANCELADA" | "FINALIZADA" | "ARCHIVADA";
+type LicEstado =
+  | "BORRADOR"
+  | "CONSULTAS"
+  | "PUBLICADA"
+  | "EN_EVALUACION"
+  | "ADJUDICADA"
+  | "DESIERTA"
+  | "CANCELADA"
+  | "FINALIZADA"
+  | "ARCHIVADA";
 
-const estados: Array<{ value: LicEstado | ""; label: string }> = [
-  { value: "", label: "Todos" },
+const estados: Array<{ value: LicEstado | "ALL"; label: string }> = [
+  { value: "ALL", label: "Todos los estados" },
   { value: "BORRADOR", label: "Borrador" },
   { value: "PUBLICADA", label: "Publicada" },
-  { value: "EN_EVALUACION", label: "En Evaluacion" },
+  { value: "EN_EVALUACION", label: "En evaluación" },
   { value: "ADJUDICADA", label: "Adjudicada" },
   { value: "FINALIZADA", label: "Finalizada" },
   { value: "CANCELADA", label: "Cancelada" },
 ];
 
 export default function Licitaciones() {
-  const [page,setPage] = useState(1);
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [estado, setEstado] = useState<LicEstado | "">("");
+  const [estado, setEstado] = useState<LicEstado | "ALL">("ALL");
   const utils = trpc.useUtils();
 
   const { data: licitacionesPage, isLoading } = trpc.licitaciones.list.useQuery(
-    estado ? { estado, search: search || undefined, page, pageSize: 25 } : { search: search || undefined, page, pageSize: 25 }
+    estado !== "ALL"
+      ? { estado, search: search || undefined, page, pageSize: 25 }
+      : { search: search || undefined, page, pageSize: 25 },
   );
 
   const deleteMutation = trpc.licitaciones.delete.useMutation({
@@ -40,57 +52,70 @@ export default function Licitaciones() {
     onSuccess: () => utils.licitaciones.list.invalidate(),
   });
 
-  const formatCurrency = (value: string) => {
-    return new Intl.NumberFormat("es-MX", {
-      style: "currency", currency: "MXN", minimumFractionDigits: 0, maximumFractionDigits: 0,
+  const formatCurrency = (value: string) =>
+    new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency: "MXN",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     }).format(parseFloat(value));
-  };
-
-  const getEstadoBadge = (estado: string) => {
-    const v: Record<string, string> = {
-      BORRADOR: "bg-slate-600 text-slate-200",
-      PUBLICADA: "bg-emerald-600 text-emerald-100",
-      EN_EVALUACION: "bg-blue-600 text-blue-100",
-      ADJUDICADA: "bg-purple-600 text-purple-100",
-      FINALIZADA: "bg-slate-600 text-slate-200",
-      CANCELADA: "bg-red-600 text-red-100",
-    };
-    return v[estado] || "bg-slate-600";
-  };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <FileText className="w-6 h-6 text-amber-500" />
-          <h2 className="text-2xl font-bold text-white">Licitaciones</h2>
-        </div>
-        <Link to="/licitaciones/nueva">
-          <Button className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700">
-            <Plus className="w-4 h-4 mr-2" /> Nueva Licitacion
-          </Button>
-        </Link>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Licitaciones"
+        description="Catálogo de procedimientos de contratación. Gestione el ciclo desde borrador hasta fallo y adjudicación."
+        breadcrumbs={[
+          { label: "Procedimiento", href: "/licitaciones" },
+          { label: "Licitaciones" },
+        ]}
+        actions={
+          <Link to="/licitaciones/nueva">
+            <Button className="ares-cta">
+              <Plus className="mr-2 h-4 w-4" />
+              Nueva licitación
+            </Button>
+          </Link>
+        }
+      />
 
-      <Card className="border-slate-700 bg-slate-800/50">
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+          <div className="relative min-w-0 flex-1 space-y-1.5">
+            <Label htmlFor="lic-search" className="ares-label">
+              Buscar
+            </Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
               <Input
-                placeholder="Buscar por titulo..."
+                id="lic-search"
+                placeholder="Buscar por título o código…"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10 bg-slate-700 border-slate-600 text-white"
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                className="ares-input pl-10"
               />
             </div>
-            <Select value={estado} onValueChange={(v) => setEstado(v as LicEstado | "")}>
-              <SelectTrigger className="w-full sm:w-48 bg-slate-700 border-slate-600 text-white">
+          </div>
+          <div className="w-full space-y-1.5 sm:w-52">
+            <Label className="ares-label">Estado</Label>
+            <Select
+              value={estado}
+              onValueChange={(v) => {
+                setEstado(v as LicEstado | "ALL");
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="ares-input">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
-              <SelectContent className="bg-slate-700 border-slate-600">
+              <SelectContent className="border-slate-700 bg-slate-900">
                 {estados.map((e) => (
-                  <SelectItem key={e.value} value={e.value} className="text-white hover:bg-slate-600">{e.label}</SelectItem>
+                  <SelectItem key={e.value} value={e.value} className="text-slate-200">
+                    {e.label}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -98,63 +123,102 @@ export default function Licitaciones() {
         </CardContent>
       </Card>
 
-      <Card className="border-slate-700 bg-slate-800/50">
-        <CardHeader>
-          <CardTitle className="text-white text-base">
-            {licitacionesPage?.items.length || 0} licitaciones encontradas
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">
+            {licitacionesPage?.items.length ?? 0} procedimiento
+            {(licitacionesPage?.items.length ?? 0) === 1 ? "" : "s"} en esta página
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {isLoading ? (
-            <p className="text-slate-400 text-center py-8">Cargando...</p>
-          ) : licitacionesPage?.items.length === 0 ? (
-            <p className="text-slate-500 text-center py-8">No se encontraron licitaciones</p>
+            <p className="px-4 py-10 text-center text-sm text-slate-400">Cargando procedimientos…</p>
+          ) : !licitacionesPage?.items.length ? (
+            <EmptyState
+              title="No se encontraron licitaciones"
+              description="Ajuste los filtros o registre un nuevo procedimiento de contratación."
+              icon={<FileText className="h-5 w-5" />}
+              action={
+                <Link to="/licitaciones/nueva">
+                  <Button size="sm" className="ares-cta">
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    Nueva licitación
+                  </Button>
+                </Link>
+              }
+            />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="ares-table">
                 <thead>
-                  <tr className="border-b border-slate-700">
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400 uppercase">Codigo</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400 uppercase">Titulo</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400 uppercase">Entidad</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400 uppercase">Estado</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-400 uppercase">Monto</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-400 uppercase">Acciones</th>
+                  <tr>
+                    <th>Código</th>
+                    <th>Título</th>
+                    <th>Entidad</th>
+                    <th>Estado</th>
+                    <th className="text-right">Monto</th>
+                    <th className="text-right">Acciones</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {licitacionesPage?.items.map((lic: any) => (
-                    <tr key={lic.id} className="hover:bg-slate-700/30 transition-colors">
-                      <td className="py-3 px-4 text-sm font-mono text-amber-500">{lic.codigo}</td>
-                      <td className="py-3 px-4 text-sm text-white">{lic.titulo}</td>
-                      <td className="py-3 px-4 text-sm text-slate-300">{lic.entidad?.razonSocial}</td>
-                      <td className="py-3 px-4">
-                        <Badge className={`text-xs ${getEstadoBadge(lic.estado)}`}>
-                          {lic.estado.replace(/_/g, " ")}
-                        </Badge>
+                <tbody>
+                  {licitacionesPage.items.map((lic: any) => (
+                    <tr key={lic.id}>
+                      <td className="font-mono text-xs text-slate-400">{lic.codigo}</td>
+                      <td className="max-w-xs truncate font-medium text-slate-100">{lic.titulo}</td>
+                      <td className="max-w-[12rem] truncate text-slate-400">
+                        {lic.entidad?.razonSocial}
                       </td>
-                      <td className="py-3 px-4 text-sm text-white text-right">{formatCurrency(lic.montoPresupuestado)}</td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
+                      <td>
+                        <StatusBadge status={lic.estado} />
+                      </td>
+                      <td className="text-right tabular-nums text-slate-200">
+                        {formatCurrency(lic.montoPresupuestado)}
+                      </td>
+                      <td className="text-right">
+                        <div className="flex items-center justify-end gap-0.5">
                           <Link to={`/licitaciones/${lic.id}`}>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-white">
-                              <Eye className="w-4 h-4" />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-slate-400 hover:text-slate-100"
+                              title="Ver expediente"
+                            >
+                              <Eye className="h-4 w-4" />
                             </Button>
                           </Link>
                           {lic.estado === "BORRADOR" && (
                             <Button
-                              variant="ghost" size="icon" className="h-8 w-8 text-emerald-400 hover:text-emerald-300"
-                              onClick={() => { const motivo = window.prompt("Motivo de publicación"); if (motivo) publicarMutation.mutate({ id: lic.id, motivo }); }}
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-emerald-400 hover:text-emerald-300"
                               title="Publicar"
+                              onClick={() => {
+                                const motivo = window.prompt("Motivo de publicación (obligatorio)");
+                                if (motivo) publicarMutation.mutate({ id: lic.id, motivo });
+                              }}
                             >
-                              <CheckCircle className="w-4 h-4" />
+                              <CheckCircle className="h-4 w-4" />
                             </Button>
                           )}
                           <Button
-                            variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
-                            onClick={() => { if (confirm("Eliminar esta licitacion?")) deleteMutation.mutate({ id: lic.id, motivo: "Borrado desde la administración" }); }}
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-400 hover:text-red-300"
+                            title="Eliminar"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "¿Confirma eliminar esta licitación? Esta acción queda registrada en bitácora.",
+                                )
+                              ) {
+                                deleteMutation.mutate({
+                                  id: lic.id,
+                                  motivo: "Borrado desde la administración",
+                                });
+                              }
+                            }}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
                       </td>
@@ -166,7 +230,30 @@ export default function Licitaciones() {
           )}
         </CardContent>
       </Card>
-      <div className="mt-4 flex justify-end gap-2"><Button variant="outline" disabled={page<=1} onClick={()=>setPage(p=>p-1)}>Anterior</Button><span className="self-center text-sm text-slate-400">Página {page} de {licitacionesPage?.pageCount??1}</span><Button variant="outline" disabled={!licitacionesPage||page>=licitacionesPage.pageCount} onClick={()=>setPage(p=>p+1)}>Siguiente</Button></div>
+
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-600 text-slate-300"
+          disabled={page <= 1}
+          onClick={() => setPage((p) => p - 1)}
+        >
+          Anterior
+        </Button>
+        <span className="text-xs text-slate-500">
+          Página {page} de {licitacionesPage?.pageCount ?? 1}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-slate-600 text-slate-300"
+          disabled={!licitacionesPage || page >= licitacionesPage.pageCount}
+          onClick={() => setPage((p) => p + 1)}
+        >
+          Siguiente
+        </Button>
+      </div>
     </div>
   );
 }

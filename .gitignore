@@ -39,3 +39,4 @@ build/
 coverage/
 .nyc_output/
 storage/
+screenshots/

@@ -1,8 +1,9 @@
 import { trpc } from "@/providers/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/ares/PageHeader";
+import { StatusBadge } from "@/components/ares/StatusBadge";
+import { EmptyState } from "@/components/ares/EmptyState";
 import {
-  LayoutDashboard,
   FileText,
   Users,
   TrendingUp,
@@ -13,26 +14,41 @@ import {
   Briefcase,
 } from "lucide-react";
 import { Link } from "react-router";
+import { cn } from "@/lib/utils";
 
-interface StatCardProps {
+function MetricCard({
+  title,
+  value,
+  icon,
+  tone = "default",
+}: {
   title: string;
   value: string | number;
   icon: React.ReactNode;
-  color: string;
-}
+  tone?: "default" | "warn" | "ok" | "accent";
+}) {
+  const toneCls = {
+    default: "border-slate-700/80 bg-slate-900/70",
+    warn: "border-red-900/50 bg-red-950/20",
+    ok: "border-emerald-900/40 bg-emerald-950/15",
+    accent: "border-slate-700/80 bg-slate-900/70",
+  }[tone];
+  const iconCls = {
+    default: "bg-slate-800 text-sky-400",
+    warn: "bg-red-950/60 text-red-400",
+    ok: "bg-emerald-950/50 text-emerald-400",
+    accent: "bg-slate-800 text-amber-500",
+  }[tone];
 
-function StatCard({ title, value, icon, color }: StatCardProps) {
   return (
-    <Card className="border-slate-700 bg-slate-800/50">
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-400">{title}</p>
-            <h3 className="text-2xl font-bold text-white mt-1">{value}</h3>
+    <Card className={cn("shadow-none", toneCls)}>
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{title}</p>
+            <p className="mt-1.5 truncate text-2xl font-semibold tabular-nums text-slate-50">{value}</p>
           </div>
-          <div className={`p-3 rounded-lg bg-gradient-to-br ${color} shadow-lg`}>
-            {icon}
-          </div>
+          <div className={cn("rounded-md p-2.5", iconCls)}>{icon}</div>
         </div>
       </CardContent>
     </Card>
@@ -44,145 +60,174 @@ export default function Dashboard() {
   const { data: recentLics, isLoading: lLoading, isError: lErr } = trpc.dashboard.recentLicitaciones.useQuery();
   const { data: recentAlerts, isLoading: aLoading, isError: aErr } = trpc.dashboard.recentAlertas.useQuery();
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("es-MX", {
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat("es-MX", {
       style: "currency",
       currency: "MXN",
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value);
-  };
 
-  const getEstadoBadge = (estado: string) => {
-    const variants: Record<string, string> = {
-      BORRADOR: "bg-slate-600 text-slate-200",
-      PUBLICADA: "bg-emerald-600 text-emerald-100",
-      EN_EVALUACION: "bg-blue-600 text-blue-100",
-      ADJUDICADA: "bg-purple-600 text-purple-100",
-      FINALIZADA: "bg-slate-600 text-slate-200",
-      CANCELADA: "bg-red-600 text-red-100",
-    };
-    return variants[estado] || "bg-slate-600 text-slate-200";
-  };
-
-  const getSeveridadBadge = (severidad: string) => {
-    const variants: Record<string, string> = {
-      BAJA: "bg-blue-600 text-blue-100",
-      MEDIA: "bg-amber-600 text-amber-100",
-      ALTA: "bg-orange-600 text-orange-100",
-      CRITICA: "bg-red-600 text-red-100",
-    };
-    return variants[severidad] || "bg-slate-600 text-slate-200";
-  };
+  const today = new Date().toLocaleDateString("es-MX", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 
   if (mErr || lErr || aErr) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <p className="text-red-400">No se pudo cargar el dashboard. Revisa la sesión o recarga.</p>
+      <div className="flex h-72 items-center justify-center">
+        <EmptyState
+          title="No fue posible cargar el tablero"
+          description="Verifique su sesión o recargue la página. Si el problema persiste, contacte al administrador del sistema."
+          icon={<AlertTriangle className="h-6 w-6" />}
+        />
       </div>
     );
   }
 
   if (mLoading || lLoading || aLoading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="flex items-center gap-3 text-slate-400">
-          <svg className="animate-spin h-6 w-6" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <span>Cargando dashboard...</span>
-        </div>
+      <div className="flex h-72 items-center justify-center gap-3 text-sm text-slate-400">
+        <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" aria-hidden>
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        Cargando resumen ejecutivo…
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <LayoutDashboard className="w-6 h-6 text-amber-500" />
-          <h2 className="text-2xl font-bold text-white">Dashboard</h2>
-        </div>
-        <p className="text-slate-400 text-sm">
-          {new Date().toLocaleDateString("es-MX", {
-            weekday: "long", year: "numeric", month: "long", day: "numeric",
-          })}
-        </p>
-      </div>
+      <PageHeader
+        title="Tablero ejecutivo"
+        description="Resumen operativo de procedimientos de contratación, proveedores verificados y alertas de integridad."
+        breadcrumbs={[{ label: "Inicio" }, { label: "Tablero ejecutivo" }]}
+        meta={<span className="text-xs capitalize text-slate-500">{today}</span>}
+      />
 
       {metrics && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="Licitaciones Activas" value={metrics.licitacionesActivas} icon={<FileText className="w-5 h-5 text-white" />} color="from-blue-500 to-blue-600" />
-          <StatCard title="Proveedores Verificados" value={metrics.proveedoresActivos} icon={<Users className="w-5 h-5 text-white" />} color="from-emerald-500 to-emerald-600" />
-          <StatCard title="Monto Adjudicado" value={formatCurrency(metrics.montoTotalAdjudicadoPeriodo)} icon={<TrendingUp className="w-5 h-5 text-white" />} color="from-amber-500 to-orange-600" />
-          <StatCard title="Alertas Urgentes" value={metrics.alertasUrgentes} icon={<AlertTriangle className="w-5 h-5 text-white" />} color="from-red-500 to-red-600" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            title="Licitaciones activas"
+            value={metrics.licitacionesActivas}
+            icon={<FileText className="h-4 w-4" />}
+          />
+          <MetricCard
+            title="Proveedores verificados"
+            value={metrics.proveedoresActivos}
+            icon={<Users className="h-4 w-4" />}
+            tone="ok"
+          />
+          <MetricCard
+            title="Monto adjudicado"
+            value={formatCurrency(metrics.montoTotalAdjudicadoPeriodo)}
+            icon={<TrendingUp className="h-4 w-4" />}
+            tone="accent"
+          />
+          <MetricCard
+            title="Alertas urgentes"
+            value={metrics.alertasUrgentes}
+            icon={<AlertTriangle className="h-4 w-4" />}
+            tone={metrics.alertasUrgentes > 0 ? "warn" : "default"}
+          />
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2 border-slate-700 bg-slate-800/50">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Briefcase className="w-5 h-5 text-amber-500" />
-              <CardTitle className="text-white">Licitaciones Recientes</CardTitle>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card className="border-slate-700/80 bg-slate-900/70 shadow-none lg:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-slate-800 px-4 py-3 sm:px-5">
+            <div className="flex items-center gap-2">
+              <Briefcase className="h-4 w-4 text-slate-400" />
+              <CardTitle className="text-sm font-semibold text-slate-100">
+                Procedimientos recientes
+              </CardTitle>
             </div>
-            <Link to="/licitaciones" className="text-sm text-amber-500 hover:text-amber-400 flex items-center gap-1">
-              Ver todas <ChevronRight className="w-4 h-4" />
+            <Link
+              to="/licitaciones"
+              className="flex items-center gap-1 text-xs font-medium text-amber-500 hover:text-amber-400"
+            >
+              Ver catálogo <ChevronRight className="h-3.5 w-3.5" />
             </Link>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {recentLics?.length === 0 ? (
-                <p className="text-slate-500 text-center py-8">No hay licitaciones recientes</p>
-              ) : (
-                recentLics?.map((lic: any) => (
-                  <Link key={lic.id} to={`/licitaciones/${lic.id}`} className="flex items-center justify-between p-4 bg-slate-700/50 rounded-lg hover:bg-slate-700 transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-mono text-amber-500">{lic.codigo}</span>
-                        <Badge className={`text-xs ${getEstadoBadge(lic.estado)}`}>{lic.estado.replace(/_/g, " ")}</Badge>
+          <CardContent className="p-0">
+            {!recentLics?.length ? (
+              <EmptyState
+                title="Sin procedimientos recientes"
+                description="Cuando se registren licitaciones, aparecerán aquí con su estado y monto presupuestado."
+                icon={<FileText className="h-5 w-5" />}
+                action={
+                  <Link to="/licitaciones/nueva" className="text-xs font-medium text-amber-500 hover:text-amber-400">
+                    Registrar nueva licitación
+                  </Link>
+                }
+              />
+            ) : (
+              <ul className="divide-y divide-slate-800/80">
+                {recentLics.map((lic: any) => (
+                  <li key={lic.id}>
+                    <Link
+                      to={`/licitaciones/${lic.id}`}
+                      className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-slate-800/40 sm:px-5"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-[11px] text-slate-400">{lic.codigo}</span>
+                          <StatusBadge status={lic.estado} />
+                        </div>
+                        <p className="truncate text-sm font-medium text-slate-100">{lic.titulo}</p>
+                        <p className="truncate text-xs text-slate-500">{lic.entidad?.razonSocial}</p>
                       </div>
-                      <h4 className="text-sm font-medium text-white truncate">{lic.titulo}</h4>
-                      <p className="text-xs text-slate-400 truncate">{lic.entidad?.razonSocial}</p>
-                    </div>
-                    <div className="text-right ml-4">
-                      <p className="text-sm font-semibold text-white">
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-slate-200">
                         {formatCurrency(parseFloat(lic.montoPresupuestado))}
                       </p>
-                    </div>
-                  </Link>
-                ))
-              )}
-            </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
 
-        <Card className="border-slate-700 bg-slate-800/50">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <Shield className="w-5 h-5 text-red-500" />
-              <CardTitle className="text-white text-base">Alertas de Seguridad</CardTitle>
+        <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+          <CardHeader className="space-y-0 border-b border-slate-800 px-4 py-3 sm:px-5">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-slate-400" />
+              <CardTitle className="text-sm font-semibold text-slate-100">
+                Alertas de integridad
+              </CardTitle>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {recentAlerts?.length === 0 ? (
-                <div className="flex items-center gap-3 p-4 bg-emerald-900/20 rounded-lg">
-                  <CheckCircle className="w-5 h-5 text-emerald-500" />
-                  <p className="text-sm text-emerald-400">Sin alertas pendientes</p>
+          <CardContent className="p-0">
+            {!recentAlerts?.length ? (
+              <div className="flex items-start gap-3 px-4 py-6 sm:px-5">
+                <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-300">Sin alertas pendientes</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    No hay hallazgos de integridad pendientes de atención en este momento.
+                  </p>
                 </div>
-              ) : (
-                recentAlerts?.map((alerta: any) => (
-                  <div key={alerta.id} className="p-3 bg-slate-700/50 rounded-lg border-l-4 border-red-500">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge className={`text-xs ${getSeveridadBadge(alerta.severidad)}`}>{alerta.severidad}</Badge>
-                      <span className="text-xs text-slate-500">{alerta.codigo}</span>
+              </div>
+            ) : (
+              <ul className="divide-y divide-slate-800/80">
+                {recentAlerts.map((alerta: any) => (
+                  <li key={alerta.id} className="border-l-2 border-l-red-700/70 px-4 py-3 sm:px-5">
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <StatusBadge status={alerta.severidad} />
+                      <span className="font-mono text-[11px] text-slate-500">{alerta.codigo}</span>
                     </div>
-                    <p className="text-sm text-slate-300">{alerta.descripcion}</p>
-                  </div>
-                ))
-              )}
+                    <p className="text-sm leading-snug text-slate-300">{alerta.descripcion}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="border-t border-slate-800 px-4 py-2.5 sm:px-5">
+              <Link to="/alertas" className="text-xs font-medium text-amber-500 hover:text-amber-400">
+                Ir al módulo de alertas →
+              </Link>
             </div>
           </CardContent>
         </Card>

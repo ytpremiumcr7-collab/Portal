@@ -46,11 +46,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/registro" element={<Registro />} />
-      <Route path="/consulta-publica" element={
-        <div className="min-h-screen bg-slate-900 p-6 lg:p-10 max-w-7xl mx-auto">
-          <ConsultaPublica />
-        </div>
-      } />
+      <Route path="/consulta-publica" element={<ConsultaPublica />} />
       <Route path="*" element={
         <AppLayout>
           <Routes>

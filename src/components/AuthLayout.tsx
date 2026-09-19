@@ -28,8 +28,8 @@ import { AuthLayoutSkeleton } from "./AuthLayoutSkeleton";
 import { Button } from "./ui/button";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Page 1", path: "/" },
-  { icon: Users, label: "Page 2", path: "/some-path" },
+  { icon: LayoutDashboard, label: "Tablero", path: "/" },
+  { icon: Users, label: "Usuarios", path: "/usuarios" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -62,11 +62,10 @@ export default function AuthLayout({
         <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
           <div className="flex flex-col items-center gap-6">
             <h1 className="text-2xl font-semibold tracking-tight text-center">
-              Sign in to continue
+              Inicie sesión para continuar
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Access to this dashboard requires authentication. Continue to
-              launch the login flow.
+              El acceso a este portal requiere autenticación institucional.
             </p>
           </div>
           <Button
@@ -76,7 +75,7 @@ export default function AuthLayout({
             size="lg"
             className="w-full shadow-lg hover:shadow-xl transition-all"
           >
-            Sign in
+            Iniciar sesión
           </Button>
         </div>
       </div>
@@ -173,7 +172,7 @@ function AuthLayoutContent({
               {!isCollapsed ? (
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-semibold tracking-tight truncate">
-                    Navigation
+                    Navegación
                   </span>
                 </div>
               ) : null}
@@ -228,7 +227,7 @@ function AuthLayoutContent({
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
+                  <span>Cerrar sesión</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
