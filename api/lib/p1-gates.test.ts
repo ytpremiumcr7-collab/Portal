@@ -92,15 +92,18 @@ describe("Investigación sanción + impedimento canonical", () => {
 });
 
 describe("SoD assertProcedimientoAsignacion helper", () => {
-  it("admin bypasses; non-admin needs assignment", () => {
+  it("admin does not bypass; assignment or break_glass required", () => {
     expect(evaluateProcedimientoAsignacion({
       userRole: "admin", heldRoles: [], required: ["dictaminador"],
-    }).ok).toBe(true);
+    }).ok).toBe(false);
     expect(evaluateProcedimientoAsignacion({
       userRole: "licitante", heldRoles: [], required: ["dictaminador"],
     }).ok).toBe(false);
     expect(evaluateProcedimientoAsignacion({
       userRole: "licitante", heldRoles: ["dictaminador"], required: ["dictaminador"],
+    }).ok).toBe(true);
+    expect(evaluateProcedimientoAsignacion({
+      userRole: "admin", heldRoles: [], required: ["dictaminador"], hasBreakGlass: true,
     }).ok).toBe(true);
   });
 });

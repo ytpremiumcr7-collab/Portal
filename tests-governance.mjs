@@ -201,5 +201,56 @@ if (!css.includes("light formal governmental") && !css.includes("light formal"))
 const consulta = fs.readFileSync("api/routers/consultaPublica.ts", "utf8");
 if (!consulta.includes("ocdsRelease")) throw new Error("OCDS public projection missing");
 
-console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal)");
+
+// Pre-prod P0/P1 (0013)
+const mig13 = fs.readFileSync("db/migrations/0013_preprod_p0p1.sql", "utf8");
+if (!mig13.includes("actos_desempate")) throw new Error("0013 missing actos_desempate");
+if (!mig13.includes("break_glass_grants")) throw new Error("0013 missing break_glass_grants");
+if (!mig13.includes("audit_chain_heads")) throw new Error("0013 missing audit_chain_heads");
+if (!mig13.includes("claimed_at")) throw new Error("0013 missing outbox claimed_at");
+if (!schema.includes("actosDesempate") || !schema.includes("breakGlassGrants") || !schema.includes("auditChainHeads")) {
+  throw new Error("schema missing 0013 tables");
+}
+const evalP0 = fs.readFileSync("api/lib/evaluation-engine.ts", "utf8");
+if (evalP0.includes("return a.id - b.id") && !evalP0.includes("policyRequiresSorteo")) {
+  throw new Error("evaluation-engine must gate id fallback when sorteo required");
+}
+if (!evalP0.includes("PRECONDITION_FAILED") || !evalP0.includes("sorteo_documentado")) {
+  throw new Error("sorteo_documentado must throw PRECONDITION_FAILED without acto");
+}
+const capsP0 = fs.readFileSync("api/lib/capabilities.ts", "utf8");
+if (capsP0.includes("admin: [...CAPABILITIES]")) throw new Error("admin must not auto-all CAPABILITIES");
+if (!capsP0.includes("break_glass")) throw new Error("break_glass capability missing from ROLE defaults path");
+const sodP0 = fs.readFileSync("api/lib/sod.ts", "utf8");
+if (sodP0.includes("adminBypass !== false") || sodP0.includes("adminBypass && user.role")) {
+  throw new Error("adminBypass default true must be removed from assertProcedimientoAsignacion");
+}
+const partP0 = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+if (!partP0.includes("redactParticipacionEconomica") || !partP0.includes("assertRecepcionDentroDeVentana")) {
+  throw new Error("participaciones must redact sobre económico and use canonical reception deadline");
+}
+if (partP0.includes("db.delete(participaciones)")) throw new Error("participaciones.delete hard delete must be removed");
+const outboxP0 = fs.readFileSync("api/lib/outbox.ts", "utf8");
+if (outboxP0.includes("opts.actorUserId ?? 1") || outboxP0.includes("?? 1)")) {
+  throw new Error("outbox must not invent actorUserId=1");
+}
+if (!outboxP0.includes("SYSTEM_ACTOR") || !outboxP0.includes("claimedAt") || !outboxP0.includes("reclaimStaleOutboxClaims")) {
+  throw new Error("outbox lease/system actor incomplete");
+}
+const dc13 = fs.readFileSync("docker-compose.yml", "utf8");
+if (!dc13.includes("0013_preprod_p0p1.sql")) throw new Error("docker-compose must mount 0013");
+const migSh13 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
+if (!migSh13.includes("0013_preprod_p0p1.sql")) throw new Error("migrate-local.sh missing 0013");
+const routerP0 = fs.readFileSync("api/router.ts", "utf8");
+if (!routerP0.includes("desempateRouter")) throw new Error("desempate router not registered");
+const appP0 = fs.readFileSync("src/App.tsx", "utf8");
+if (!appP0.includes("MisProposiciones") || !appP0.includes("PresentarPropuesta")) {
+  throw new Error("proveedor UI routes missing");
+}
+const constP0 = fs.readFileSync("src/const.ts", "utf8");
+if (!constP0.includes('PRODUCT_NAME = "Piedra Angular"')) throw new Error("PRODUCT_NAME must stay Piedra Angular");
+if (/institucional/i.test(constP0)) throw new Error("PRODUCT_NAME path must not say institucional");
+
+console.log("governance static assertions: PASS (phase1 + phase2 + phase3 + P1/SoD + institutional + gov portal + preprod P0/P1)");
+
 

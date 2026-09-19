@@ -37,6 +37,8 @@ import PortalPublico from "@/pages/PortalPublico";
 import Convocatorias from "@/pages/Convocatorias";
 import BuscadorPublico from "@/pages/BuscadorPublico";
 import Oportunidades from "@/pages/Oportunidades";
+import MisProposiciones from "@/pages/MisProposiciones";
+import PresentarPropuesta from "@/pages/PresentarPropuesta";
 import ActoAdjudicacion from "@/pages/ActoAdjudicacion";
 import Comision from "@/pages/Comision";
 import Terminacion from "@/pages/Terminacion";
@@ -66,6 +68,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/oportunidades" element={<RoleGate roles={["proveedor"]}><Oportunidades /></RoleGate>} />
+            <Route path="/mis-proposiciones" element={<RoleGate roles={["proveedor"]}><MisProposiciones /></RoleGate>} />
+            <Route path="/presentar-propuesta" element={<RoleGate roles={["proveedor"]}><PresentarPropuesta /></RoleGate>} />
             <Route path="/licitaciones" element={<Licitaciones />} />
             <Route path="/licitaciones/nueva" element={<RoleGate roles={["admin","licitante"]}><NuevaLicitacion /></RoleGate>} />
             <Route path="/licitaciones/:id" element={<LicitacionDetalle />} />

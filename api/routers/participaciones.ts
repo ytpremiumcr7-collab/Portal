@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { eq, desc, and, count, sql } from "drizzle-orm";
-import { createRouter, convocanteQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
+import { createRouter, capabilityQuery, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { participaciones, proveedores, licitacionReglasVersion, proposiciones, coiDeclaraciones } from "@db/schema";
+import { participaciones, proveedores, licitacionReglasVersion, proposiciones, coiDeclaraciones, actosDesempate } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertLicitacionExists, validateRubric } from "../lib/domain";
 import { assertPositiveDays, assertScore } from "../lib/security";
@@ -11,9 +11,12 @@ import { writeAudit } from "../lib/security";
 import { detectLicitacionRisks } from "../lib/detection";
 import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
 import { assertProcedimientoAsignacion } from "../lib/sod";
-import { computeScoresAndOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
+import { computeScoresAndOrden, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 import { mapEvalToProposicionEstado } from "../lib/proposicion";
 import { parseTieBreakPolicy } from "../lib/procedure-policy";
+import { assertRecepcionDentroDeVentana } from "../lib/calendario-gates";
+import { loadAperturaEstado, redactParticipacionEconomica } from "../lib/sobre-economico";
+import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -24,12 +27,36 @@ async function ensureProviderForUser(tenantId: number, userId: number) {
   return provider;
 }
 
+async function redactList(
+  items: any[],
+  ctx: { user: { tenantId: number; role: string; id: number } },
+  viewerProveedorId: number | null,
+) {
+  const byLic = new Map<number, string | null>();
+  const out = [];
+  for (const item of items) {
+    const licId = Number(item.licitacionId);
+    if (!byLic.has(licId)) byLic.set(licId, await loadAperturaEstado(ctx.user.tenantId, licId));
+    out.push(
+      redactParticipacionEconomica(item, {
+        role: ctx.user.role,
+        viewerProveedorId,
+        itemProveedorId: item.proveedorId,
+        aperturaEstado: byLic.get(licId),
+      }),
+    );
+  }
+  return out;
+}
+
 export const participacionesRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
     const conditions = [eq(participaciones.tenantId, ctx.user.tenantId)];
+    let viewerProveedorId: number | null = null;
     if (ctx.user.role === "proveedor") {
       const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
+      viewerProveedorId = provider.id;
       conditions.push(eq(participaciones.proveedorId, provider.id));
     } else if (input?.proveedorId) conditions.push(eq(participaciones.proveedorId, input.proveedorId));
     if (input?.licitacionId) conditions.push(eq(participaciones.licitacionId, input.licitacionId));
@@ -38,14 +65,26 @@ export const participacionesRouter = createRouter({
       db.query.participaciones.findMany({ where, orderBy: [desc(participaciones.createdAt)], limit: pageSize, offset, with: { proveedor: true, licitacion: true, evaluator: true } }),
       db.select({ total: count() }).from(participaciones).where(where),
     ]);
-    return pageResult(items, Number(totalRows[0]?.total ?? 0), page, pageSize);
+    const redacted = await redactList(items as any[], ctx, viewerProveedorId);
+    return pageResult(redacted, Number(totalRows[0]?.total ?? 0), page, pageSize);
   }),
 
   getById: authedQuery.input(z.object({ id: z.number().int().positive() })).query(async ({ input, ctx }) => {
-    const db = getDb(); const item = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)), with: { proveedor: true, licitacion: true, evaluator: true } });
+    const db = getDb();
+    const item = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)), with: { proveedor: true, licitacion: true, evaluator: true } });
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
-    if (ctx.user.role === "proveedor" && item.proveedor?.usuarioId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "No puede consultar una oferta de otro proveedor." });
-    return item;
+    let viewerProveedorId: number | null = null;
+    if (ctx.user.role === "proveedor") {
+      if (item.proveedor?.usuarioId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "No puede consultar una oferta de otro proveedor." });
+      viewerProveedorId = item.proveedorId;
+    }
+    const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, item.licitacionId);
+    return redactParticipacionEconomica(item as any, {
+      role: ctx.user.role,
+      viewerProveedorId,
+      itemProveedorId: item.proveedorId,
+      aperturaEstado,
+    });
   }),
 
   create: proveedorQuery.input(z.object({ licitacionId: z.number().int().positive(), montoOferta: money, plazoEjecucion: z.number().int().positive(), observaciones: z.string().trim().optional() })).mutation(async ({ input, ctx }) => {
@@ -53,13 +92,17 @@ export const participacionesRouter = createRouter({
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
-    if (lic.fechaCierre && (String(lic.fechaCierre instanceof Date ? lic.fechaCierre.toISOString().slice(0,10) : lic.fechaCierre).slice(0,10)) < new Date().toISOString().slice(0,10)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El periodo de presentación de ofertas ya cerró." });
+    await assertRecepcionDentroDeVentana(ctx.user.tenantId, input.licitacionId, {
+      fechaCierre: lic.fechaCierre,
+      requireCalendar: lic.estado === "PUBLICADA",
+    });
     if (Number(input.montoOferta) <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
     if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });
     const recibidoAt = new Date();
     let id = 0;
+    let created: any = null;
     await db.transaction(async (tx) => {
       const result = await tx.insert(participaciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
@@ -67,23 +110,25 @@ export const participacionesRouter = createRouter({
         estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null, recibidoAt,
       } as any);
       id = Number(result[0].insertId);
-      // Create proposición shell with authoritative recibidoAt (not seal time).
       await tx.insert(proposiciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
         participacionId: id, estado: "RECIBIDA", montoOferta: input.montoOferta, recibidoAt,
       } as any);
-      // Atomic participation counter in same TX.
       await tx.update(proveedores).set({
         licitacionesParticipadas: sql`${proveedores.licitacionesParticipadas} + 1`,
       } as any).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
+      created = (await tx.query.participaciones.findFirst({ where: and(eq(participaciones.id, id), eq(participaciones.tenantId, ctx.user.tenantId)) })) as any;
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "participaciones", entidadId: id,
+        valorNuevo: { ...created, montoOferta: "[SELLADO]" },
+        tx,
+      });
     });
-    const created = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, id), eq(participaciones.tenantId, ctx.user.tenantId)) });
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "participaciones", entidadId: id, valorNuevo: created });
     await detectLicitacionRisks(ctx.user.tenantId, input.licitacionId);
     return created;
   }),
 
-  evaluar: convocanteQuery.input(z.object({
+  evaluar: capabilityQuery("evaluar_tecnico").input(z.object({
     id: z.number().int().positive(),
     puntajeTecnico: z.number().min(0).max(100).optional(),
     criteriosTecnicos: z.record(z.string().trim().min(1), z.number().min(0).max(100)).optional(),
@@ -100,15 +145,12 @@ export const participacionesRouter = createRouter({
     const lic = offer.licitacion;
     if (lic.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "La licitación debe estar EN_EVALUACION." });
 
-    // SoD: evaluador_tecnico (tech scoring) — economic recompute is derived from frozen rules.
     await assertProcedimientoAsignacion(ctx.user, lic.id, ["evaluador_tecnico", "evaluador_economico"]);
-    // COI gate: declared conflict without recusal blocks evaluation by that member.
     const coi = await db.query.coiDeclaraciones.findFirst({
       where: and(eq(coiDeclaraciones.tenantId, ctx.user.tenantId), eq(coiDeclaraciones.licitacionId, lic.id), eq(coiDeclaraciones.userId, ctx.user.id), eq(coiDeclaraciones.tieneConflicto, true), eq(coiDeclaraciones.recusado, false)),
     });
     if (coi) throw new TRPCError({ code: "FORBIDDEN", message: "Conflicto de interés declarado sin recusación: no puede evaluar." });
 
-    // Read frozen reglas — not live mutable fields.
     const frozenRow = await db.query.licitacionReglasVersion.findFirst({
       where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, lic.id)),
       orderBy: [desc(licitacionReglasVersion.version)],
@@ -153,6 +195,16 @@ export const participacionesRouter = createRouter({
     }
 
     const current = offer;
+    const desempate = await db.query.actosDesempate.findFirst({
+      where: and(
+        eq(actosDesempate.tenantId, ctx.user.tenantId),
+        eq(actosDesempate.licitacionId, lic.id),
+        eq(actosDesempate.estado, "REGISTRADO"),
+      ),
+    });
+    const desempateMap = parseDesempateOrden(desempate?.resultadoJson);
+
+    let updated: any = null;
     await db.transaction(async (tx) => {
       await tx.select({ id: participaciones.id })
         .from(participaciones)
@@ -182,6 +234,7 @@ export const participacionesRouter = createRouter({
         montoOferta: c.montoOferta,
         puntajeTecnico: c.id === input.id ? technical : c.puntajeTecnico,
         recibidoAt: c.recibidoAt,
+        desempateOrden: desempateMap.get(c.id) ?? null,
       }));
 
       const tb = parseTieBreakPolicy((frozenRow as any).tieBreakPolicy);
@@ -195,25 +248,59 @@ export const participacionesRouter = createRouter({
           ordenMerito: patch.ordenMerito,
         }).where(and(eq(participaciones.id, patch.id), eq(participaciones.tenantId, ctx.user.tenantId)));
       }
-      // Sync proposición estados with participación evaluation outcome.
       const propEstado = mapEvalToProposicionEstado(input.estadoEvaluacion);
       if (propEstado) {
         await tx.update(proposiciones).set({ estado: propEstado } as any)
           .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)));
       }
+      updated = await tx.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)) });
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "EVALUAR", entidad: "participaciones", entidadId: input.id,
+        valorAnterior: current, valorNuevo: updated, motivo: input.motivo, tx,
+      });
     });
 
-    const updated = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)) });
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "EVALUAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
     return updated;
   }),
 
-  delete: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
-    const db = getDb(); const current = await db.query.participaciones.findFirst({ where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)) });
+  /** Soft-delete only — hard delete disabled. Marks RETIRADA/INVALIDADA + expediente event. */
+  delete: adminQuery.input(z.object({
+    id: z.number().int().positive(),
+    motivo: z.string().trim().min(3),
+    estado: z.enum(["RETIRADA", "INVALIDADA"]).default("INVALIDADA"),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const current = await db.query.participaciones.findFirst({
+      where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)),
+    });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
-    if (!["PENDIENTE","NO_ADMISSIBLE","RECHAZADA","DESCARTADA"].includes(current.estadoEvaluacion)) throw new TRPCError({ code: "CONFLICT", message: "Una oferta evaluada/adjudicada no se elimina." });
-    await db.delete(participaciones).where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo });
-    return { success: true };
+    if (["GANADORA", "ADMISIBLE"].includes(current.estadoEvaluacion)) {
+      throw new TRPCError({ code: "CONFLICT", message: "Una oferta admisible/adjudicada no se retira por esta vía." });
+    }
+    if (["RETIRADA", "INVALIDADA"].includes(current.estadoEvaluacion)) {
+      throw new TRPCError({ code: "CONFLICT", message: "La oferta ya está retirada o invalidada." });
+    }
+    const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, current.licitacionId);
+    await db.transaction(async (tx) => {
+      await tx.update(participaciones).set({ estadoEvaluacion: input.estado } as any)
+        .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      await tx.update(proposiciones).set({ estado: "DESECHADA" } as any)
+        .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)));
+      if (expediente) {
+        await appendExpedienteEvent(tx, ctx, {
+          expedienteId: expediente.id,
+          tipo: input.estado === "RETIRADA" ? "PARTICIPACION_RETIRADA" : "PARTICIPACION_INVALIDADA",
+          estadoAnterior: current.estadoEvaluacion,
+          estadoNuevo: input.estado,
+          motivo: input.motivo,
+          payload: { participacionId: input.id },
+        });
+      }
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: input.estado, entidad: "participaciones", entidadId: input.id,
+        valorAnterior: current, motivo: input.motivo, tx,
+      });
+    });
+    return { success: true, estado: input.estado };
   }),
 });

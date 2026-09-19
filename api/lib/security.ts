@@ -1,9 +1,9 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual, type BinaryLike, type ScryptOptions } from "node:crypto";
 import * as cookie from "cookie";
 import { TRPCError } from "@trpc/server";
-import { eq, and, isNull, gt, desc, asc } from "drizzle-orm";
+import { eq, and, isNull, gt, asc } from "drizzle-orm";
 import { getDb } from "../queries/connection";
-import { auditLog, sessions, tenants, users } from "@db/schema";
+import { auditLog, auditChainHeads, sessions, tenants, users } from "@db/schema";
 import { Session, ErrorMessages } from "@contracts/constants";
 
 /** Promisified scrypt that keeps the options overload (@types/node + util.promisify only sees the 3-arg form). */
@@ -146,7 +146,7 @@ function canonicalAuditEvent(input: {
   return JSON.stringify(input);
 }
 
-/** Append-only audit with per-tenant hash chain (same spirit as expediente events). */
+/** Append-only audit with per-tenant hash chain serialized via audit_chain_heads FOR UPDATE. */
 export async function writeAudit(input: {
   ctx: RequestContext;
   accion: string;
@@ -155,6 +155,8 @@ export async function writeAudit(input: {
   valorAnterior?: unknown;
   valorNuevo?: unknown;
   motivo?: string | null;
+  /** Optional outer transaction — when provided, mutation + audit share one TX. */
+  tx?: any;
 }) {
   const db = getDb();
   const tenantId = input.ctx.user.tenantId;
@@ -164,13 +166,14 @@ export async function writeAudit(input: {
   const entidadId = input.entidadId ?? null;
   const timestamp = new Date().toISOString();
 
-  await db.transaction(async (tx) => {
-    const last = await tx.query.auditLog.findFirst({
-      where: eq(auditLog.tenantId, tenantId),
-      orderBy: [desc(auditLog.id)],
-      columns: { eventHash: true },
-    });
-    const previousHash = last?.eventHash ?? null;
+  const run = async (tx: any) => {
+    // Serialize chain head per tenant
+    let head = await tx.select().from(auditChainHeads).where(eq(auditChainHeads.tenantId, tenantId)).for("update");
+    if (!head.length) {
+      await tx.insert(auditChainHeads).values({ tenantId, lastEventHash: null, lastAuditId: null } as any);
+      head = await tx.select().from(auditChainHeads).where(eq(auditChainHeads.tenantId, tenantId)).for("update");
+    }
+    const previousHash = (head[0]?.lastEventHash as string | null) ?? null;
     const base = canonicalAuditEvent({
       tenantId,
       actorUserId: input.ctx.user.id,
@@ -185,7 +188,7 @@ export async function writeAudit(input: {
       previousHash,
     });
     const eventHash = createHash("sha256").update(base).digest("hex");
-    await tx.insert(auditLog).values({
+    const inserted = await tx.insert(auditLog).values({
       tenantId,
       actorUserId: input.ctx.user.id,
       accion: input.accion,
@@ -201,7 +204,15 @@ export async function writeAudit(input: {
       previousHash,
       eventHash,
     });
-  });
+    const auditId = Number(inserted[0].insertId);
+    await tx.update(auditChainHeads).set({
+      lastEventHash: eventHash,
+      lastAuditId: auditId,
+    } as any).where(eq(auditChainHeads.tenantId, tenantId));
+  };
+
+  if (input.tx) await run(input.tx);
+  else await db.transaction(async (tx) => run(tx));
 }
 
 export async function verifyAuditHashChain(tenantId: number) {

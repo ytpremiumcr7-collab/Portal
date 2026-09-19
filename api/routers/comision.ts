@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
+import { assertProcedimientoAsignacion } from "../lib/sod";
 import { getDb } from "../queries/connection";
 import { comisionEvaluadora, coiDeclaraciones, users } from "@db/schema";
 import { assertLicitacionExists } from "../lib/domain";
@@ -14,13 +15,14 @@ export const comisionRouter = createRouter({
     });
   }),
 
-  designar: convocanteQuery.input(z.object({
+  designar: capabilityQuery("crear_procedimiento").input(z.object({
     licitacionId: z.number().int().positive(),
     userId: z.number().int().positive(),
     rol: z.enum(["PRESIDENTE", "SECRETARIO", "VOCAL_TECNICO", "VOCAL_ECONOMICO", "VOCAL"]).default("VOCAL"),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
+    await assertProcedimientoAsignacion(ctx.user, input.licitacionId, "creador");
     const db = getDb();
     const u = await db.query.users.findFirst({ where: and(eq(users.id, input.userId), eq(users.tenantId, ctx.user.tenantId), eq(users.activo, true)) });
     if (!u) throw new TRPCError({ code: "BAD_REQUEST", message: "Usuario no válido." });

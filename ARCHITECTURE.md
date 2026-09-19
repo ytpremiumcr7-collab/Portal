@@ -30,7 +30,7 @@ UX: **light formal governmental** theme (white/off-white, deep navy headers, res
   - **development**: allowed unless `ARES_ALLOW_PUBLIC_REGISTER=false`
 - Default production posture: `ARES_ALLOW_PUBLIC_REGISTER=false`.
 - IP: trust `X-Forwarded-For` only when `ARES_TRUST_PROXY=true`; otherwise direct/socket.
-- SMTP outbox: solid `DeliveryAdapter`. If `ARES_SMTP_URL` is unset, notifications stay `REGISTRADA`. If set to `http(s)://…`, delivery POSTs a JSON webhook; if `smtp://` / `smtps://`, uses nodemailer. Success marks `ENVIADA_EXTERNA`.
+- SMTP outbox: `ARES_SMTP_URL` (webhook/smtp/smtps) **or** discrete `SMTP_HOST/PORT/USER/PASS/FROM`. TLS + timeouts. Unset → `REGISTRADA`. Accept → `ENVIADA_EXTERNA` + provider messageId. Worker: `npm run outbox:worker` with lease reclaim.
 
 ## Conserved from Phase 1–2 / Phase 3 ciclo completo / P1 / SoD / Domain Authority
 
@@ -115,3 +115,26 @@ Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES-only codebase
 - UI modules: acto de adjudicación, comisión/COI, cancelación/desierto, calendario jurídico, garantías BESA, consorcios MVP
 - Consorcios: tablas + vínculo a participación/proposición
 - Brand constant: `PRODUCT_NAME` in `src/const.ts` (= "Piedra Angular")
+
+## Pre-prod P0/P1 (0013) — procedure integrity
+
+| # | Fix |
+|---|-----|
+| P0-1 | `sorteo_documentado`: never silent `id` fallback; `actos_desempate` emit/register; ranking/adjudicar consume resultado |
+| P0-2 | Sobre económico sellado: `montoOferta` redacted in participaciones list/get until apertura ABIERTA/PUBLICADA |
+| P0-3 | Admin no longer auto-all capabilities / adminBypass; `break_glass` time-bound grant + expediente + audit |
+| P0-4 | Recepción: calendario `ventana_fin` ms; deadline+1ms REJECT; require RECEPCION window when published |
+| P1-5 | `audit_chain_heads` FOR UPDATE serializes audit hash chain |
+| P1-6 | Hot paths: create participación / evaluar writeAudit in same TX |
+| P1-7 | Outbox: claimedAt/claimedBy/lease reclaim; idempotencyKey; system actor sentinel (never invent user id=1) |
+| P1-8 | capabilityQuery + assertProcedimientoAsignacion: publicar, apertura, actoAdjudicacion, formalizar/rescindir, comision.designar |
+| P1-9 | Consorcios: proveedor owns create/add/activate; convocante validates/links only |
+| P1-10 | `participaciones.delete` → RETIRADA/INVALIDADA (no hard delete) |
+
+### SMTP producción
+- `ARES_SMTP_URL` (`smtp://`, `smtps://`, or `https://` webhook) **or** discrete `SMTP_HOST/PORT/USER/PASS/FROM`
+- TLS min 1.2, timeouts, structured logs; `ENVIADA_EXTERNA` only on accept; stores `providerMessageId`
+- `npm run outbox:once` / `npm run outbox:worker` (lease reclaim loop)
+
+### UI proveedor
+- `/oportunidades`, `/presentar-propuesta`, `/mis-proposiciones`, documentos/comunicaciones

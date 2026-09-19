@@ -35,6 +35,7 @@ import { terminacionRouter } from "./routers/terminacion";
 import { calendarioRouter } from "./routers/calendario";
 import { consorciosRouter } from "./routers/consorcios";
 import { cucopRouter } from "./routers/cucop";
+import { desempateRouter } from "./routers/desempate";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -74,6 +75,7 @@ export const appRouter = createRouter({
   calendario: calendarioRouter,
   consorcios: consorciosRouter,
   cucop: cucopRouter,
+  desempate: desempateRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -2,22 +2,27 @@ import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { userCapabilities, type Capability, CAPABILITIES } from "@db/schema";
-// Catalog (schema): crear_procedimiento, autorizar_fallo, presentar_pago, aprobar_pago,
-// investigar_sancion, administrar_sancion, resolver_incidencia, auditar, …
 import type { TrpcContext } from "../context";
 import { findCapabilityConflicts } from "./sod";
 
 export { CAPABILITIES, type Capability };
+// Catalog (schema): crear_procedimiento, autorizar_fallo, presentar_pago, aprobar_pago,
+// investigar_sancion, administrar_sancion, resolver_incidencia, auditar, break_glass, emitir_desempate, …
+
 
 /**
  * Default capability grants by coarse role.
- * Admin always has all.
- * Licitante gets a SMALL base — ops capabilities are assigned deliberately
- * (user_capabilities and/or procedimiento_asignaciones). One-person orgs
- * can still grant both sides of an SoD pair with logged override.
+ * Admin manages users/config/assignments only — NOT procedural acts
+ * (evaluar / autorizar_fallo / aprobar_pago). Those require explicit
+ * user_capabilities and/or procedimiento_asignaciones / break_glass.
  */
 export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capability[]> = {
-  admin: [...CAPABILITIES],
+  admin: [
+    "auditar",
+    "notificar",
+    "consulta_publica_admin",
+    "break_glass",
+  ],
   licitante: [
     "crear_procedimiento",
     "publicar",
@@ -30,7 +35,7 @@ export const ROLE_CAPABILITIES: Record<"admin" | "licitante" | "proveedor", Capa
 
 export async function resolveCapabilities(user: NonNullable<TrpcContext["user"]>): Promise<Set<Capability>> {
   const base = new Set<Capability>(ROLE_CAPABILITIES[user.role] ?? []);
-  if (user.role === "admin") return base;
+  // Admin no longer auto-receives CAPABILITIES; overrides apply to all roles.
   const overrides = await getDb().query.userCapabilities.findMany({
     where: and(eq(userCapabilities.tenantId, user.tenantId), eq(userCapabilities.userId, user.id)),
   });
@@ -83,7 +88,6 @@ export async function assertCapabilityCompatibility(
     }
   } catch (e) {
     if (e instanceof TRPCError) throw e;
-    // Fail-closed on infrastructure errors for sensitive SoD grants.
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
       message: "No se pudo verificar segregación de funciones (fallo de infraestructura). Operación denegada.",

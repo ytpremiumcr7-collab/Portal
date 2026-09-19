@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { eq, desc, like, and, count, sql } from "drizzle-orm";
-import { createRouter, convocanteQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, convocanteQuery, capabilityQuery, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion } from "@db/schema";
+import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion, actosDesempate } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, toYmd, listHitosTiposConfigurados, assertJuntaSiPoliticaLoExige } from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
@@ -10,10 +10,12 @@ import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura } fro
 import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { hashReglas, assertIsPrimerLugar, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
+import { hashReglas, assertIsPrimerLugar, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
+import { assertProcedimientoAsignacion } from "../lib/sod";
 import { parseTieBreakPolicy, parseActosObligatorios, assertActosPermitidosPorPolitica, resolvePolicyForPublish, policyRequiresJunta } from "../lib/procedure-policy";
 import { enqueueOutbox } from "../lib/outbox";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
+import { loadAperturaEstado, redactParticipacionEconomica } from "../lib/sobre-economico";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -47,6 +49,15 @@ export const licitacionesRouter = createRouter({
       lic.participaciones = lic.participaciones.filter((p: any) => p.proveedor?.usuarioId === ctx.user.id);
       lic.documentos = lic.documentos.filter((d: any) => d.esPublico || d.proveedorId === lic.participaciones.find((p: any) => p.proveedor?.usuarioId === ctx.user.id)?.proveedorId);
     }
+    const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, lic.id);
+    lic.participaciones = lic.participaciones.map((p: any) =>
+      redactParticipacionEconomica(p, {
+        role: ctx.user.role,
+        viewerProveedorId: ctx.user.role === "proveedor" ? p.proveedorId : null,
+        itemProveedorId: p.proveedorId,
+        aperturaEstado,
+      }),
+    );
     return lic;
   }),
 
@@ -109,7 +120,7 @@ export const licitacionesRouter = createRouter({
     return created;
   }),
 
-  publicar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: capabilityQuery("publicar").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionReadyForPublish(ctx.user.tenantId, input.id);
     const db = getDb();
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
@@ -192,7 +203,7 @@ export const licitacionesRouter = createRouter({
     return updated;
   }),
 
-  adjudicar: convocanteQuery.input(z.object({ id: z.number().int().positive(), proveedorGanadorId: z.number().int().positive(), montoAdjudicado: money, motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  adjudicar: capabilityQuery("autorizar_fallo").input(z.object({ id: z.number().int().positive(), proveedorGanadorId: z.number().int().positive(), montoAdjudicado: money, motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     assertNonNegativeDecimal(input.montoAdjudicado, "montoAdjudicado");
     const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
     if (current.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "La licitación debe estar EN_EVALUACION antes de adjudicar." });
@@ -226,7 +237,16 @@ export const licitacionesRouter = createRouter({
     ));
     // NO universal max(puntajeTotal) when criterion is PRECIO_MAS_BAJO / MEJOR_VALOR_TECNICO.
     const tb = parseTieBreakPolicy((frozenRow as any).tieBreakPolicy);
-    assertIsPrimerLugar(criterio, admisibles, offer.id, tb);
+    await assertProcedimientoAsignacion(ctx.user, input.id, ["autorizador_fallo", "dictaminador"]);
+    const desempate = await db.query.actosDesempate.findFirst({
+      where: and(eq(actosDesempate.tenantId, ctx.user.tenantId), eq(actosDesempate.licitacionId, input.id), eq(actosDesempate.estado, "REGISTRADO")),
+    });
+    const desempateMap = parseDesempateOrden(desempate?.resultadoJson);
+    const admisiblesConDesempate = admisibles.map((a) => ({
+      ...a,
+      desempateOrden: desempateMap.get(a.id) ?? null,
+    }));
+    assertIsPrimerLugar(criterio, admisiblesConDesempate, offer.id, tb);
     // Human adjudication act must be PUBLICADO before adjudicación.
     const actoAdj = await db.query.actoAdjudicacion.findFirst({
       where: and(eq(actoAdjudicacion.tenantId, ctx.user.tenantId), eq(actoAdjudicacion.licitacionId, input.id), eq(actoAdjudicacion.estado, "PUBLICADO")),

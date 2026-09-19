@@ -26,6 +26,8 @@ export type OfferForRanking = {
   puntajeTotal?: string | number | null;
   /** Reception timestamp for fechaRecepcion tie-break (ISO or Date). */
   recibidoAt?: string | Date | null;
+  /** Position from completed acto_desempate (1 = first). Required when policy uses sorteo_documentado. */
+  desempateOrden?: number | null;
 };
 
 /**
@@ -73,19 +75,19 @@ export function scoreTotalRelacion(
   );
 }
 
-/**
- * Rank ADMISIBLE offers according to frozen criterion.
- *
- * - PRECIO_MAS_BAJO: min montoOferta among ADMISIBLE (tech is pass/fail via ADMISIBLE).
- * - MEJOR_RELACION_CALIDAD_PRECIO: max puntajeTotal (weighted tech+econ).
- * - MEJOR_VALOR_TECNICO: max puntajeTecnico among solvent; econ score must be finite (documented check).
- *
- * Returns ordered ids (best first). Does NOT mutate.
- */
-
 export type TieBreakKey = "precio" | "fechaRecepcion" | "sorteo_documentado";
 
-function compareTieBreak(a: OfferForRanking, b: OfferForRanking, keys: TieBreakKey[]): number {
+/**
+ * Compare two offers after primary criterion already tied.
+ * NEVER falls back to a.id - b.id when policy includes sorteo_documentado.
+ * If sorteo_documentado is reached without completed desempateOrden → PRECONDITION_FAILED.
+ */
+export function compareTieBreak(
+  a: OfferForRanking,
+  b: OfferForRanking,
+  keys: TieBreakKey[],
+): number {
+  const policyRequiresSorteo = keys.includes("sorteo_documentado");
   for (const key of keys) {
     if (key === "precio") {
       const dp = Number(a.montoOferta) - Number(b.montoOferta);
@@ -95,15 +97,39 @@ function compareTieBreak(a: OfferForRanking, b: OfferForRanking, keys: TieBreakK
       const tb = b.recibidoAt ? new Date(b.recibidoAt).getTime() : Number.POSITIVE_INFINITY;
       if (ta !== tb) return ta - tb; // earlier reception wins
     } else if (key === "sorteo_documentado") {
-      // Documented lottery placeholder: stable ordering by id is NOT a silent primary rule;
-      // it only applies after precio/fechaRecepcion are exhausted when policy lists sorteo.
-      continue;
+      const oa = a.desempateOrden;
+      const ob = b.desempateOrden;
+      if (oa == null || ob == null || !Number.isFinite(Number(oa)) || !Number.isFinite(Number(ob))) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "Empate residual: la política exige sorteo_documentado y no hay acto_desempate REGISTRADO con resultado para las ofertas empatadas.",
+        });
+      }
+      const d = Number(oa) - Number(ob);
+      if (d !== 0) return d;
     }
   }
-  // Last resort after documented policy keys — never the silent primary rule.
+  if (policyRequiresSorteo) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        "Empate residual tras sorteo_documentado: registre un acto_desempate con orden total. No se permite desempate silencioso por id.",
+    });
+  }
+  // Only when policy does NOT require sorteo_documentado.
   return a.id - b.id;
 }
 
+/**
+ * Rank ADMISIBLE offers according to frozen criterion.
+ *
+ * - PRECIO_MAS_BAJO: min montoOferta among ADMISIBLE (tech is pass/fail via ADMISIBLE).
+ * - MEJOR_RELACION_CALIDAD_PRECIO: max puntajeTotal (weighted tech+econ).
+ * - MEJOR_VALOR_TECNICO: max puntajeTecnico among solvent; econ score must be finite (documented check).
+ *
+ * Returns ordered ids (best first). Does NOT mutate.
+ */
 export function rankAdmisibles(
   criterio: CriterioEvaluacion,
   offers: readonly OfferForRanking[],
@@ -129,7 +155,6 @@ export function rankAdmisibles(
           message: "MEJOR_VALOR_TECNICO exige puntaje técnico completo en ofertas admisibles.",
         });
       }
-      // Documented economic check: offer amount must be a positive finite number (solvent bid present).
       if (!Number.isFinite(Number(o.montoOferta)) || Number(o.montoOferta) <= 0) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -184,7 +209,13 @@ export function assertIsPrimerLugar(
  */
 export function computeScoresAndOrden(
   reglas: FrozenReglas,
-  admisibles: Array<{ id: number; montoOferta: string | number; puntajeTecnico: string | number | null; recibidoAt?: string | Date | null }>,
+  admisibles: Array<{
+    id: number;
+    montoOferta: string | number;
+    puntajeTecnico: string | number | null;
+    recibidoAt?: string | Date | null;
+    desempateOrden?: number | null;
+  }>,
   tieBreak: TieBreakKey[] = ["precio", "fechaRecepcion", "sorteo_documentado"],
 ): Array<{ id: number; puntajeEconomico: string; puntajeTotal: string; ordenMerito: number }> {
   const criterio = reglas.criterioEvaluacion;
@@ -205,10 +236,8 @@ export function computeScoresAndOrden(
     const economic = scoreEconomico(Number(o.montoOferta), minBid);
     let total: number;
     if (criterio === "PRECIO_MAS_BAJO") {
-      // Documented: winner is min price; total kept for display as inverse-price score.
       total = economic;
     } else if (criterio === "MEJOR_VALOR_TECNICO") {
-      // Primarily technical; econ recorded for transparency.
       total = technical;
     } else {
       total = scoreTotalRelacion(technical, economic, pt, pe);
@@ -220,6 +249,7 @@ export function computeScoresAndOrden(
       puntajeEconomico: economic,
       puntajeTotal: total,
       recibidoAt: o.recibidoAt ?? null,
+      desempateOrden: o.desempateOrden ?? null,
     };
   });
 
@@ -231,4 +261,19 @@ export function computeScoresAndOrden(
     puntajeTotal: Number(o.puntajeTotal).toFixed(2),
     ordenMerito: orderIndex.get(o.id)!,
   }));
+}
+
+/** Parse acto_desempate.resultado_json → Map<participacionId, orden>. */
+export function parseDesempateOrden(resultadoJson: unknown): Map<number, number> {
+  const map = new Map<number, number>();
+  if (!resultadoJson) return map;
+  const raw = typeof resultadoJson === "string" ? JSON.parse(resultadoJson) : resultadoJson;
+  const list = Array.isArray(raw) ? raw : (raw as any)?.orden ?? (raw as any)?.ranking ?? [];
+  if (!Array.isArray(list)) return map;
+  for (const row of list) {
+    const pid = Number((row as any).participacionId ?? (row as any).id);
+    const orden = Number((row as any).orden ?? (row as any).posicion);
+    if (Number.isFinite(pid) && Number.isFinite(orden)) map.set(pid, orden);
+  }
+  return map;
 }

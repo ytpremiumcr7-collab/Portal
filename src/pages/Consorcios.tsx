@@ -26,8 +26,8 @@ export default function Consorcios() {
     <div className="space-y-5">
       <PageHeader
         title="Consorcios"
-        description="Registro de consorcios, integrantes y vínculo con participación / proposición."
-        breadcrumbs={[{ label: "Dependencia" }, { label: "Consorcios" }]}
+        description="El proveedor crea y administra el consorcio; la convocante sólo valida y vincula a la participación."
+        breadcrumbs={[{ label: "Área proveedor" }, { label: "Consorcios" }]}
       />
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="border-b border-slate-100 px-4 py-3"><CardTitle className="text-sm font-semibold">Nuevo consorcio</CardTitle></CardHeader>

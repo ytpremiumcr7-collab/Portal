@@ -240,7 +240,7 @@ export const participaciones = mysqlTable("participaciones", {
   montoOferta: decimal("monto_oferta", { precision: 18, scale: 2 }).notNull(),
   monedaOferta: mysqlEnum("moneda_oferta", ["MXN"]).default("MXN").notNull(),
   plazoEjecucion: int("plazo_ejecucion"),
-  estadoEvaluacion: mysqlEnum("estado_evaluacion", ["PENDIENTE", "EN_EVALUACION", "ADMISIBLE", "NO_ADMISIBLE", "RECHAZADA", "GANADORA", "DESCARTADA"]).default("PENDIENTE").notNull(),
+  estadoEvaluacion: mysqlEnum("estado_evaluacion", ["PENDIENTE", "EN_EVALUACION", "ADMISIBLE", "NO_ADMISIBLE", "RECHAZADA", "GANADORA", "DESCARTADA", "RETIRADA", "INVALIDADA"]).default("PENDIENTE").notNull(),
   puntajeTecnico: decimal("puntaje_tecnico", { precision: 5, scale: 2 }),
   puntajeEconomico: decimal("puntaje_economico", { precision: 5, scale: 2 }),
   puntajeTotal: decimal("puntaje_total", { precision: 6, scale: 2 }),
@@ -721,6 +721,7 @@ export const CAPABILITIES = [
   "presentar_pago", "aprobar_pago", "resolver_incidencia", "investigar_sancion", "administrar_sancion", "auditar",
   "administrar_planeacion", "investigar_mercado", "administrar_ejecucion",
   "resolver_inconformidad", "notificar", "consulta_publica_admin",
+  "break_glass", "emitir_desempate",
 ] as const;
 export type Capability = typeof CAPABILITIES[number];
 
@@ -1389,13 +1390,18 @@ export const domainOutbox = mysqlTable("domain_outbox", {
   eventType: varchar("event_type", { length: 80 }).notNull(),
   payload: json("payload").notNull(),
   status: mysqlEnum("status", ["PENDING", "PROCESSING", "SENT", "FAILED"]).default("PENDING").notNull(),
+  claimedAt: timestamp("claimed_at"),
+  claimedBy: varchar("claimed_by", { length: 80 }),
+  idempotencyKey: varchar("idempotency_key", { length: 120 }),
   attempts: int("attempts").default(0).notNull(),
   nextAttemptAt: timestamp("next_attempt_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   processedAt: timestamp("processed_at"),
   lastError: text("last_error"),
+  providerMessageId: varchar("provider_message_id", { length: 200 }),
 }, (t) => [
   uniqueIndex("outbox_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("outbox_idem_uq").on(t.tenantId, t.idempotencyKey),
   index("outbox_pending_idx").on(t.status, t.nextAttemptAt),
   index("outbox_agg_idx").on(t.tenantId, t.aggregateType, t.aggregateId),
   foreignKey({ name: "outbox_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
@@ -1541,5 +1547,62 @@ export const consorcioMiembros = mysqlTable("consorcio_miembros", {
   foreignKey({ name: "cons_miembro_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
   foreignKey({ name: "cons_miembro_cons_fk", columns: [t.tenantId, t.consorcioId], foreignColumns: [consorcios.tenantId, consorcios.id] }).onDelete("restrict"),
   foreignKey({ name: "cons_miembro_prov_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
+]);
+
+
+export const actosDesempate = mysqlTable("actos_desempate", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  metodo: mysqlEnum("metodo", ["SORTEO_DOCUMENTADO", "OTRO"]).default("SORTEO_DOCUMENTADO").notNull(),
+  semilla: varchar("semilla", { length: 128 }),
+  resultadoJson: json("resultado_json"),
+  evidenciaDocId: bigint("evidencia_doc_id", { mode: "number", unsigned: true }),
+  actoresJson: json("actores_json"),
+  resultadoHash: varchar("resultado_hash", { length: 64 }),
+  estado: mysqlEnum("estado", ["BORRADOR", "EMITIDO", "REGISTRADO", "ANULADO"]).default("BORRADOR").notNull(),
+  emitidoPor: bigint("emitido_por", { mode: "number", unsigned: true }),
+  registradoPor: bigint("registrado_por", { mode: "number", unsigned: true }),
+  registradoAt: timestamp("registrado_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("acto_desemp_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("acto_desemp_lic_uq").on(t.tenantId, t.licitacionId),
+  index("acto_desemp_estado_idx").on(t.tenantId, t.estado),
+  foreignKey({ name: "acto_desemp_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "acto_desemp_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+]);
+
+export const breakGlassGrants = mysqlTable("break_glass_grants", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  userId: bigint("user_id", { mode: "number", unsigned: true }).notNull(),
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }),
+  capability: varchar("capability", { length: 64 }).notNull(),
+  justificacion: text("justificacion").notNull(),
+  grantedBy: bigint("granted_by", { mode: "number", unsigned: true }).notNull(),
+  validFrom: timestamp("valid_from").defaultNow().notNull(),
+  validUntil: timestamp("valid_until").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  revokedBy: bigint("revoked_by", { mode: "number", unsigned: true }),
+  expedienteEventId: bigint("expediente_event_id", { mode: "number", unsigned: true }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("bg_tenant_id_uq").on(t.tenantId, t.id),
+  index("bg_user_active_idx").on(t.tenantId, t.userId, t.validUntil),
+  index("bg_lic_idx").on(t.tenantId, t.licitacionId),
+  foreignKey({ name: "bg_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "bg_user_fk", columns: [t.tenantId, t.userId], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  foreignKey({ name: "bg_grantor_fk", columns: [t.tenantId, t.grantedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+]);
+
+export const auditChainHeads = mysqlTable("audit_chain_heads", {
+  tenantId: bigint("tenant_id", { mode: "number", unsigned: true }).primaryKey(),
+  lastEventHash: varchar("last_event_hash", { length: 64 }),
+  lastAuditId: bigint("last_audit_id", { mode: "number", unsigned: true }),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  foreignKey({ name: "audit_heads_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
 ]);
 

@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, authedQuery, ctxForAudit } from "../middleware";
+import { assertProcedimientoAsignacion } from "../lib/sod";
 import { getDb } from "../queries/connection";
-import { actoAdjudicacion, participaciones, licitacionReglasVersion } from "@db/schema";
+import { actoAdjudicacion, participaciones, licitacionReglasVersion, actosDesempate } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
-import { rankAdmisibles, type CriterioEvaluacion } from "../lib/evaluation-engine";
+import { rankAdmisibles, parseDesempateOrden, type CriterioEvaluacion } from "../lib/evaluation-engine";
 import { parseTieBreakPolicy } from "../lib/procedure-policy";
 import { writeAudit } from "../lib/security";
 import { enqueueOutbox } from "../lib/outbox";
@@ -20,7 +21,7 @@ export const actoAdjudicacionRouter = createRouter({
   }),
 
   /** System ranking proposal + authority decision foundation. */
-  proponer: convocanteQuery.input(z.object({
+  proponer: capabilityQuery("autorizar_fallo").input(z.object({
     licitacionId: z.number().int().positive(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
@@ -45,8 +46,14 @@ export const actoAdjudicacionRouter = createRouter({
       eq(participaciones.estadoEvaluacion, "ADMISIBLE"),
     ));
     if (!admisibles.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No hay ofertas admisibles." });
+    await assertProcedimientoAsignacion(ctx.user, input.licitacionId, ["autorizador_fallo", "dictaminador"]);
     const tb = parseTieBreakPolicy((frozen as any).tieBreakPolicy);
-    const rankedIds = rankAdmisibles(frozen.criterioEvaluacion as CriterioEvaluacion, admisibles, tb);
+    const desempate = await db.query.actosDesempate.findFirst({
+      where: and(eq(actosDesempate.tenantId, ctx.user.tenantId), eq(actosDesempate.licitacionId, input.licitacionId), eq(actosDesempate.estado, "REGISTRADO")),
+    });
+    const desempateMap = parseDesempateOrden(desempate?.resultadoJson);
+    const admisiblesRank = admisibles.map((a) => ({ ...a, desempateOrden: desempateMap.get(a.id) ?? null }));
+    const rankedIds = rankAdmisibles(frozen.criterioEvaluacion as CriterioEvaluacion, admisiblesRank, tb);
     const ranking = rankedIds.map((id, i) => {
       const o = admisibles.find((a) => a.id === id)!;
       return { orden: i + 1, participacionId: o.id, proveedorId: o.proveedorId, montoOferta: o.montoOferta, puntajeTotal: o.puntajeTotal };
@@ -83,7 +90,7 @@ export const actoAdjudicacionRouter = createRouter({
     return created;
   }),
 
-  decidir: convocanteQuery.input(z.object({
+  decidir: capabilityQuery("autorizar_fallo").input(z.object({
     id: z.number().int().positive(),
     proveedorId: z.number().int().positive(),
     fundamento: z.string().trim().min(10),
@@ -118,7 +125,7 @@ export const actoAdjudicacionRouter = createRouter({
     return db.query.actoAdjudicacion.findFirst({ where: and(eq(actoAdjudicacion.id, input.id), eq(actoAdjudicacion.tenantId, ctx.user.tenantId)) });
   }),
 
-  publicar: convocanteQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  publicar: capabilityQuery("autorizar_fallo").input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const acto = await db.query.actoAdjudicacion.findFirst({
       where: and(eq(actoAdjudicacion.id, input.id), eq(actoAdjudicacion.tenantId, ctx.user.tenantId)),

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { createRouter, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { createRouter, capabilityQuery, convocanteQuery, authedQuery, ctxForAudit } from "../middleware";
+import { assertProcedimientoAsignacion } from "../lib/sod";
 import { getDb } from "../queries/connection";
 import { contratos, fallos, licitaciones, documentos, garantias } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
@@ -78,7 +79,7 @@ export const contratosRouter = createRouter({
     return created;
   }),
 
-  formalizar: convocanteQuery.input(z.object({
+  formalizar: capabilityQuery("formalizar_contrato").input(z.object({
     id: z.number().int().positive(),
     fechaFirma: dateMx,
     documentoContratoId: z.number().int().positive(),
@@ -87,6 +88,7 @@ export const contratosRouter = createRouter({
     const db = getDb();
     const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "creador");
     const doc = await db.query.documentos.findFirst({
       where: and(eq(documentos.id, input.documentoContratoId), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)),
     });
@@ -136,7 +138,7 @@ export const contratosRouter = createRouter({
     return transition(ctx, input.id, "TERMINADO", input.motivo, {});
   }),
 
-  rescindir: convocanteQuery.input(z.object({
+  rescindir: capabilityQuery("formalizar_contrato").input(z.object({
     id: z.number().int().positive(),
     causa: z.string().trim().min(10),
     resolucion: z.string().trim().min(10),
@@ -146,6 +148,7 @@ export const contratosRouter = createRouter({
     const db = getDb();
     const current = await db.query.contratos.findFirst({ where: and(eq(contratos.id, input.id), eq(contratos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+    await assertProcedimientoAsignacion(ctx.user, current.licitacionId, "creador");
     if (input.documentoRescisionId) {
       const doc = await db.query.documentos.findFirst({
         where: and(eq(documentos.id, input.documentoRescisionId), eq(documentos.tenantId, ctx.user.tenantId)),
