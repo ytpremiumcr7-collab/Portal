@@ -3,8 +3,12 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 export default function Contratos() {
+  useAuth({ redirectOnUnauthenticated: true });
+  const { allowed: canFormalizar } = useCapability("formalizar_contrato");
   const [page, setPage] = useState(1);
   const [lic, setLic] = useState("");
   const [folio, setFolio] = useState("");
@@ -24,7 +28,7 @@ export default function Contratos() {
         <CardContent className="flex gap-3 flex-wrap">
           <Input placeholder="ID licitación adjudicada" value={lic} onChange={e => setLic(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
           <Input placeholder="Folio contrato" value={folio} onChange={e => setFolio(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
-          <Button className="bg-amber-600" disabled={!lic || !folio || crear.isPending} onClick={() => crear.mutate({ licitacionId: Number(lic), folio, motivo: "Formalización contractual post-adjudicación" })}>Crear</Button>
+          <Button className="bg-amber-600" disabled={!canFormalizar || !lic || !folio || crear.isPending} onClick={() => crear.mutate({ licitacionId: Number(lic), folio, motivo: "Formalización contractual post-adjudicación" })}>Crear</Button>
         </CardContent>
       </Card>
       <Card className="border-slate-700 bg-slate-800/50">
@@ -53,9 +57,9 @@ export default function Contratos() {
                   <td className="p-3 text-sm text-white">${c.monto}</td>
                   <td className="p-3 text-xs text-slate-300">{c.estado}</td>
                   <td className="p-3 text-right flex justify-end gap-2 flex-wrap">
-                    {c.estado === "BORRADOR" && <Button size="sm" disabled={!docId} onClick={() => formalizar.mutate({ id: c.id, fechaFirma: new Date().toISOString().slice(0, 10), documentoContratoId: Number(docId), motivo: "Firma del contrato" })}>Formalizar</Button>}
-                    {c.estado === "FORMALIZADO" && <Button size="sm" onClick={() => vigente.mutate({ id: c.id, motivo: "Inicio de vigencia" })}>Poner vigente</Button>}
-                    {["FORMALIZADO","VIGENTE"].includes(c.estado) && <Button size="sm" variant="outline" disabled={causa.length < 10 || resolucion.length < 10}
+                    {c.estado === "BORRADOR" && canFormalizar && <Button size="sm" disabled={!docId} onClick={() => formalizar.mutate({ id: c.id, fechaFirma: new Date().toISOString().slice(0, 10), documentoContratoId: Number(docId), motivo: "Firma del contrato" })}>Formalizar</Button>}
+                    {c.estado === "FORMALIZADO" && canFormalizar && <Button size="sm" onClick={() => vigente.mutate({ id: c.id, motivo: "Inicio de vigencia" })}>Poner vigente</Button>}
+                    {["FORMALIZADO","VIGENTE"].includes(c.estado) && canFormalizar && <Button size="sm" variant="outline" disabled={causa.length < 10 || resolucion.length < 10}
                       onClick={() => rescindir.mutate({ id: c.id, causa, resolucion, motivo: "Rescisión contractual" })}>Rescindir</Button>}
                   </td>
                 </tr>

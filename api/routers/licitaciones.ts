@@ -12,7 +12,7 @@ import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { hashReglas, assertIsPrimerLugar, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 import { licitacionIdFromInput } from "../lib/procedure-resolvers";
-import { parseTieBreakPolicy, parseActosObligatorios, assertActosPermitidosPorPolitica, resolvePolicyForPublish, policyRequiresJunta } from "../lib/procedure-policy";
+import { parseTieBreakPolicy, parseActosObligatorios, assertActosPermitidosPorPolitica, resolvePolicyForPublish, policyRequiresJunta, assertTransitionAllowed, mergeModalidadRequisitos } from "../lib/procedure-policy";
 import { enqueueOutbox } from "../lib/outbox";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
 import { loadAperturaEstado, redactParticipacionEconomica } from "../lib/sobre-economico";
@@ -153,6 +153,7 @@ export const licitacionesRouter = createRouter({
       modalidad: current.tipoLicitacion as any,
       tipoContratacion: current.tipoContratacion,
       marcoJuridico: expediente.marcoJuridico,
+      modalidadMeta: (current as any).modalidadMeta ?? null,
     });
     const tieBreak = parseTieBreakPolicy(policy.tieBreakPolicy);
     const actos = parseActosObligatorios(policy.actosObligatorios);
@@ -213,6 +214,11 @@ export const licitacionesRouter = createRouter({
       requiereAperturaPublica: requiereApertura,
       modalidad: current.tipoLicitacion,
     });
+    assertTransitionAllowed(
+      current.tipoLicitacion as any,
+      "EVALUACION",
+      mergeModalidadRequisitos((frozenForGate as any)?.requisitos, (current as any).modalidadMeta),
+    );
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
     let updated;
@@ -320,6 +326,36 @@ export const licitacionesRouter = createRouter({
     });
     const updated = await getByTenant(input.id, ctx.user.tenantId);
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "ADJUDICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
+    return updated;
+  }),
+
+  setModalidadMeta: procedureMutation({ capability: "crear_procedimiento", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({
+    id: z.number().int().positive(),
+    modalidadMeta: z.object({
+      autorizacionComiteRef: z.string().trim().min(1).optional(),
+      autorizadoPorHacienda: z.union([z.boolean(), z.string()]).optional(),
+      acuerdoMarcoId: z.string().trim().min(1).optional(),
+      acuerdoMarcoRef: z.string().trim().min(1).optional(),
+      tiendaCatalogoRef: z.string().trim().min(1).optional(),
+      ordenCompraRef: z.string().trim().min(1).optional(),
+      notasNegociacion: z.string().trim().min(1).optional(),
+      requiereFirmaElectronicaAvanzada: z.boolean().optional(),
+    }),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
+    if (current.estado !== "BORRADOR") {
+      throw new TRPCError({ code: "CONFLICT", message: "modalidadMeta sólo se edita en BORRADOR." });
+    }
+    const prev = ((current as any).modalidadMeta && typeof (current as any).modalidadMeta === "object")
+      ? (current as any).modalidadMeta as Record<string, unknown>
+      : {};
+    const merged = { ...prev, ...input.modalidadMeta };
+    const db = getDb();
+    await db.update(licitaciones).set({ modalidadMeta: merged } as any)
+      .where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId)));
+    const updated = await getByTenant(input.id, ctx.user.tenantId);
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ACTUALIZAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: { modalidadMeta: prev }, valorNuevo: { modalidadMeta: merged }, motivo: input.motivo });
     return updated;
   }),
 

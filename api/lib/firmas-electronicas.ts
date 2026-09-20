@@ -1,18 +1,21 @@
 import { firmasElectronicas } from "@db/schema";
 import {
+  assertCryptoKindWhenRequired,
   getSignatureProvider,
   labelForSignatureKind,
+  type CryptoMaterials,
   type SignatureKind,
 } from "./firma";
 import { createHash } from "node:crypto";
+import { TRPCError } from "@trpc/server";
 
 export type FirmaKind = SignatureKind;
-export { labelForSignatureKind };
+export { labelForSignatureKind, assertCryptoKindWhenRequired };
 
 /**
  * Honest e-signature base:
  * - SESSION_CONFIRMATION: authenticated session attested digest (NOT advanced e.firma / FIEL).
- * - CRYPTO_SIGNATURE: reserved for SatEFirmaProvider (.cer/.key/.p7m + SAT OCSP/CRL) — NOT_CONFIGURED.
+ * - CRYPTO_SIGNATURE: SatEFirmaProvider (.cer/.key/.p7m + SAT OCSP) when CAs configured.
  * Do not label SESSION_CONFIRMATION as "e.firma avanzada / FIEL".
  */
 export function digestPayload(payload: unknown): string {
@@ -28,15 +31,45 @@ export async function createFirmaElectronica(tx: any, input: {
   payload: unknown;
   signerUserId: number;
   motivo?: string | null;
+  crypto?: CryptoMaterials;
+  /** When true, SESSION_CONFIRMATION is rejected. */
+  requireCrypto?: boolean;
 }) {
+  try {
+    assertCryptoKindWhenRequired(!!input.requireCrypto, input.kind);
+  } catch (e: any) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: e?.message ?? String(e) });
+  }
+
   const provider = getSignatureProvider(input.kind);
-  // CRYPTO_SIGNATURE routes to SatEFirmaProvider which throws NOT_CONFIGURED — never fake FIEL.
-  const signed = await provider.sign({
-    tenantId: input.tenantId,
-    signerUserId: input.signerUserId,
-    payload: input.payload,
-    motivo: input.motivo,
-  });
+  let signed;
+  try {
+    signed = await provider.sign({
+      tenantId: input.tenantId,
+      signerUserId: input.signerUserId,
+      payload: input.payload,
+      motivo: input.motivo,
+      crypto: input.crypto,
+    });
+  } catch (e: any) {
+    const msg = e?.message ?? String(e);
+    if (/NOT_CONFIGURED/i.test(msg)) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: msg });
+    }
+    throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+  }
+
+  // Map NOT_CONFIGURED → should not persist as CRYPTO success
+  const dbStatus =
+    signed.validationStatus === "NOT_CONFIGURED"
+      ? "PENDING"
+      : signed.validationStatus === "VALID"
+        ? "VALID"
+        : signed.validationStatus === "INVALID"
+          ? "INVALID"
+          : signed.validationStatus === "NOT_APPLICABLE"
+            ? "NOT_APPLICABLE"
+            : "PENDING";
 
   const result = await tx.insert(firmasElectronicas).values({
     tenantId: input.tenantId,
@@ -48,9 +81,12 @@ export async function createFirmaElectronica(tx: any, input: {
     algorithm: signed.algorithm,
     signatureValue: signed.signatureValue,
     certificatePem: signed.certificatePem,
+    certSerial: signed.certSerial ?? null,
+    signerRfc: signed.signerRfc ?? null,
+    ocspEvidence: signed.ocspEvidence ?? null,
     signerUserId: input.signerUserId,
     signedAt: signed.signedAt,
-    validationStatus: signed.validationStatus === "NOT_CONFIGURED" ? "PENDING" : signed.validationStatus,
+    validationStatus: dbStatus,
     motivo: input.motivo ?? null,
   } as any);
   return {
@@ -59,6 +95,8 @@ export async function createFirmaElectronica(tx: any, input: {
     kind: input.kind,
     algorithm: signed.algorithm,
     validationStatus: signed.validationStatus,
+    certSerial: signed.certSerial,
+    signerRfc: signed.signerRfc,
     label: labelForSignatureKind(input.kind),
     providerName: signed.providerName,
   };
@@ -72,4 +110,11 @@ export async function verifyFirmaRecord(record: {
   payload?: unknown;
 }) {
   return getSignatureProvider(record.kind).verify(record);
+}
+
+/** Policy / tenant flag helper. */
+export function policyRequiresCryptoFirma(requisitos: unknown): boolean {
+  if (!requisitos || typeof requisitos !== "object") return false;
+  const r = requisitos as Record<string, unknown>;
+  return r.requiereFirmaElectronicaAvanzada === true || r.requireCryptoSignature === true;
 }

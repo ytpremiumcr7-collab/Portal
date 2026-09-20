@@ -12,7 +12,7 @@ import { detectLicitacionRisks } from "../lib/detection";
 import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
 import { computeScoresAndOrden, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 import { mapEvalToProposicionEstado, buildProposicionManifest, mapDocTipoToRol, assertProposicionDocsCompletos } from "../lib/proposicion";
-import { parseTieBreakPolicy, parseRequisitos } from "../lib/procedure-policy";
+import { parseTieBreakPolicy, parseRequisitos, assertTransitionAllowed, mergeModalidadRequisitos } from "../lib/procedure-policy";
 import { assertRecepcionDentroDeVentana, assertRetiroProposicionPermitido } from "../lib/calendario-gates";
 import {
   loadAperturaEstado,
@@ -139,6 +139,15 @@ export const participacionesRouter = createRouter({
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
+    const frozenPresent = await db.query.licitacionReglasVersion.findFirst({
+      where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, input.licitacionId)),
+      orderBy: [desc(licitacionReglasVersion.version)],
+    });
+    assertTransitionAllowed(
+      lic.tipoLicitacion as any,
+      "PRESENTACION_LP",
+      mergeModalidadRequisitos((frozenPresent as any)?.requisitos, (lic as any).modalidadMeta),
+    );
     // Money gate before TX (format already zod-validated); reception window asserted INSIDE TX at commit instant.
     if (!moneyGt(input.montoOferta, 0)) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");

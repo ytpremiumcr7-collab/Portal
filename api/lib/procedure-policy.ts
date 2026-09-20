@@ -67,7 +67,37 @@ export type PolicyRequisitos = {
   constrainedBy?: string;
   workflowSupported?: boolean;
   aliasOf?: string;
+  /** Modalities IV/V — Comité / Hacienda authorization */
+  autorizacionComiteRef?: string;
+  autorizadoPorHacienda?: boolean | string;
+  /** Acuerdo marco */
+  acuerdoMarcoId?: string;
+  acuerdoMarcoRef?: string;
+  skipConvocatoriaPublica?: boolean;
+  /** Tienda digital */
+  tiendaCatalogoRef?: string;
+  ordenCompraRef?: string;
+  refuseFullLpPresentacion?: boolean;
+  /** ADN — notes required before fallo */
+  notasNegociacion?: string;
+  requiresAuthMeta?: boolean;
+  requiresAcuerdoMarcoRef?: boolean;
+  requiresTiendaOrdenRef?: boolean;
+  workflowMvp?: string;
+  /** Require CRYPTO_SIGNATURE / e.firma for proposición present */
+  requiereFirmaElectronicaAvanzada?: boolean;
+  requireCryptoSignature?: boolean;
 };
+
+/** Merge catalog policy requisitos with procedure-level modalidadMeta. */
+export function mergeModalidadRequisitos(
+  policyRequisitos: unknown,
+  modalidadMeta?: unknown,
+): PolicyRequisitos {
+  const base = parseRequisitos(policyRequisitos);
+  if (!modalidadMeta || typeof modalidadMeta !== "object") return base;
+  return { ...base, ...(modalidadMeta as PolicyRequisitos) };
+}
 
 export function normalizeModalidad(modalidad: string): ModalidadProcedimiento {
   if (modalidad === "INVITACION_RESTRINGIDA") return "INVITACION_TRES";
@@ -205,18 +235,164 @@ export function defaultPolicyForModalidad(modalidad: ModalidadProcedimiento): {
   };
 }
 
-/** Refuse publish/transition for catalog modalities without MVP workflow. */
+/**
+ * Legacy hard-refuse for modalities 4–7 without auth metadata.
+ * Prefer assertModalidadPublishable (governed gates). Kept for tests/compat.
+ */
 export function assertModalidadWorkflowSupported(modalidad: ModalidadProcedimiento, requisitos?: PolicyRequisitos) {
   const m = normalizeModalidad(modalidad);
   if (WORKFLOW_SUPPORTED_MODALIDADES.has(modalidad) || WORKFLOW_SUPPORTED_MODALIDADES.has(m)) return;
   if (requisitos?.workflowSupported === true) return;
+  // If publishable metadata is present, allow (delegates to publishable checks).
+  try {
+    assertModalidadPublishable(modalidad, requisitos ?? {});
+    return;
+  } catch {
+    /* fall through to legacy message when meta incomplete */
+  }
   const constraint = HACIENDA_COMITE_CONSTRAINED.has(m)
     ? " Requiere autorización Hacienda/Comité (LAASSP)."
     : "";
   throw new TRPCError({
     code: "PRECONDITION_FAILED",
-    message: `La modalidad ${modalidad} está en catálogo LAASSP pero su flujo especializado aún no está habilitado en ARES.${constraint} Use LP / Invitación a cuando menos tres / Adjudicación directa.`,
+    message: `La modalidad ${modalidad} está en catálogo LAASSP pero carece de metadatos de autorización / referencia requeridos.${constraint}`,
   });
+}
+
+/**
+ * Governed publish gate for LAASSP modalities 4–7.
+ * Refuses silent fall-through to LP without required metadata.
+ */
+export function assertModalidadPublishable(
+  modalidad: ModalidadProcedimiento,
+  requisitos: PolicyRequisitos = {},
+) {
+  const m = normalizeModalidad(modalidad);
+  if (WORKFLOW_SUPPORTED_MODALIDADES.has(modalidad) || WORKFLOW_SUPPORTED_MODALIDADES.has(m)) {
+    return;
+  }
+
+  if (m === "DIALOGO_COMPETITIVO" || m === "ADJUDICACION_DIRECTA_NEGOCIACION") {
+    const comite = typeof requisitos.autorizacionComiteRef === "string"
+      ? requisitos.autorizacionComiteRef.trim()
+      : "";
+    const hacienda = requisitos.autorizadoPorHacienda === true
+      || requisitos.autorizadoPorHacienda === "true"
+      || (typeof requisitos.autorizadoPorHacienda === "string" && requisitos.autorizadoPorHacienda.trim().length > 0);
+    if (!comite) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Modalidad ${m}: falta autorizacionComiteRef (autorización de Comité). No se publica como LP.`,
+      });
+    }
+    if (!hacienda) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Modalidad ${m}: falta autorizadoPorHacienda. No se publica como LP.`,
+      });
+    }
+    return;
+  }
+
+  if (m === "ACUERDO_MARCO_ASIGNACION") {
+    const ref = (requisitos.acuerdoMarcoId || requisitos.acuerdoMarcoRef || "").toString().trim();
+    if (!ref) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Modalidad ACUERDO_MARCO_ASIGNACION: se requiere acuerdoMarcoId / acuerdoMarcoRef. No se publica convocatoria LP completa sin referencia.",
+      });
+    }
+    return;
+  }
+
+  if (m === "TIENDA_DIGITAL_ORDEN") {
+    const ref = (requisitos.tiendaCatalogoRef || requisitos.ordenCompraRef || "").toString().trim();
+    if (!ref) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Modalidad TIENDA_DIGITAL_ORDEN: se requiere tiendaCatalogoRef u ordenCompraRef. Flujo simplificado — no presentación LP completa.",
+      });
+    }
+    return;
+  }
+
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: `Modalidad ${modalidad} no tiene flujo de publicación gobernado.`,
+  });
+}
+
+/**
+ * Refuse LP-only transitions that do not apply to modalities 4–7.
+ * act examples: JUNTA_ACLARACIONES, RECEPCION_PUBLICA, APERTURA_PUBLICA, PRESENTACION_LP, FALLO, EVALUACION
+ */
+export function assertTransitionAllowed(
+  modalidad: ModalidadProcedimiento,
+  act: string,
+  requisitos?: PolicyRequisitos,
+) {
+  const m = normalizeModalidad(modalidad);
+  const req = requisitos ?? {};
+  const actos = defaultPolicyForModalidad(m).actosObligatorios;
+
+  if (m === "TIENDA_DIGITAL_ORDEN" || req.refuseFullLpPresentacion) {
+    if (["JUNTA_ACLARACIONES", "RECEPCION_PUBLICA", "APERTURA_PUBLICA", "PRESENTACION_LP", "RECEPCION"].includes(act)) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `TIENDA_DIGITAL_ORDEN: acto ${act} no aplica (flujo simplificado de orden/catálogo).`,
+      });
+    }
+  }
+
+  if (m === "ACUERDO_MARCO_ASIGNACION" || req.skipConvocatoriaPublica) {
+    if (["JUNTA_ACLARACIONES", "PRESENTACION_LP"].includes(act)) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `ACUERDO_MARCO_ASIGNACION: acto ${act} omitido — se asigna sobre acuerdo marco referenciado.`,
+      });
+    }
+  }
+
+  if (m === "DIALOGO_COMPETITIVO") {
+    // MVP: planning + diálogo rounds (reuse aclaraciones-like) — block classic LP junta-only path without auth
+    if (act === "JUNTA_ACLARACIONES" && !(req.autorizacionComiteRef || "").toString().trim()) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "DIALOGO_COMPETITIVO: diálogo/rondas requieren autorizacionComiteRef (MVP: reutilizar aclaraciones o tabla dialogo_rondas diferida).",
+      });
+    }
+  }
+
+  if (m === "ADJUDICACION_DIRECTA_NEGOCIACION" && act === "FALLO") {
+    const notas = (req.notasNegociacion || "").toString().trim();
+    if (!notas) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "ADJUDICACION_DIRECTA_NEGOCIACION: notasNegociacion son obligatorias antes del fallo.",
+      });
+    }
+  }
+
+  // If act maps to an acto obligatorio name and modality defaults omit it, refuse
+  const actoMap: Record<string, string> = {
+    JUNTA_ACLARACIONES: "JUNTA_ACLARACIONES",
+    APERTURA_PUBLICA: "APERTURA",
+    APERTURA: "APERTURA",
+    RECEPCION: "RECEPCION",
+    RECEPCION_PUBLICA: "RECEPCION",
+  };
+  const mapped = actoMap[act];
+  if (mapped && !actos.includes(mapped) && !WORKFLOW_SUPPORTED_MODALIDADES.has(m)) {
+    // Already handled special cases above; soft-check for remaining
+    if (["ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN", "ADJUDICACION_DIRECTA", "ADJUDICACION_DIRECTA_NEGOCIACION"].includes(m)) {
+      if (mapped === "APERTURA" || mapped === "JUNTA_ACLARACIONES") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Modalidad ${m}: acto ${act} no figura en actos obligatorios de política (${actos.join(", ")}).`,
+        });
+      }
+    }
+  }
 }
 
 /** OBRA → LOPSRM; else LAASSP. */
@@ -230,7 +406,13 @@ export function regimeCodeFromContratacion(tipoContratacion: string): "LAASSP" |
  */
 export async function resolvePolicyForPublish(
   db: any,
-  opts: { modalidad: ModalidadProcedimiento; tipoContratacion: string; marcoJuridico?: string | null },
+  opts: {
+    modalidad: ModalidadProcedimiento;
+    tipoContratacion: string;
+    marcoJuridico?: string | null;
+    /** Procedure-level gate fields (Comité, acuerdo marco, tienda, etc.). */
+    modalidadMeta?: unknown;
+  },
 ): Promise<ProcedurePolicySnapshot> {
   const code = (opts.marcoJuridico === "LOPSRM" || opts.marcoJuridico === "LAASSP"
     ? opts.marcoJuridico
@@ -270,7 +452,7 @@ export async function resolvePolicyForPublish(
       message: `No hay ProcedurePolicy para modalidad ${opts.modalidad} bajo régimen ${code}. La publicación requiere política.`,
     });
   }
-  assertModalidadWorkflowSupported(opts.modalidad, parseRequisitos(policy.requisitos));
+  assertModalidadPublishable(opts.modalidad, mergeModalidadRequisitos(policy.requisitos, opts.modalidadMeta));
   return policy as ProcedurePolicySnapshot;
 }
 

@@ -21,6 +21,10 @@ export class SessionConfirmationProvider implements ElectronicSignatureProvider 
   readonly name = "SessionConfirmationProvider";
   readonly kind = "SESSION_CONFIRMATION" as const;
 
+  isConfigured(): boolean {
+    return true;
+  }
+
   async sign(input: SignInput): Promise<SignResult> {
     return {
       kind: "SESSION_CONFIRMATION",
@@ -28,6 +32,9 @@ export class SessionConfirmationProvider implements ElectronicSignatureProvider 
       algorithm: "SHA256",
       signatureValue: null,
       certificatePem: null,
+      certSerial: null,
+      signerRfc: null,
+      ocspEvidence: null,
       validationStatus: "NOT_APPLICABLE",
       signedAt: new Date(),
       providerName: this.name,

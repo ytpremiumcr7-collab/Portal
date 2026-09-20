@@ -139,15 +139,19 @@ export default function NuevaLicitacion() {
               </div>
 
               <div>
-                <Label className="text-slate-300">Tipo Licitacion *</Label>
+                <Label className="text-slate-300">Modalidad LAASSP art. 35 *</Label>
+                <p className="text-[11px] text-slate-500 mb-1">Modalidades IV–VII requieren metadatos (Comité/Hacienda, acuerdo marco u orden) vía setModalidadMeta antes de publicar; el servidor rechaza publicación incompleta.</p>
                 <Select value={form.tipoLicitacion} onValueChange={(v) => setForm({ ...form, tipoLicitacion: v as any })}>
                   <SelectTrigger className="bg-slate-700 border-slate-600 text-white"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-slate-700 border-slate-600">
-                    <SelectItem value="LICITACION_PUBLICA" className="text-white">Licitacion Publica</SelectItem>
-                    <SelectItem value="INVITACION_RESTRINGIDA" className="text-white">Invitación restringida</SelectItem>
-                    <SelectItem value="ADJUDICACION_DIRECTA" className="text-white">Adjudicación directa</SelectItem>
-                    <SelectItem value="LICITACION_PRIVADA" className="text-white">Licitacion Privada</SelectItem>
-                    
+                    <SelectItem value="LICITACION_PUBLICA" className="text-white">I — Licitación pública</SelectItem>
+                    <SelectItem value="INVITACION_TRES" className="text-white">II — Invitación a cuando menos tres</SelectItem>
+                    <SelectItem value="INVITACION_RESTRINGIDA" className="text-white">II (legacy) — Invitación restringida</SelectItem>
+                    <SelectItem value="ADJUDICACION_DIRECTA" className="text-white">III — Adjudicación directa</SelectItem>
+                    <SelectItem value="DIALOGO_COMPETITIVO" className="text-white">IV — Diálogo competitivo (requiere Comité/Hacienda)</SelectItem>
+                    <SelectItem value="ADJUDICACION_DIRECTA_NEGOCIACION" className="text-white">V — AD con negociación (requiere Comité/Hacienda)</SelectItem>
+                    <SelectItem value="ACUERDO_MARCO_ASIGNACION" className="text-white">VI — Asignación sobre acuerdo marco</SelectItem>
+                    <SelectItem value="TIENDA_DIGITAL_ORDEN" className="text-white">VII — Orden tienda digital</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

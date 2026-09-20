@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 export default function Fallos() {
-  const { user } = useAuth({ redirectOnUnauthenticated: true });
+  useAuth({ redirectOnUnauthenticated: true });
+  const { allowed: canAutorizar } = useCapability("autorizar_fallo");
   const [page, setPage] = useState(1);
   const [lic, setLic] = useState("");
   const [dictamenId, setDictamenId] = useState("");
@@ -20,7 +22,10 @@ export default function Fallos() {
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white">Fallos</h2>
-      <p className="text-sm text-slate-400">Secuencia: emitir borrador → emitir → aprobar → publicar. La adjudicación exige fallo PUBLICADO.</p>
+      <p className="text-sm text-slate-400">Secuencia: emitir borrador → emitir → aprobar → publicar. La adjudicación exige fallo PUBLICADO. Mutaciones requieren capacidad <code className="text-slate-300">autorizar_fallo</code>.</p>
+      {!canAutorizar && (
+        <p className="text-xs text-amber-400">Sin capacidad autorizar_fallo — las acciones de mutación están deshabilitadas (el servidor es la fuente de verdad).</p>
+      )}
       <Card className="border-slate-700 bg-slate-800/50">
         <CardHeader><CardTitle className="text-white">Borrador de fallo (adjudicar)</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-5">
@@ -28,7 +33,7 @@ export default function Fallos() {
           <Input placeholder="ID dictamen" value={dictamenId} onChange={e => setDictamenId(e.target.value)} className="bg-slate-700 border-slate-600 text-white" />
           <Input placeholder="ID proveedor" value={prov} onChange={e => setProv(e.target.value)} className="bg-slate-700 border-slate-600 text-white" />
           <Input placeholder="Monto" value={monto} onChange={e => setMonto(e.target.value)} className="bg-slate-700 border-slate-600 text-white" />
-          <Button className="bg-amber-600" disabled={!lic || !dictamenId || !prov || !monto || crear.isPending} onClick={() => crear.mutate({
+          <Button className="bg-amber-600" disabled={!canAutorizar || !lic || !dictamenId || !prov || !monto || crear.isPending} onClick={() => crear.mutate({
             licitacionId: Number(lic), dictamenId: Number(dictamenId), sentido: "ADJUDICAR",
             proveedorGanadorId: Number(prov), montoAdjudicado: monto,
             fundamento: "Fallo de adjudicación con base en el dictamen aprobado y el orden de mérito.",
@@ -54,9 +59,9 @@ export default function Fallos() {
                   <td className="p-3 text-xs text-slate-300">{f.sentido}</td>
                   <td className="p-3 text-xs text-slate-300">{f.estado}</td>
                   <td className="p-3 text-right flex justify-end gap-2">
-                    {f.estado === "BORRADOR" && <Button size="sm" onClick={() => emitir.mutate({ id: f.id, motivo: "Emisión del fallo" })}>Emitir</Button>}
-                    {f.estado === "EMITIDO" && user?.role === "admin" && <Button size="sm" onClick={() => aprobar.mutate({ id: f.id, motivo: "Aprobación del fallo" })}>Aprobar</Button>}
-                    {f.estado === "APROBADO" && user?.role === "admin" && <Button size="sm" onClick={() => publicar.mutate({ id: f.id, motivo: "Publicación del fallo" })}>Publicar</Button>}
+                    {f.estado === "BORRADOR" && canAutorizar && <Button size="sm" onClick={() => emitir.mutate({ id: f.id, motivo: "Emisión del fallo" })}>Emitir</Button>}
+                    {f.estado === "EMITIDO" && canAutorizar && <Button size="sm" onClick={() => aprobar.mutate({ id: f.id, motivo: "Aprobación del fallo" })}>Aprobar</Button>}
+                    {f.estado === "APROBADO" && canAutorizar && <Button size="sm" onClick={() => publicar.mutate({ id: f.id, motivo: "Publicación del fallo" })}>Publicar</Button>}
                   </td>
                 </tr>
               ))}

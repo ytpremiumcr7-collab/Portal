@@ -9,10 +9,14 @@ import { PageHeader } from "@/components/ares/PageHeader";
 import { StatusBadge } from "@/components/ares/StatusBadge";
 import { EmptyState } from "@/components/ares/EmptyState";
 import { ClipboardList } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 type Tab = "necesidades" | "programas" | "suficiencia" | "estrategia";
 
 export default function Planeacion() {
+  useAuth({ redirectOnUnauthenticated: true });
+  const { allowed: canPlanear } = useCapability("administrar_planeacion");
   const [page, setPage] = useState(1);
   const [tab, setTab] = useState<Tab>("necesidades");
   const necesidades = trpc.planeacion.listNecesidades.useQuery({ page, pageSize: 20 });
@@ -164,7 +168,7 @@ export default function Planeacion() {
           </Select>
           <Input className="min-w-[16rem] flex-1" placeholder="Justificación de modalidad (obligatoria)" value={justificacionModalidad} onChange={(e) => setJustificacionModalidad(e.target.value)} />
           <Input className="min-w-[16rem] flex-1" placeholder="Procedencia (obligatoria)" value={procedenciaEst} onChange={(e) => setProcedenciaEst(e.target.value)} />
-          <Button disabled={definirEst.isPending || !estNecId || justificacionModalidad.trim().length < 10 || procedenciaEst.trim().length < 10}
+          <Button disabled={!canPlanear || definirEst.isPending || !estNecId || justificacionModalidad.trim().length < 10 || procedenciaEst.trim().length < 10}
             onClick={() => definirEst.mutate({ necesidadId: Number(estNecId), modalidad, justificacionModalidad: justificacionModalidad.trim(), procedencia: procedenciaEst.trim(), motivo: "Definir estrategia" })}>Definir estrategia</Button>
           <Input placeholder="Necesidad ID (vincular)" value={vincNecId} onChange={(e) => setVincNecId(e.target.value)} className="max-w-[10rem]" />
           <Input placeholder="Categoría ID" value={vincCatId} onChange={(e) => setVincCatId(e.target.value)} className="max-w-[8rem]" />

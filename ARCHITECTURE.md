@@ -303,12 +303,14 @@ Migration: **`0018_audit_p2_invariants.sql`**.
 ## Residual risks (intentionally open)
 
 1. **HSM / KMS for envelope keys** — EnvKeyProvider default; AwsKms/Vault stubs exist but need real credentials (AES-256-GCM software). Production should move active keys to HSM/KMS with app-level unwrap; rotation stub (`ARES_ENVELOPE_KEY_V{n}`) remains software-side until then.
-2. E-signature (advanced / qualified / FIEL) — `ElectronicSignatureProvider` interface (`api/lib/firma/`): default `SessionConfirmationProvider` (SESSION_CONFIRMATION); `SatEFirmaProvider` stub throws NOT_CONFIGURED until .cer+.key+.p7m + SAT OCSP/CRL is wired. Never label session confirmation as e.firma/FIEL.
+2. E-signature (advanced / qualified / FIEL) — `ElectronicSignatureProvider` (`api/lib/firma/`): default `SessionConfirmationProvider` (SESSION_CONFIRMATION). `SatEFirmaProvider` builds CMS/.p7m via `@cfdi/csd` + node-forge and OCSP against `https://cfdi.sat.gob.mx/edofiel` when AC4/AC5 + OCSP signer certs are present under `api/lib/firma/sat-cas/`; otherwise honest `NOT_CONFIGURED`. Never label session confirmation as e.firma/FIEL. Live FIEL E2E still needs network + real fixtures (not committed).
 3. Full multi-tenant SMTP password vaulting — UI host/from/status + outbox landed; secret material remains env/worker-side.
 
 
 
 ## Oleada 1 residual notes
-- `supplier_legal_entities`: global unique RFC identity; tenant `proveedores.legal_entity_id` links to it. Full multi-tenant login rewrite by RFC deferred.
 - Soft-delete licitaciones: `estado=ELIMINADA` + `deleted_at`; hard DELETE blocked.
-- LAASSP 7 modalities in catalog; workflow MVP remains LP / ITP / AD; IV–VII refuse unsupported transitions.
+
+## Oleada 2 residuals (closed / deferred)
+- **Closed:** `auth.loginByRfc` + `supplier_legal_entities` membership; SatEFirma CRYPTO path when CAs present; `assertModalidadPublishable` / `assertTransitionAllowed` for modalities 4–7; `useCapability` UI gating; migration `0020_oleada2_residuals.sql`.
+- **Deferred:** Live FIEL E2E without fixtures; full diálogo competitivo UI/rondas table UX polish; diálogo_rondas dedicated table (MVP reuses aclaraciones-like / policy JSON); richer Pagos button gating edge cases.

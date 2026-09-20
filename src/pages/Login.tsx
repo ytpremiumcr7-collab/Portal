@@ -9,15 +9,28 @@ import { PRODUCT_NAME, PRODUCT_TAGLINE } from "@/const";
 
 export default function Login() {
   const navigate = useNavigate();
+  const [mode, setMode] = useState<"email" | "rfc">("email");
   const [email, setEmail] = useState("");
+  const [rfc, setRfc] = useState("");
   const [password, setPassword] = useState("");
+  const [memberships, setMemberships] = useState<Array<{ tenantId: number; tenantNombre: string }>>([]);
   const login = trpc.auth.login.useMutation({
     onSuccess: () => navigate("/"),
+  });
+  const loginByRfc = trpc.auth.loginByRfc.useMutation({
+    onSuccess: (res) => {
+      if (res.requiresTenantSelection) {
+        setMemberships(res.memberships ?? []);
+        return;
+      }
+      navigate("/");
+    },
   });
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    login.mutate({ email, password });
+    if (mode === "rfc") loginByRfc.mutate({ rfc, password });
+    else login.mutate({ email, password });
   };
 
   return (
@@ -61,6 +74,16 @@ export default function Login() {
           </div>
 
           <form onSubmit={submit} className="space-y-4">
+            <div className="flex gap-2 text-xs">
+              <button type="button" className={`rounded border px-2 py-1 ${mode === "email" ? "border-emerald-600 text-emerald-700" : "border-slate-300 text-slate-500"}`} onClick={() => setMode("email")}>Correo</button>
+              <button type="button" className={`rounded border px-2 py-1 ${mode === "rfc" ? "border-emerald-600 text-emerald-700" : "border-slate-300 text-slate-500"}`} onClick={() => setMode("rfc")}>RFC licitante</button>
+            </div>
+            {mode === "rfc" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="rfc" className="ares-label ares-required">RFC</Label>
+              <Input id="rfc" value={rfc} onChange={(e) => setRfc(e.target.value.toUpperCase())} required className="ares-input" placeholder="XAXX010101000" />
+            </div>
+            ) : (
             <div className="space-y-1.5">
               <Label htmlFor="email" className="ares-label ares-required">
                 Correo electrónico oficial
@@ -76,6 +99,17 @@ export default function Login() {
                 placeholder="nombre@entidad.gob.mx"
               />
             </div>
+            )}
+            {memberships.length > 0 && (
+              <div className="space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
+                <p className="font-medium text-amber-900">Seleccione organización</p>
+                {memberships.map((m) => (
+                  <Button key={m.tenantId} type="button" variant="outline" className="w-full justify-start" onClick={() => loginByRfc.mutate({ rfc, password, tenantId: m.tenantId })}>
+                    {m.tenantNombre} (#{m.tenantId})
+                  </Button>
+                ))}
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="password" className="ares-label ares-required">
                 Contraseña
@@ -98,8 +132,8 @@ export default function Login() {
               </div>
             )}
 
-            <Button type="submit" disabled={login.isPending} className="ares-cta w-full">
-              {login.isPending ? "Validando credenciales…" : "Iniciar sesión"}
+            <Button type="submit" disabled={(login.isPending || loginByRfc.isPending)} className="ares-cta w-full">
+              {(login.isPending || loginByRfc.isPending) ? "Validando credenciales…" : "Iniciar sesión"}
             </Button>
           </form>
 

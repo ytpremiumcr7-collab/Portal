@@ -3,6 +3,8 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 const ACTIONS: Array<{ from: string; label: string; call: string }> = [
   { from: "RECEPCION_ABIERTA", label: "Cerrar recepción", call: "cerrarRecepcion" },
@@ -14,6 +16,8 @@ const ACTIONS: Array<{ from: string; label: string; call: string }> = [
 ];
 
 export default function Aperturas() {
+  useAuth({ redirectOnUnauthenticated: true });
+  const { allowed: canPublicar } = useCapability("publicar");
   const [page, setPage] = useState(1);
   const [lic, setLic] = useState("");
   const list = trpc.aperturas.list.useQuery({ page, pageSize: 20 });
@@ -41,7 +45,7 @@ export default function Aperturas() {
         <CardHeader><CardTitle className="text-white">Iniciar recepción</CardTitle></CardHeader>
         <CardContent className="flex gap-3">
           <Input placeholder="ID licitación" value={lic} onChange={e => setLic(e.target.value)} className="bg-slate-700 border-slate-600 text-white max-w-xs" />
-          <Button className="bg-amber-600" disabled={!lic || iniciar.isPending} onClick={() => iniciar.mutate({ licitacionId: Number(lic), motivo: "Inicio de recepción de proposiciones" })}>Iniciar</Button>
+          <Button className="bg-amber-600" disabled={!canPublicar || !lic || iniciar.isPending} onClick={() => iniciar.mutate({ licitacionId: Number(lic), motivo: "Inicio de recepción de proposiciones" })}>Iniciar</Button>
         </CardContent>
       </Card>
       <Card className="border-slate-700 bg-slate-800/50">
@@ -63,7 +67,7 @@ export default function Aperturas() {
                     <td className="p-3 text-sm text-white">{a.licitacionId}</td>
                     <td className="p-3 text-xs text-slate-300">{a.estado}</td>
                     <td className="p-3 text-xs text-slate-300">{a.ofertasRegistradas}</td>
-                    <td className="p-3 text-right">{action && <Button size="sm" onClick={() => run(action.call, a.id)}>{action.label}</Button>}</td>
+                    <td className="p-3 text-right">{action && canPublicar && <Button size="sm" onClick={() => run(action.call, a.id)}>{action.label}</Button>}</td>
                   </tr>
                 );
               })}

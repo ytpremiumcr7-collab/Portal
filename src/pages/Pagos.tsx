@@ -8,8 +8,13 @@ import { PageHeader } from "@/components/ares/PageHeader";
 import { StatusBadge } from "@/components/ares/StatusBadge";
 import { EmptyState } from "@/components/ares/EmptyState";
 import { Banknote } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 export default function Pagos() {
+  useAuth({ redirectOnUnauthenticated: true });
+  const { allowed: canPresentar } = useCapability("presentar_pago");
+  const { allowed: canAprobar } = useCapability("aprobar_pago");
   const [page, setPage] = useState(1);
   const [contratoId, setContratoId] = useState("");
   const [folio, setFolio] = useState("");
@@ -64,7 +69,7 @@ export default function Pagos() {
           </div>
           <Button
             className="ares-cta"
-            disabled={!contratoId || !folio || !monto || presentar.isPending}
+            disabled={!canPresentar || !contratoId || !folio || !monto || presentar.isPending}
             onClick={() =>
               presentar.mutate({
                 contratoId: Number(contratoId),
@@ -119,7 +124,7 @@ export default function Pagos() {
                             size="sm"
                             variant="outline"
                             className="h-7 border-slate-600 text-xs text-slate-300"
-                            onClick={() => revisar.mutate({ id: row.id, motivo: "Pasar a revisión" })}
+                            disabled={!canAprobar} onClick={() => revisar.mutate({ id: row.id, motivo: "Pasar a revisión" })}
                           >
                             Revisar
                           </Button>

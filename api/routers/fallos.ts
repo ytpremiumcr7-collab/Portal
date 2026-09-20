@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { assertTransitionAllowed, mergeModalidadRequisitos } from "../lib/procedure-policy";
 import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
 import { licitacionIdFromInput, licitacionIdFromFallo } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
@@ -48,6 +49,11 @@ export const fallosRouter = createRouter({
   })).mutation(async ({ input, ctx }) => {
     const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (lic.estado !== "EN_EVALUACION") throw new TRPCError({ code: "CONFLICT", message: "El fallo se emite con la licitación EN_EVALUACION." });
+    assertTransitionAllowed(
+      lic.tipoLicitacion as any,
+      "FALLO",
+      mergeModalidadRequisitos(null, (lic as any).modalidadMeta),
+    );
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente." });
     const db = getDb();

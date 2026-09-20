@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createRouter, authedQuery, adminQuery, publicQuery, ctxForAudit } from "./middleware";
 import { getDb } from "./queries/connection";
 import { tenants, users, proveedores } from "@db/schema";
+import { findOrCreateLegalEntity, normalizeRfc, resolveProveedorLoginCandidates } from "./lib/supplier-legal-entity";
 import { createSession, clearSessionCookie, hashPassword, verifyPassword, revokeSession, setSessionCookie, writeAudit } from "./lib/security";
 import { pageInput, pageResult } from "./lib/pagination";
 import { TRPCError } from "@trpc/server";
@@ -82,6 +83,79 @@ export const authRouter = createRouter({
     return { success: true, role: user.role, tenantId: user.tenantId };
   }),
 
+  /**
+   * Licitante / proveedor login by national RFC + password.
+   * Resolves supplier_legal_entities → tenant memberships.
+   * Single membership → session; multiple → return list (caller must selectTenantMembership).
+   */
+  loginByRfc: publicQuery.input(z.object({
+    rfc: rfcMx,
+    password: z.string().min(1),
+    tenantId: z.number().int().positive().optional(),
+  })).mutation(async ({ input, ctx }) => {
+    const ip = requestMeta(ctx.req).ipAddress;
+    const rfc = normalizeRfc(input.rfc);
+    await assertLoginAllowed(ip, `rfc:${rfc}`);
+    const db = getDb();
+    const { entity, memberships } = await resolveProveedorLoginCandidates(db, rfc);
+    if (!entity || !memberships.length) {
+      await recordLoginFailure(ip, `rfc:${rfc}`).catch(() => undefined);
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "RFC o contraseña incorrectos." });
+    }
+
+    const matched: typeof memberships = [];
+    for (const m of memberships) {
+      if (!m.passwordHash || !m.userActivo) continue;
+      if (await verifyPassword(input.password, m.passwordHash)) matched.push(m);
+    }
+    if (!matched.length) {
+      await recordLoginFailure(ip, `rfc:${rfc}`).catch(() => undefined);
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "RFC o contraseña incorrectos." });
+    }
+    await recordLoginSuccess(ip, `rfc:${rfc}`).catch(() => undefined);
+
+    const publicMemberships = matched.map((m: (typeof memberships)[number]) => ({
+      tenantId: m.tenantId,
+      tenantNombre: m.tenantNombre,
+      proveedorId: m.proveedorId,
+      usuarioId: m.usuarioId,
+      email: m.userEmail,
+    }));
+
+    if (input.tenantId) {
+      const chosen = matched.find((m: (typeof memberships)[number]) => m.tenantId === input.tenantId);
+      if (!chosen) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "El tenant indicado no es membresía de este RFC." });
+      }
+      const user = await db.query.users.findFirst({ where: and(eq(users.id, chosen.usuarioId!), eq(users.tenantId, chosen.tenantId)) });
+      if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Usuario de membresía no encontrado." });
+      await db.update(users).set({ lastSignInAt: new Date() }).where(eq(users.id, user.id));
+      const session = await createSession(user, ctx.req);
+      setSessionCookie(ctx.resHeaders, session);
+      return { success: true, role: user.role, tenantId: user.tenantId, requiresTenantSelection: false as const, memberships: publicMemberships, legalEntityId: entity.id, rfc: entity.rfc };
+    }
+
+    if (matched.length === 1) {
+      const chosen = matched[0];
+      const user = await db.query.users.findFirst({ where: and(eq(users.id, chosen.usuarioId!), eq(users.tenantId, chosen.tenantId)) });
+      if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Usuario de membresía no encontrado." });
+      await db.update(users).set({ lastSignInAt: new Date() }).where(eq(users.id, user.id));
+      const session = await createSession(user, ctx.req);
+      setSessionCookie(ctx.resHeaders, session);
+      return { success: true, role: user.role, tenantId: user.tenantId, requiresTenantSelection: false as const, memberships: publicMemberships, legalEntityId: entity.id, rfc: entity.rfc };
+    }
+
+    return {
+      success: false,
+      requiresTenantSelection: true as const,
+      memberships: publicMemberships,
+      legalEntityId: entity.id,
+      rfc: entity.rfc,
+      message: "Seleccione el tenant (organización) para continuar.",
+    };
+  }),
+
+
   logout: authedQuery.mutation(async ({ ctx }) => {
     await revokeSession(ctx.req);
     clearSessionCookie(ctx.resHeaders);
@@ -125,11 +199,17 @@ export const authRouter = createRouter({
       });
       id = Number(result[0].insertId);
       if (input.role === "proveedor" && input.proveedor) {
+        const le = await findOrCreateLegalEntity(tx, {
+          rfc: input.proveedor.rfc,
+          razonSocial: input.proveedor.razonSocial,
+          tipoPersona: input.proveedor.tipoProveedor,
+        });
         await tx.insert(proveedores).values({
           tenantId: ctx.user.tenantId,
           usuarioId: id,
+          legalEntityId: le.id,
           razonSocial: input.proveedor.razonSocial,
-          rfc: input.proveedor.rfc,
+          rfc: normalizeRfc(input.proveedor.rfc),
           tipoProveedor: input.proveedor.tipoProveedor,
           rubroPrincipal: input.proveedor.rubroPrincipal,
           email: input.email,

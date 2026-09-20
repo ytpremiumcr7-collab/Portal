@@ -5,8 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/ares/PageHeader";
+import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 export default function Desempate() {
+  useAuth({ redirectOnUnauthenticated: true });
+  const { allowed: canEmitir } = useCapability("emitir_desempate");
   const [lic, setLic] = useState("");
   const [semilla, setSemilla] = useState("");
   const [orden, setOrden] = useState("1:101,2:102"); // orden:participacionId
@@ -28,7 +32,7 @@ export default function Desempate() {
         <div><Label>Licitación ID</Label><Input value={lic} onChange={(e) => setLic(e.target.value)} className="max-w-[8rem]" /></div>
         <div><Label>Semilla</Label><Input value={semilla} onChange={(e) => setSemilla(e.target.value)} /></div>
         <div><Label>Motivo</Label><Input value={motivo} onChange={(e) => setMotivo(e.target.value)} className="min-w-[14rem]" /></div>
-        <Button className="self-end" disabled={!lic || emitir.isPending} onClick={() => emitir.mutate({ licitacionId: Number(lic), metodo: "SORTEO_DOCUMENTADO", semilla: semilla || undefined, motivo })}>Emitir acto</Button>
+        <Button className="self-end" disabled={!canEmitir || !lic || emitir.isPending} onClick={() => emitir.mutate({ licitacionId: Number(lic), metodo: "SORTEO_DOCUMENTADO", semilla: semilla || undefined, motivo })}>Emitir acto</Button>
       </CardContent></Card>
       {acto.data && (
         <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Acto #{acto.data.id} — {acto.data.estado}</CardTitle></CardHeader>

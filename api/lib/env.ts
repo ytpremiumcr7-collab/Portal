@@ -29,3 +29,15 @@ export const env = {
   storagePath: process.env.ARES_STORAGE_PATH || "./storage",
   allowPublicRegister: allowPublicRegister(),
 };
+
+/** e.firma / FIEL OCSP — see api/lib/firma/sat-cas/README.md */
+export const efirmaEnv = {
+  ocspEnabled: (() => {
+    const raw = process.env.PA_EFIRMA_OCSP;
+    if (raw === "0" || raw === "false") return false;
+    if (raw === "1" || raw === "true") return true;
+    return process.env.NODE_ENV === "production";
+  })(),
+  ocspFailOpen: process.env.PA_EFIRMA_OCSP_FAIL_OPEN === "1" || process.env.PA_EFIRMA_OCSP_FAIL_OPEN === "true",
+  satCasDir: process.env.PA_EFIRMA_SAT_CAS_DIR || "",
+};

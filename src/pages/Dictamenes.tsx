@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 export default function Dictamenes() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
-  const caps = new Set((user as any)?.capabilities ?? []);
-  const canEmitir = caps.has("emitir_dictamen") || user?.role === "admin";
-  const canAprobar = caps.has("aprobar_juridico") || user?.role === "admin";
+  const { allowed: canEmitir } = useCapability("emitir_dictamen");
+  const { allowed: canAprobar } = useCapability("aprobar_juridico");
   const [page, setPage] = useState(1);
   const [lic, setLic] = useState("");
   const [prov, setProv] = useState("");

@@ -91,6 +91,11 @@ describe("Oleada 3 — LAASSP 7 modalities catalog", () => {
     expect(policyRequiresAperturaPublica(["EVALUACION", "DICTAMEN", "FALLO"])).toBe(false);
     expect(policyRequiresAperturaPublica(["RECEPCION", "APERTURA", "EVALUACION"])).toBe(true);
     expect(() => assertModalidadWorkflowSupported("LICITACION_PUBLICA")).not.toThrow();
-    expect(() => assertModalidadWorkflowSupported("DIALOGO_COMPETITIVO")).toThrow(/no está habilitado|Hacienda/);
+    expect(() => assertModalidadWorkflowSupported("DIALOGO_COMPETITIVO")).toThrow(/autorizacionComiteRef|Hacienda|metadatos|no está habilitado/);
+    // With auth meta, workflowSupported path allows via assertModalidadPublishable
+    expect(() => assertModalidadWorkflowSupported("DIALOGO_COMPETITIVO", {
+      autorizacionComiteRef: "COM-1",
+      autorizadoPorHacienda: true,
+    })).not.toThrow();
   });
 });
