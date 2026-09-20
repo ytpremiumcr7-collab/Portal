@@ -19,7 +19,9 @@
     "outbox:once": "npx tsx api/lib/outbox-worker.ts",
     "outbox:worker": "npx tsx api/lib/outbox-worker.ts --loop",
     "migrate:legacy-sobres": "npx tsx scripts/migrate-legacy-sobres.ts",
-    "ensure:system-actors": "npx tsx scripts/ensure-system-actors.ts"
+    "ensure:system-actors": "npx tsx scripts/ensure-system-actors.ts",
+    "seed:ops": "tsx db/seed.ts && tsx db/seed-operativo.ts",
+    "seed:operativo": "tsx db/seed-operativo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.965.0",

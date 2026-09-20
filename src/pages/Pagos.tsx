@@ -65,9 +65,9 @@ export default function Pagos() {
         ]}
       />
 
-      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
-        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
-          <CardTitle className="text-sm font-semibold text-slate-100">Presentar estimación</CardTitle>
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-900">Presentar estimación</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3 p-4 sm:px-5">
           <div className="space-y-1.5">
@@ -124,9 +124,9 @@ export default function Pagos() {
         </CardContent>
       </Card>
 
-      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
-        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
-          <CardTitle className="text-sm font-semibold text-slate-100">Estimaciones</CardTitle>
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-900">Estimaciones</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {(list.data?.items ?? []).length === 0 ? (
@@ -152,7 +152,7 @@ export default function Pagos() {
                     <tr key={row.id}>
                       <td className="tabular-nums text-slate-400">{row.id}</td>
                       <td className="font-medium text-slate-200">{row.folio}</td>
-                      <td className="tabular-nums text-slate-300">${row.montoNeto}</td>
+                      <td className="tabular-nums text-slate-700">${row.montoNeto}</td>
                       <td>
                         <StatusBadge status={row.estado} />
                       </td>
@@ -161,7 +161,7 @@ export default function Pagos() {
                           <CapButton
                             size="sm"
                             variant="outline"
-                            className="h-7 border-slate-600 text-xs text-slate-300"
+                            className="h-7 border-slate-600 text-xs text-slate-700"
                             allowed={canAprobar}
                             missingLabel={noAprobar}
                             disabledExtra={revisar.isPending}
@@ -246,7 +246,7 @@ export default function Pagos() {
         <Button
           variant="outline"
           size="sm"
-          className="border-slate-600 text-slate-300"
+          className="border-slate-600 text-slate-700"
           disabled={page <= 1}
           onClick={() => setPage((p) => p - 1)}
         >
@@ -255,7 +255,7 @@ export default function Pagos() {
         <Button
           variant="outline"
           size="sm"
-          className="border-slate-600 text-slate-300"
+          className="border-slate-600 text-slate-700"
           disabled={!list.data || page >= (list.data.pageCount ?? 1)}
           onClick={() => setPage((p) => p + 1)}
         >

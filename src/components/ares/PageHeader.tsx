@@ -26,7 +26,7 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <header className={cn("space-y-3 border-b border-slate-200 pb-4", className)}>
+    <header className={cn("space-y-3 border-b border-slate-200/90 pb-4", className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
         <nav aria-label="Miga de pan" className="flex flex-wrap items-center gap-1 text-xs text-slate-500">
           {breadcrumbs.map((crumb, i) => (
@@ -45,7 +45,7 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-[1.65rem]">
             {title}
           </h1>
           {description && (

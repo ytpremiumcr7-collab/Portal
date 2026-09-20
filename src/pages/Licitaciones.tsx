@@ -79,7 +79,7 @@ export default function Licitaciones() {
         }
       />
 
-      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+      <Card className="border-slate-200 bg-white shadow-sm">
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
           <div className="relative min-w-0 flex-1 space-y-1.5">
             <Label htmlFor="lic-search" className="ares-label">
@@ -111,7 +111,7 @@ export default function Licitaciones() {
               <SelectTrigger className="ares-input">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
-              <SelectContent className="border-slate-700 bg-slate-900">
+              <SelectContent className="border-slate-200 bg-white">
                 {estados.map((e) => (
                   <SelectItem key={e.value} value={e.value} className="text-slate-200">
                     {e.label}
@@ -123,9 +123,9 @@ export default function Licitaciones() {
         </CardContent>
       </Card>
 
-      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
-        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
-          <CardTitle className="text-sm font-semibold text-slate-100">
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-900">
             {licitacionesPage?.items.length ?? 0} procedimiento
             {(licitacionesPage?.items.length ?? 0) === 1 ? "" : "s"} en esta página
           </CardTitle>
@@ -164,7 +164,7 @@ export default function Licitaciones() {
                   {licitacionesPage.items.map((lic: any) => (
                     <tr key={lic.id}>
                       <td className="font-mono text-xs text-slate-400">{lic.codigo}</td>
-                      <td className="max-w-xs truncate font-medium text-slate-100">{lic.titulo}</td>
+                      <td className="max-w-xs truncate font-medium text-slate-900">{lic.titulo}</td>
                       <td className="max-w-[12rem] truncate text-slate-400">
                         {lic.entidad?.razonSocial}
                       </td>
@@ -180,7 +180,7 @@ export default function Licitaciones() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 text-slate-400 hover:text-slate-100"
+                              className="h-8 w-8 text-slate-400 hover:text-slate-900"
                               title="Ver expediente"
                             >
                               <Eye className="h-4 w-4" />
@@ -235,7 +235,7 @@ export default function Licitaciones() {
         <Button
           variant="outline"
           size="sm"
-          className="border-slate-600 text-slate-300"
+          className="border-slate-600 text-slate-700"
           disabled={page <= 1}
           onClick={() => setPage((p) => p - 1)}
         >
@@ -247,7 +247,7 @@ export default function Licitaciones() {
         <Button
           variant="outline"
           size="sm"
-          className="border-slate-600 text-slate-300"
+          className="border-slate-600 text-slate-700"
           disabled={!licitacionesPage || page >= licitacionesPage.pageCount}
           onClick={() => setPage((p) => p + 1)}
         >

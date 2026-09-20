@@ -12,6 +12,22 @@ Herramienta de arranque operativo (no es un “modo producto”). Crea un tenant
 - Email: `admin@ares.local`
 - Password: `AresDemo2026!` (configurable vía `SEED_*` en `.env`)
 
+
+## Datos de arranque operativo / QA (`db/seed-operativo.ts`)
+
+No es una demostración de producto ni un interruptor de runtime. Carga expedientes, proveedores, proposiciones
+selladas y métricas de tablero para pruebas locales y QA.
+
+```bash
+npx tsx db/seed.ts
+npx tsx db/seed-operativo.ts
+# equivalente:
+npm run seed:ops
+```
+
+Credenciales del administrador: las mismas `SEED_ADMIN_*` / `SEED_TENANT_*` de `.env`.
+Códigos de procedimiento marcados `OPS-*` (idempotente al re-ejecutar).
+
 ## Arranque
 ```bash
 # MySQL ya corriendo, luego:

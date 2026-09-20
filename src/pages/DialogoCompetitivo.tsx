@@ -45,9 +45,9 @@ export default function DialogoCompetitivo() {
         ]}
       />
 
-      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
-        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
-          <CardTitle className="text-sm font-semibold text-slate-100">Abrir ronda</CardTitle>
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-900">Abrir ronda</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 sm:px-5 lg:grid-cols-4">
           <div className="space-y-1.5">
@@ -68,7 +68,7 @@ export default function DialogoCompetitivo() {
             <Textarea
               value={motivoAbrir}
               onChange={(e) => setMotivoAbrir(e.target.value)}
-              className="min-h-[72px] border-slate-600 bg-slate-800/80 text-slate-100"
+              className="min-h-[72px] border-slate-600 bg-slate-800/80 text-slate-900"
               placeholder="Motivo jurídico (obligatorio, sin auto-relleno)"
             />
           </div>
@@ -97,9 +97,9 @@ export default function DialogoCompetitivo() {
         </CardContent>
       </Card>
 
-      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
-        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
-          <CardTitle className="text-sm font-semibold text-slate-100">Rondas</CardTitle>
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-900">Rondas</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {(list.data?.items ?? []).length === 0 ? (
@@ -125,7 +125,7 @@ export default function DialogoCompetitivo() {
                   {(list.data?.items ?? []).map((row: any) => (
                     <tr key={row.id}>
                       <td className="tabular-nums text-slate-400">{row.id}</td>
-                      <td className="tabular-nums text-slate-300">{row.licitacionId}</td>
+                      <td className="tabular-nums text-slate-700">{row.licitacionId}</td>
                       <td className="tabular-nums text-slate-200">{row.ronda}</td>
                       <td className="max-w-[14rem] truncate text-slate-200" title={row.tema}>
                         {row.tema}
@@ -148,7 +148,7 @@ export default function DialogoCompetitivo() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 border-slate-600 text-xs text-slate-300"
+                                className="h-7 border-slate-600 text-xs text-slate-700"
                                 title={capTitle}
                                 disabled={
                                   !canPublicar ||
@@ -172,7 +172,7 @@ export default function DialogoCompetitivo() {
                                 onChange={(e) =>
                                   setNotaDraft((n) => ({ ...n, [row.id]: e.target.value }))
                                 }
-                                className="min-h-[56px] border-slate-600 bg-slate-800/80 text-xs text-slate-100"
+                                className="min-h-[56px] border-slate-600 bg-slate-800/80 text-xs text-slate-900"
                               />
                               <Input
                                 placeholder="Motivo del registro de nota"
@@ -222,7 +222,7 @@ export default function DialogoCompetitivo() {
         <Button
           variant="outline"
           size="sm"
-          className="border-slate-600 text-slate-300"
+          className="border-slate-600 text-slate-700"
           disabled={page <= 1}
           onClick={() => setPage((p) => p - 1)}
         >
@@ -231,7 +231,7 @@ export default function DialogoCompetitivo() {
         <Button
           variant="outline"
           size="sm"
-          className="border-slate-600 text-slate-300"
+          className="border-slate-600 text-slate-700"
           disabled={!list.data || page >= (list.data.pageCount ?? 1)}
           onClick={() => setPage((p) => p + 1)}
         >

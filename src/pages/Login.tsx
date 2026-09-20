@@ -44,7 +44,7 @@ export default function Login() {
             <div>
               <p className="text-lg font-semibold tracking-wide">{PRODUCT_NAME}</p>
               <p className="text-[11px] uppercase tracking-wider text-slate-300">
-                Sistema de adquisiciones
+                Contratación pública
               </p>
             </div>
           </div>
@@ -65,9 +65,9 @@ export default function Login() {
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-10">
-        <div className="w-full max-w-md rounded border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <div className="w-full max-w-md rounded border border-slate-300 bg-white p-6 shadow-sm ring-1 ring-slate-900/5 sm:p-8">
           <div className="mb-6 space-y-1">
-            <h2 className="text-lg font-semibold text-slate-900">Acceso al sistema</h2>
+            <h2 className="text-lg font-semibold tracking-tight text-slate-900">Acceso al sistema</h2>
             <p className="text-sm text-slate-600">
               Ingrese con las credenciales oficiales de su organización.
             </p>

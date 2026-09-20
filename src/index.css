@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ARES — light formal governmental portal (es-MX) */
+/* Piedra Angular — portal formal claro (es-MX) */
 @layer base {
   :root {
     --background: 210 20% 98%;
@@ -34,6 +34,8 @@
     --sidebar-border: 222 35% 22%;
     --sidebar-ring: 152 45% 42%;
     --ares-navy: 222 47% 16%;
+    --pa-paper: 210 25% 99%;
+    --pa-ink: 222 47% 12%;
     --ares-navy-deep: 222 50% 12%;
     --ares-ok: 152 45% 36%;
     --ares-danger: 0 65% 42%;
@@ -121,5 +123,13 @@
 
   .ares-gov-header {
     @apply border-b-4 border-[hsl(var(--ares-ok))] bg-[hsl(var(--ares-navy))] text-white;
+  }
+
+  .pa-paper {
+    @apply rounded border border-slate-200 bg-white shadow-sm;
+  }
+
+  .pa-section-title {
+    @apply text-sm font-semibold tracking-tight text-slate-900;
   }
 }

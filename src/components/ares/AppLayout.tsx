@@ -144,7 +144,7 @@ function NavLink({
       className={cn(
         "group flex items-center gap-2.5 rounded px-2.5 py-1.5 text-[13px] font-medium transition-colors",
         active
-          ? "border-l-[3px] border-emerald-400 bg-white/10 text-white pl-[7px]"
+          ? "border-l-[3px] border-emerald-400 bg-white/10 text-white pl-[7px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
           : "border-l-[3px] border-transparent text-slate-300 hover:bg-white/5 hover:text-white",
       )}
     >
@@ -202,10 +202,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-2.5 py-3">
+        <nav className="flex-1 overflow-y-auto px-2.5 py-4">
           {filteredGroups.map((group) => (
-            <div key={group.id} className="mb-3">
-              <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <div key={group.id} className="mb-4">
+              <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
                 {group.label}
               </p>
               <div className="space-y-0.5">
@@ -271,6 +271,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
 
       <main className="flex-1 pt-14 lg:ml-64 lg:pt-0">
+        <div className="sticky top-0 z-20 hidden border-b border-slate-200/80 bg-slate-100/90 backdrop-blur-sm lg:block">
+          <div className="mx-auto flex h-11 max-w-7xl items-center px-8 text-[11px] uppercase tracking-wider text-slate-500">
+            Portal de contratación · acceso autenticado
+          </div>
+        </div>
         <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8 lg:py-6">{children}</div>
       </main>
     </div>

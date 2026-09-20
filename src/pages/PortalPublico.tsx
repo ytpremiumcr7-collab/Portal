@@ -5,7 +5,7 @@ import { PRODUCT_NAME, PRODUCT_TAGLINE } from "@/const";
 
 export default function PortalPublico() {
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen bg-[hsl(210_20%_97%)]">
       <header className="ares-gov-header">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
           <div className="flex items-center gap-3">
@@ -47,7 +47,7 @@ export default function PortalPublico() {
             { to: "/buscador", icon: Search, title: "Buscador", desc: "Búsqueda por clave, objeto o estado." },
             { to: "/consulta-publica", icon: Shield, title: "Consulta pública", desc: "Datos abiertos, sanciones e OCDS." },
           ].map((c) => (
-            <Link key={c.to} to={c.to} className="ares-panel p-5 transition hover:border-slate-300 hover:shadow">
+            <Link key={c.to} to={c.to} className="ares-panel p-5 transition hover:border-slate-300 hover:bg-slate-50">
               <c.icon className="mb-3 h-5 w-5 text-[hsl(222_47%_20%)]" />
               <h2 className="text-sm font-semibold text-slate-900">{c.title}</h2>
               <p className="mt-1 text-xs text-slate-500">{c.desc}</p>

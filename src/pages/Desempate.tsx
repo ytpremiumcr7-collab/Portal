@@ -28,16 +28,16 @@ export default function Desempate() {
   return (
     <div className="space-y-5">
       <PageHeader title="Desempate / sorteo documentado" description="Emitir acto y registrar resultado con evidencia vinculada al procedimiento." breadcrumbs={[{ label: "Procedimiento", href: "/licitaciones" }, { label: "Desempate" }]} />
-      <Card className="border-slate-700/80 bg-slate-900/70"><CardContent className="flex flex-wrap gap-3 p-4">
+      <Card className="border-slate-200 bg-white shadow-sm"><CardContent className="flex flex-wrap gap-3 p-4">
         <div><Label>Licitación ID</Label><Input value={lic} onChange={(e) => setLic(e.target.value)} className="max-w-[8rem]" /></div>
         <div><Label>Semilla</Label><Input value={semilla} onChange={(e) => setSemilla(e.target.value)} /></div>
         <div><Label>Motivo</Label><Input value={motivo} onChange={(e) => setMotivo(e.target.value)} className="min-w-[14rem]" /></div>
         <Button className="self-end" disabled={!canEmitir || !lic || emitir.isPending} onClick={() => emitir.mutate({ licitacionId: Number(lic), metodo: "SORTEO_DOCUMENTADO", semilla: semilla || undefined, motivo })}>Emitir acto</Button>
       </CardContent></Card>
       {acto.data && (
-        <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Acto #{acto.data.id} — {acto.data.estado}</CardTitle></CardHeader>
-          <CardContent className="space-y-3 p-4 text-sm text-slate-300">
-            <pre className="overflow-auto rounded bg-slate-950/60 p-3 text-xs">{JSON.stringify(acto.data, null, 2)}</pre>
+        <Card className="border-slate-200 bg-white shadow-sm"><CardHeader><CardTitle className="text-sm">Acto #{acto.data.id} — {acto.data.estado}</CardTitle></CardHeader>
+          <CardContent className="space-y-3 p-4 text-sm text-slate-700">
+            <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{JSON.stringify(acto.data, null, 2)}</pre>
             {["EMITIDO", "BORRADOR"].includes(acto.data.estado) && (
               <div className="flex flex-wrap gap-3">
                 <div><Label>Orden (orden:participacionId,…)</Label><Input value={orden} onChange={(e) => setOrden(e.target.value)} className="min-w-[16rem]" /></div>
