@@ -16,6 +16,7 @@ import {
   fallos,
   actoAdjudicacion,
   participaciones,
+  expedientes,
 } from "@db/schema";
 
 type IdInput = { id?: number; licitacionId?: number; contratoId?: number; dictamenId?: number };
@@ -198,5 +199,16 @@ export async function licitacionIdFromJunta(input: unknown, tenantId: number): P
     columns: { licitacionId: true },
   });
   if (!row) throw new Error("Junta no encontrada");
+  return row.licitacionId;
+}
+
+export async function licitacionIdFromExpediente(input: unknown, tenantId: number): Promise<number> {
+  const i = input as { expedienteId?: number; id?: number };
+  const expedienteId = Number(i.expedienteId ?? i.id);
+  const row = await getDb().query.expedientes.findFirst({
+    where: and(eq(expedientes.id, expedienteId), eq(expedientes.tenantId, tenantId)),
+    columns: { licitacionId: true },
+  });
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Expediente no encontrado." });
   return row.licitacionId;
 }

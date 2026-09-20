@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, asc } from "drizzle-orm";
-import { createRouter, adminQuery, convocanteQuery, capabilityQuery } from "../middleware";
+import { createRouter, adminQuery, convocanteQuery, capabilityQuery, procedureMutation } from "../middleware";
+import { licitacionIdFromExpediente } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
 import { expedienteRequirements, expedientes } from "@db/schema";
 import { pageInput, pageResult } from "../lib/pagination";
@@ -62,7 +63,11 @@ export const expedientesRouter = createRouter({
     return updated;
   }),
 
-  resolverRevision: adminQuery.input(z.object({ expedienteId: z.number().int().positive(), decision: z.enum(["APROBAR", "OBSERVAR"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
+  resolverRevision: procedureMutation({
+    capability: "aprobar_juridico",
+    roles: ["creador", "dictaminador"],
+    resolveLicitacionId: (i, ctx) => licitacionIdFromExpediente(i, ctx.user!.tenantId),
+  }).input(z.object({ expedienteId: z.number().int().positive(), decision: z.enum(["APROBAR", "OBSERVAR"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertExpediente(ctx.user.tenantId, input.expedienteId);
     if (current.estado !== "REVISION_JURIDICA") throw new TRPCError({ code: "CONFLICT", message: "El expediente no está en revisión jurídica." });
     const next = input.decision === "APROBAR" ? "APROBADO" : "OBSERVADO";

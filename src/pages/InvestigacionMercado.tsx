@@ -16,6 +16,8 @@ export default function InvestigacionMercado() {
   const [cotProvId, setCotProvId] = useState("");
   const [cotMonto, setCotMonto] = useState("");
   const [cotId, setCotId] = useState("");
+  const [resultado, setResultado] = useState("");
+  const [conclusion, setConclusion] = useState("");
   const list = trpc.investigacionMercado.list.useQuery({ page, pageSize: 20 });
   const detail = trpc.investigacionMercado.getById.useQuery({ id: selectedId! }, { enabled: !!selectedId });
   const comparativo = trpc.investigacionMercado.comparativo.useQuery({ investigacionId: selectedId! }, { enabled: !!selectedId });
@@ -44,7 +46,13 @@ export default function InvestigacionMercado() {
               <td className="space-x-1 p-3 text-right">
                 {row.estado === "BORRADOR" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "EN_CONSULTA", motivo: "Abrir consulta" })}>Consultar</Button>}
                 {row.estado === "EN_CONSULTA" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "CERRADA", motivo: "Cerrar consulta" })}>Cerrar</Button>}
-                {row.estado === "CERRADA" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "CONCLUIDA", resultado: "Precio de referencia obtenido", conclusion: "Investigación concluida con cotizaciones validadas", motivo: "Concluir" })}>Concluir</Button>}
+                {row.estado === "CERRADA" && (
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    <Input placeholder="Resultado" value={resultado} onChange={(e) => setResultado(e.target.value)} className="max-w-[10rem] h-8" />
+                    <Input placeholder="Conclusión" value={conclusion} onChange={(e) => setConclusion(e.target.value)} className="max-w-[12rem] h-8" />
+                    <Button size="sm" disabled={!resultado.trim() || !conclusion.trim()} onClick={() => trans.mutate({ id: row.id, to: "CONCLUIDA", resultado, conclusion, motivo: "Concluir" })}>Concluir</Button>
+                  </span>
+                )}
               </td>
             </tr>
           ))}</tbody>

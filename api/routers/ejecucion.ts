@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { moneyAdd, moneyFixed2, moneyLt } from "../lib/money";
 import { createRouter, authedQuery, procedureMutation, ctxForAudit } from "../middleware";
 import { licitacionIdFromContrato, licitacionIdFromModificacion, licitacionIdFromEjecucion, licitacionIdFromEntregable } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
@@ -77,14 +78,14 @@ export const ejecucionRouter = createRouter({
     if (input.to === "FORMALIZADA") {
       patch.formalizadaAt = new Date();
       if (cur.montoDelta) {
-        const nuevo = Number(contrato.monto) + Number(cur.montoDelta);
-        if (nuevo < 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Monto resultante negativo." });
+        const nuevo = moneyFixed2(moneyAdd(contrato.monto, cur.montoDelta));
+        if (moneyLt(nuevo, 0)) throw new TRPCError({ code: "BAD_REQUEST", message: "Monto resultante negativo." });
       }
     }
     await db.transaction(async (tx) => {
       await tx.update(modificacionesContractuales).set(patch as any).where(and(eq(modificacionesContractuales.id, input.id), eq(modificacionesContractuales.tenantId, ctx.user.tenantId), eq(modificacionesContractuales.estado, cur.estado)));
       if (input.to === "FORMALIZADA" && cur.montoDelta) {
-        await tx.update(contratos).set({ monto: String(Number(contrato.monto) + Number(cur.montoDelta)) } as any)
+        await tx.update(contratos).set({ monto: moneyFixed2(moneyAdd(contrato.monto, cur.montoDelta)) } as any)
           .where(and(eq(contratos.id, contrato.id), eq(contratos.tenantId, ctx.user.tenantId)));
       }
       await appendExpedienteEvent(tx, ctx, { expedienteId: contrato.expedienteId, tipo: `MODIFICACION_${input.to}`, estadoAnterior: cur.estado, estadoNuevo: input.to, motivo: input.motivo, payload: { modificacionId: input.id } });

@@ -4,7 +4,7 @@ import { TRPCError } from "@trpc/server";
 import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
 import { licitacionIdFromApertura, licitacionIdFromInput } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
-import { aperturas, aperturaRegistros, participaciones, licitaciones, proposiciones, proposicionDocumentos, licitacionReglasVersion } from "@db/schema";
+import { aperturas, aperturaRegistros, participaciones, licitaciones, proposiciones, proposicionDocumentos, licitacionReglasVersion, consorcioMiembros } from "@db/schema";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { assertLicitacionExists } from "../lib/domain";
 import { assertAperturaTransition } from "../lib/phase2-transitions";
@@ -99,6 +99,17 @@ export const aperturasRouter = createRouter({
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Participación #${o.id} sin sobre económico sellado.` });
       }
       const ctHash = ciphertextHash(sobre.ciphertext);
+      let miembrosManifest: Array<{ proveedorId: number; rol: string; porcentajeParticipacion: string | null }> | undefined;
+      if (prop.consorcioId != null) {
+        const miembros = await db.query.consorcioMiembros.findMany({
+          where: and(eq(consorcioMiembros.tenantId, ctx.user.tenantId), eq(consorcioMiembros.consorcioId, prop.consorcioId)),
+        });
+        miembrosManifest = miembros.map((m) => ({
+          proveedorId: m.proveedorId,
+          rol: m.rol,
+          porcentajeParticipacion: m.porcentajeParticipacion != null ? String(m.porcentajeParticipacion) : null,
+        }));
+      }
       const { manifestHash } = buildProposicionManifest({
         proposicionId: prop.id,
         participacionId: o.id,
@@ -106,6 +117,8 @@ export const aperturasRouter = createRouter({
         ciphertextHash: ctHash,
         recibidoAt: prop.recibidoAt,
         documentos: propDocs,
+        consorcioId: prop.consorcioId ?? undefined,
+        consorcioMiembros: miembrosManifest,
       });
       if (manifestHash !== prop.manifestHash) {
         throw new TRPCError({

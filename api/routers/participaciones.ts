@@ -2,7 +2,7 @@ import { z } from "zod";
 import { eq, desc, and, count, sql, inArray } from "drizzle-orm";
 import { createRouter, procedureMutation, adminQuery, proveedorQuery, ctxForAudit, authedQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { participaciones, proveedores, licitacionReglasVersion, proposiciones, proposicionDocumentos, documentos, coiDeclaraciones, actosDesempate } from "@db/schema";
+import { participaciones, proveedores, licitacionReglasVersion, proposiciones, proposicionDocumentos, documentos, coiDeclaraciones, actosDesempate, consorcios, consorcioMiembros } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertLicitacionExists, validateRubric } from "../lib/domain";
 import { assertPositiveDays, assertScore } from "../lib/security";
@@ -131,14 +131,15 @@ export const participacionesRouter = createRouter({
     plazoEjecucion: z.number().int().positive(),
     observaciones: z.string().trim().optional(),
     documentoIds: z.array(z.number().int().positive()).min(2),
+    /** Optional: ACTIVO consorcio must be linked BEFORE present; frozen into proposición + manifest. */
+    consorcioId: z.number().int().positive().optional(),
   })).mutation(async ({ input, ctx }) => {
     const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
-    // Canonical reception: calendario RECEPCION ventana_* only (never fechaCierre day clock).
-    await assertRecepcionDentroDeVentana(ctx.user.tenantId, input.licitacionId);
-    if (Number(input.montoOferta) <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
+    // Money gate before TX (format already zod-validated); reception window asserted INSIDE TX at commit instant.
+    if (!(Number(input.montoOferta) > 0)) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
     if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });
@@ -172,20 +173,55 @@ export const participacionesRouter = createRouter({
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
 
-    const recibidoAt = new Date();
     let id = 0;
     let created: any = null;
     let manifestHashOut = "";
+    let recibidoAt = new Date();
     await db.transaction(async (tx) => {
+      // Same-instant reception: lock calendar, stamp recibidoAt, assert ventana with THAT instant.
+      recibidoAt = new Date();
+      await assertRecepcionDentroDeVentana(ctx.user.tenantId, input.licitacionId, {
+        at: recibidoAt,
+        tx,
+        lock: true,
+      });
+
+      let consorcioId: number | null = input.consorcioId ?? null;
+      let miembrosForManifest: Array<{ proveedorId: number; rol: string; porcentajeParticipacion: string | null }> = [];
+      if (consorcioId != null) {
+        const cons = await tx.query.consorcios.findFirst({
+          where: and(eq(consorcios.id, consorcioId), eq(consorcios.tenantId, ctx.user.tenantId)),
+        });
+        if (!cons || cons.estado !== "ACTIVO") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sólo un consorcio ACTIVO puede presentarse; vincular/congelar antes de presentar." });
+        }
+        const miembros = await tx.query.consorcioMiembros.findMany({
+          where: and(eq(consorcioMiembros.tenantId, ctx.user.tenantId), eq(consorcioMiembros.consorcioId, consorcioId)),
+        });
+        if (!miembros.some((m) => Number(m.proveedorId) === Number(provider.id))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "El proveedor presentante debe ser miembro del consorcio." });
+        }
+        miembrosForManifest = miembros.map((m) => ({
+          proveedorId: m.proveedorId,
+          rol: m.rol,
+          porcentajeParticipacion: m.porcentajeParticipacion != null ? String(m.porcentajeParticipacion) : null,
+        }));
+        // Freeze consorcio identity at present.
+        await tx.update(consorcios).set({ estado: "CONGELADO" } as any)
+          .where(and(eq(consorcios.id, consorcioId), eq(consorcios.tenantId, ctx.user.tenantId), eq(consorcios.estado, "ACTIVO")));
+      }
+
       const result = await tx.insert(participaciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
         montoOferta: ENVELOPE_PLACEHOLDER_MONTO, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion,
         estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null, recibidoAt,
+        consorcioId,
       } as any);
       id = Number(result[0].insertId);
       const propIns = await tx.insert(proposiciones).values({
         tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
         participacionId: id, estado: "RECIBIDA", montoOferta: ENVELOPE_PLACEHOLDER_MONTO, recibidoAt,
+        consorcioId,
       } as any);
       const proposicionId = Number(propIns[0].insertId);
       const seal = await insertSobreEconomico(tx, {
@@ -212,6 +248,8 @@ export const participacionesRouter = createRouter({
         ciphertextHash: ctHash,
         recibidoAt,
         documentos: propDocs,
+        consorcioId: consorcioId ?? undefined,
+        consorcioMiembros: miembrosForManifest.length ? miembrosForManifest : undefined,
       });
       manifestHashOut = manifestHash;
       await tx.update(proposiciones).set({
@@ -378,18 +416,24 @@ export const participacionesRouter = createRouter({
     return updated;
   }),
 
-  /** Proveedor retira su propia proposición (RETIRADA). */
-  retirar: proveedorQuery.input(z.object({
+  /** Proveedor retira su propia proposición (RETIRADA). Admin MUST use invalidar — not this path. */
+  retirar: authedQuery.input(z.object({
     id: z.number().int().positive(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
+    if (ctx.user.role !== "proveedor") {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Sólo el proveedor titular puede retirar. La autoridad debe usar invalidar.",
+      });
+    }
     const db = getDb();
     const current = await db.query.participaciones.findFirst({
       where: and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)),
       with: { proveedor: true },
     });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
-    if ((current as any).proveedor?.usuarioId !== ctx.user.id && ctx.user.role !== "admin") {
+    if ((current as any).proveedor?.usuarioId !== ctx.user.id) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Sólo el proveedor titular puede retirar su proposición." });
     }
     if (["GANADORA", "ADMISIBLE", "RETIRADA", "INVALIDADA"].includes(current.estadoEvaluacion)) {
@@ -413,8 +457,12 @@ export const participacionesRouter = createRouter({
     return { success: true, estado: "RETIRADA" as const };
   }),
 
-  /** Admin/convocante invalida proposición (INVALIDADA) — distinto de retiro del proveedor. */
-  invalidar: adminQuery.input(z.object({
+  /** Autoridad de procedimiento invalida proposición (INVALIDADA) — distinto de retiro del proveedor. */
+  invalidar: procedureMutation({
+    capability: "crear_procedimiento",
+    roles: ["creador"],
+    resolveLicitacionId: (i, ctx) => licitacionIdFromParticipacion(i, ctx.user!.tenantId),
+  }).input(z.object({
     id: z.number().int().positive(),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
@@ -436,7 +484,7 @@ export const participacionesRouter = createRouter({
         await appendExpedienteEvent(tx, ctx, {
           expedienteId: expediente.id, tipo: "PARTICIPACION_INVALIDADA",
           estadoAnterior: current.estadoEvaluacion, estadoNuevo: "INVALIDADA", motivo: input.motivo,
-          payload: { participacionId: input.id, actor: "admin" },
+          payload: { participacionId: input.id, actor: "autoridad" },
         });
       }
       await writeAudit({ ctx: ctxForAudit(ctx), accion: "INVALIDAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });

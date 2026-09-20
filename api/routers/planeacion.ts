@@ -10,6 +10,7 @@ import {
 import { assertNecesidadTransition, assertSuficienciaParaVincular } from "../lib/phase3-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { moneySub, moneyAdd, moneyFixed2, moneyGt } from "../lib/money";
 import { nextLicitacionCode } from "../lib/domain";
 import { createExpedienteForLicitacion as createExp } from "../lib/expediente";
 
@@ -148,12 +149,12 @@ export const planeacionRouter = createRouter({
         .limit(1);
       const partida = locked[0];
       if (!partida) throw new TRPCError({ code: "NOT_FOUND", message: "Partida no encontrada." });
-      const disponible = Number(partida.montoAsignado) - Number(partida.montoComprometido);
-      if (Number(cur.monto) > disponible) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Disponibilidad presupuestaria insuficiente." });
+      const disponible = moneyFixed2(moneySub(partida.montoAsignado, partida.montoComprometido));
+      if (moneyGt(cur.monto, disponible)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Disponibilidad presupuestaria insuficiente." });
       const upd = await tx.update(suficienciasPresupuestarias).set({ estado: "OTORGADA", otorgadaPor: ctx.user.id, otorgadaAt: new Date() })
         .where(and(eq(suficienciasPresupuestarias.id, input.id), eq(suficienciasPresupuestarias.tenantId, ctx.user.tenantId), eq(suficienciasPresupuestarias.estado, "SOLICITADA")));
       if (Number(upd[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La suficiencia cambió de estado." });
-      await tx.update(partidasPresupuestarias).set({ montoComprometido: String(Number(partida.montoComprometido) + Number(cur.monto)) } as any)
+      await tx.update(partidasPresupuestarias).set({ montoComprometido: moneyFixed2(moneyAdd(partida.montoComprometido, cur.monto)) } as any)
         .where(and(eq(partidasPresupuestarias.id, partida.id), eq(partidasPresupuestarias.tenantId, ctx.user.tenantId)));
     });
     return db.query.suficienciasPresupuestarias.findFirst({ where: and(eq(suficienciasPresupuestarias.id, input.id), eq(suficienciasPresupuestarias.tenantId, ctx.user.tenantId)) });

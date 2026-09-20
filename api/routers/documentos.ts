@@ -6,7 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRouter, capabilityQuery, authedQuery, adminQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
-import { documentos, proveedores, expedientes } from "@db/schema";
+import { documentos, proposicionDocumentos, proveedores, expedientes } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementStatuses } from "../lib/expediente";
@@ -91,6 +91,17 @@ export const documentosRouter = createRouter({
       if (!old) throw new TRPCError({ code: "NOT_FOUND", message: "Versión documental a sustituir no encontrada." });
       if (!old.esVersionVigente) throw new TRPCError({ code: "CONFLICT", message: "Sólo se puede sustituir la versión vigente." });
       if (old.tipo !== input.tipo) throw new TRPCError({ code: "BAD_REQUEST", message: "La nueva versión debe conservar el tipo documental." });
+      // Any doc sealed into a proposición manifest (incl. ANEXO/GARANTIA) is immutable.
+      const sealed = await db.query.proposicionDocumentos.findFirst({
+        where: and(eq(proposicionDocumentos.tenantId, ctx.user.tenantId), eq(proposicionDocumentos.documentoId, input.reemplazaDocumentoId)),
+        columns: { id: true },
+      });
+      if (sealed) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Documento sellado en proposición (manifest); no puede sustituirse tras presentación.",
+        });
+      }
     }
     const buffer = Buffer.from(input.contentBase64.replace(/^data:.*;base64,/, ""), "base64");
     if (!buffer.length || buffer.length > MAX_BYTES) throw new TRPCError({ code: "BAD_REQUEST", message: "El archivo debe tener entre 1 byte y 20 MB." });

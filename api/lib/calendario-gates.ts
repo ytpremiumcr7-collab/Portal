@@ -34,37 +34,13 @@ export async function assertCalendarioPermite(
   }
 }
 
-/**
- * Canonical reception deadline = published calendar RECEPCION ventana_inicio/ventana_fin only (ms).
- * NEVER reunite with day-granularity fechaCierre as a second clock.
- * Domain contract = procedimiento + ProcedurePolicy snapshot + calendario.
- * deadline+1ms MUST reject. Missing RECEPCION calendar → PRECONDITION_FAILED.
- */
-export async function assertRecepcionDentroDeVentana(
-  tenantId: number,
-  licitacionId: number,
-  opts: {
-    at?: Date;
-  } = {},
-) {
-  const at = opts.at ?? new Date();
-  const db = getDb();
-  const row = await db.query.calendarioActos.findFirst({
-    where: and(
-      eq(calendarioActos.tenantId, tenantId),
-      eq(calendarioActos.licitacionId, licitacionId),
-      eq(calendarioActos.acto, "RECEPCION"),
-    ),
-  });
+export type RecepcionVentanaRow = {
+  ventanaInicio: Date | string;
+  ventanaFin: Date | string;
+};
 
-  if (!row) {
-    throw new TRPCError({
-      code: "PRECONDITION_FAILED",
-      message:
-        "Se requiere ventana de calendario RECEPCION (ventana_inicio/ventana_fin) publicada para recibir proposiciones. No se acepta comparación por día civil (fechaCierre).",
-    });
-  }
-
+/** Pure: assert `at` falls inside RECEPCION window (inclusive end). */
+export function assertRecepcionAtInstant(row: RecepcionVentanaRow, at: Date) {
   const t = at.getTime();
   const ini = new Date(row.ventanaInicio).getTime();
   const fin = new Date(row.ventanaFin).getTime();
@@ -82,6 +58,67 @@ export async function assertRecepcionDentroDeVentana(
     });
   }
   return { source: "calendario" as const, ventanaFin: fin };
+}
+
+/**
+ * Canonical reception deadline = published calendar RECEPCION ventana_inicio/ventana_fin only (ms).
+ * NEVER reunite with day-granularity fechaCierre as a second clock.
+ * Domain contract = procedimiento + ProcedurePolicy snapshot + calendario.
+ * deadline+1ms MUST reject. Missing RECEPCION calendar → PRECONDITION_FAILED.
+ *
+ * When `opts.tx` + `opts.lock` are set, the calendar row is locked FOR UPDATE so validation
+ * and commit share the same instant / cannot race with calendar edits.
+ */
+export async function assertRecepcionDentroDeVentana(
+  tenantId: number,
+  licitacionId: number,
+  opts: {
+    at?: Date;
+    tx?: any;
+    /** Lock RECEPCION calendar row FOR UPDATE inside the domain TX. */
+    lock?: boolean;
+  } = {},
+) {
+  const at = opts.at ?? new Date();
+  let row: RecepcionVentanaRow | undefined;
+
+  if (opts.tx && opts.lock) {
+    const locked = await opts.tx
+      .select({
+        ventanaInicio: calendarioActos.ventanaInicio,
+        ventanaFin: calendarioActos.ventanaFin,
+      })
+      .from(calendarioActos)
+      .where(
+        and(
+          eq(calendarioActos.tenantId, tenantId),
+          eq(calendarioActos.licitacionId, licitacionId),
+          eq(calendarioActos.acto, "RECEPCION"),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    row = locked[0];
+  } else {
+    const db = opts.tx ?? getDb();
+    row = await db.query.calendarioActos.findFirst({
+      where: and(
+        eq(calendarioActos.tenantId, tenantId),
+        eq(calendarioActos.licitacionId, licitacionId),
+        eq(calendarioActos.acto, "RECEPCION"),
+      ),
+    });
+  }
+
+  if (!row) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        "Se requiere ventana de calendario RECEPCION (ventana_inicio/ventana_fin) publicada para recibir proposiciones. No se acepta comparación por día civil (fechaCierre).",
+    });
+  }
+
+  return assertRecepcionAtInstant(row, at);
 }
 
 /** Pure helper for unit tests: deadline+1ms rejects. */

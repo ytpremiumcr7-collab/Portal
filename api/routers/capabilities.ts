@@ -10,7 +10,7 @@ import {
 import { writeAudit } from "../lib/security";
 
 async function applyCapabilityGrant(
-  db: ReturnType<typeof getDb>,
+  db: ReturnType<typeof getDb> | any,
   ctx: any,
   input: {
     userId: number;
@@ -23,8 +23,10 @@ async function applyCapabilityGrant(
     grantedBy: number;
     motivo: string;
   },
+  tx?: any,
 ) {
-  const user = await db.query.users.findFirst({ where: and(eq(users.id, input.userId), eq(users.tenantId, ctx.user.tenantId)) });
+  const q = tx ?? db;
+  const user = await q.query.users.findFirst({ where: and(eq(users.id, input.userId), eq(users.tenantId, ctx.user.tenantId)) });
   if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Usuario no encontrado." });
   if (input.granted) {
     const effective = await resolveCapabilities(user);
@@ -45,22 +47,25 @@ async function applyCapabilityGrant(
     grantedBy: input.grantedBy,
     granted: input.granted,
   };
-  const existing = await db.query.userCapabilities.findFirst({
+  const existing = await q.query.userCapabilities.findFirst({
     where: and(eq(userCapabilities.tenantId, ctx.user.tenantId), eq(userCapabilities.userId, input.userId), eq(userCapabilities.capability, input.capability)),
   });
   if (existing) {
-    await db.update(userCapabilities).set(overrideFields as any)
+    await q.update(userCapabilities).set(overrideFields as any)
       .where(and(eq(userCapabilities.id, existing.id), eq(userCapabilities.tenantId, ctx.user.tenantId)));
   } else {
-    await db.insert(userCapabilities).values({
+    await q.insert(userCapabilities).values({
       tenantId: ctx.user.tenantId, userId: input.userId, capability: input.capability,
       ...overrideFields,
     } as any);
   }
-  const row = await db.query.userCapabilities.findFirst({
+  const row = await q.query.userCapabilities.findFirst({
     where: and(eq(userCapabilities.tenantId, ctx.user.tenantId), eq(userCapabilities.userId, input.userId), eq(userCapabilities.capability, input.capability)),
   });
-  await writeAudit({ ctx: ctxForAudit(ctx), accion: input.granted ? "GRANT_CAP" : "REVOKE_CAP", entidad: "user_capabilities", entidadId: row!.id, valorNuevo: row, motivo: input.motivo });
+  await writeAudit({
+    ctx: ctxForAudit(ctx), accion: input.granted ? "GRANT_CAP" : "REVOKE_CAP", entidad: "user_capabilities", entidadId: row!.id,
+    valorNuevo: row, motivo: input.motivo, tx: tx ?? undefined,
+  });
   return row;
 }
 
@@ -150,25 +155,39 @@ export const capabilitiesRouter = createRouter({
         message: "El aprobador debe ser distinto del solicitante y del beneficiario (cuatro ojos).",
       });
     }
-    await db.update(capabilityGrantRequests).set({
-      status: "APPROVED", approvedBy: ctx.user.id, approvedAt: new Date(),
-    } as any).where(and(eq(capabilityGrantRequests.id, input.id), eq(capabilityGrantRequests.tenantId, ctx.user.tenantId)));
-    const row = await applyCapabilityGrant(db, ctx, {
-      userId: req.userId,
-      capability: req.capability,
-      granted: !!req.granted,
-      overrideSod: !!req.overrideSod,
-      justificacionOverride: req.justificacionOverride,
-      expiresAt: req.expiresAt,
-      approvedBy: ctx.user.id,
-      grantedBy: req.requestedBy,
-      motivo: input.motivo,
+    // Atomic: APPROVED mark + capability grant in SAME TX; SoD failure rolls back entire approve.
+    const { row, request } = await db.transaction(async (tx) => {
+      const upd = await tx.update(capabilityGrantRequests).set({
+        status: "APPROVED", approvedBy: ctx.user.id, approvedAt: new Date(),
+      } as any).where(and(
+        eq(capabilityGrantRequests.id, input.id),
+        eq(capabilityGrantRequests.tenantId, ctx.user.tenantId),
+        eq(capabilityGrantRequests.status, "PENDING"),
+      ));
+      if (Number(upd[0]?.affectedRows ?? 0) !== 1) {
+        throw new TRPCError({ code: "CONFLICT", message: "La solicitud ya no está PENDING." });
+      }
+      const grantRow = await applyCapabilityGrant(db, ctx, {
+        userId: req.userId,
+        capability: req.capability,
+        granted: !!req.granted,
+        overrideSod: !!req.overrideSod,
+        justificacionOverride: req.justificacionOverride,
+        expiresAt: req.expiresAt,
+        approvedBy: ctx.user.id,
+        grantedBy: req.requestedBy,
+        motivo: input.motivo,
+      }, tx);
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "APPROVE_GRANT_CAP", entidad: "capability_grant_requests", entidadId: input.id,
+        valorNuevo: { requestId: input.id, userCapabilityId: grantRow!.id }, motivo: input.motivo, tx,
+      });
+      const updatedReq = await tx.query.capabilityGrantRequests.findFirst({
+        where: and(eq(capabilityGrantRequests.id, input.id), eq(capabilityGrantRequests.tenantId, ctx.user.tenantId)),
+      });
+      return { row: grantRow, request: updatedReq };
     });
-    await writeAudit({
-      ctx: ctxForAudit(ctx), accion: "APPROVE_GRANT_CAP", entidad: "capability_grant_requests", entidadId: input.id,
-      valorNuevo: { requestId: input.id, userCapabilityId: row!.id }, motivo: input.motivo,
-    });
-    return { request: await db.query.capabilityGrantRequests.findFirst({ where: and(eq(capabilityGrantRequests.id, input.id), eq(capabilityGrantRequests.tenantId, ctx.user.tenantId)) }), grant: row };
+    return { request, grant: row };
   }),
 
 });

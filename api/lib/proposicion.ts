@@ -9,6 +9,12 @@ export type PropDocForManifest = {
   sha256: string;
 };
 
+export type ConsorcioMiembroManifest = {
+  proveedorId: number;
+  rol: string;
+  porcentajeParticipacion?: string | null;
+};
+
 export type ProposicionManifestInput = {
   proposicionId: number;
   participacionId: number;
@@ -19,6 +25,9 @@ export type ProposicionManifestInput = {
   ciphertextHash?: string | null;
   recibidoAt: string | Date;
   documentos: PropDocForManifest[];
+  /** Frozen consorcio identity at present (required in hash when present). */
+  consorcioId?: number | null;
+  consorcioMiembros?: ConsorcioMiembroManifest[];
 };
 
 /**
@@ -39,6 +48,17 @@ export function buildProposicionManifest(input: ProposicionManifestInput): {
     recibidoAt: new Date(input.recibidoAt).toISOString(),
     documentos: docs,
   };
+  if (input.consorcioId != null) {
+    const miembros = [...(input.consorcioMiembros ?? [])]
+      .map((m) => ({
+        proveedorId: m.proveedorId,
+        rol: m.rol,
+        porcentajeParticipacion: m.porcentajeParticipacion ?? null,
+      }))
+      .sort((a, b) => a.proveedorId - b.proveedorId);
+    payload.consorcioId = input.consorcioId;
+    payload.consorcioMiembros = miembros;
+  }
   if (input.ciphertextHash) {
     payload.ciphertextHash = input.ciphertextHash;
   } else if (input.montoOferta != null) {

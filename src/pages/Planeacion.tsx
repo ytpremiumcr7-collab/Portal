@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/ares/PageHeader";
 import { StatusBadge } from "@/components/ares/StatusBadge";
 import { EmptyState } from "@/components/ares/EmptyState";
@@ -30,6 +31,8 @@ export default function Planeacion() {
   const [folio, setFolio] = useState("");
   const [titulo, setTitulo] = useState("");
   const [monto, setMonto] = useState("");
+  const [tipoContratacion, setTipoContratacion] = useState<"OBRA" | "SERVICIO" | "BIENES" | "CONCESION" | "ARRENDAMIENTO">("BIENES");
+  const [modalidad, setModalidad] = useState<"LICITACION_PUBLICA" | "INVITACION_RESTRINGIDA" | "ADJUDICACION_DIRECTA">("LICITACION_PUBLICA");
   const [progNombre, setProgNombre] = useState("");
   const [progAnio, setProgAnio] = useState(String(new Date().getFullYear()));
   const [partidaProgId, setPartidaProgId] = useState("");
@@ -62,8 +65,21 @@ export default function Planeacion() {
               <div><Label>Folio</Label><Input value={folio} onChange={(e) => setFolio(e.target.value)} /></div>
               <div><Label>Título</Label><Input value={titulo} onChange={(e) => setTitulo(e.target.value)} /></div>
               <div><Label>Monto estimado</Label><Input value={monto} onChange={(e) => setMonto(e.target.value)} /></div>
+              <div>
+                <Label>Tipo contratación</Label>
+                <Select value={tipoContratacion} onValueChange={(v) => setTipoContratacion(v as typeof tipoContratacion)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OBRA">Obra</SelectItem>
+                    <SelectItem value="SERVICIO">Servicio</SelectItem>
+                    <SelectItem value="BIENES">Bienes</SelectItem>
+                    <SelectItem value="CONCESION">Concesión</SelectItem>
+                    <SelectItem value="ARRENDAMIENTO">Arrendamiento</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="flex items-end"><Button disabled={crearNec.isPending || !entidadId || !folio || !titulo || !monto}
-                onClick={() => crearNec.mutate({ entidadId: Number(entidadId), folio, titulo, descripcion: `${titulo} — necesidad registrada`, justificacion: "Justificación operativa", montoEstimado: monto, tipoContratacion: "BIENES", motivo: "Alta necesidad" })}>Registrar</Button></div>
+                onClick={() => crearNec.mutate({ entidadId: Number(entidadId), folio, titulo, descripcion: `${titulo} — necesidad registrada`, justificacion: "Justificación operativa", montoEstimado: monto, tipoContratacion, motivo: "Alta necesidad" })}>Registrar</Button></div>
             </CardContent>
           </Card>
           <Card className="border-slate-700/80 bg-slate-900/70 shadow-none"><CardContent className="p-0">
@@ -130,7 +146,15 @@ export default function Planeacion() {
       {tab === "estrategia" && (
         <Card className="border-slate-700/80 bg-slate-900/70"><CardContent className="flex flex-wrap gap-3 p-4">
           <Input placeholder="Necesidad ID (estrategia)" value={estNecId} onChange={(e) => setEstNecId(e.target.value)} className="max-w-[10rem]" />
-          <Button disabled={definirEst.isPending} onClick={() => definirEst.mutate({ necesidadId: Number(estNecId), modalidad: "LICITACION_PUBLICA", justificacionModalidad: "Procedimiento abierto conforme a normativa aplicable", procedencia: "Procedente por suficiencia y necesidad aprobada", motivo: "Definir estrategia" })}>Definir estrategia LP</Button>
+          <Select value={modalidad} onValueChange={(v) => setModalidad(v as typeof modalidad)}>
+            <SelectTrigger className="max-w-[16rem]"><SelectValue placeholder="Modalidad" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="LICITACION_PUBLICA">Licitación pública</SelectItem>
+              <SelectItem value="INVITACION_RESTRINGIDA">Invitación restringida</SelectItem>
+              <SelectItem value="ADJUDICACION_DIRECTA">Adjudicación directa</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button disabled={definirEst.isPending} onClick={() => definirEst.mutate({ necesidadId: Number(estNecId), modalidad, justificacionModalidad: "Procedimiento conforme a normativa aplicable", procedencia: "Procedente por suficiencia y necesidad aprobada", motivo: "Definir estrategia" })}>Definir estrategia</Button>
           <Input placeholder="Necesidad ID (vincular)" value={vincNecId} onChange={(e) => setVincNecId(e.target.value)} className="max-w-[10rem]" />
           <Input placeholder="Categoría ID" value={vincCatId} onChange={(e) => setVincCatId(e.target.value)} className="max-w-[8rem]" />
           <Button disabled={vincular.isPending} onClick={() => vincular.mutate({ necesidadId: Number(vincNecId), categoriaId: Number(vincCatId), motivo: "Vincular a nuevo procedimiento" })}>Vincular a licitación</Button>

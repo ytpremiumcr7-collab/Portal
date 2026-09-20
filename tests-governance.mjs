@@ -504,3 +504,51 @@ if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-lo
   console.log("governance: 0017 P1 close-out OK");
 }
 
+// --- 0018 P2 invariants ---
+{
+  const part = fs.readFileSync("api/routers/participaciones.ts", "utf8");
+  if (!part.includes("lock: true") || !part.includes("assertRecepcionDentroDeVentana")) {
+    throw new Error("participaciones.create must assert recepción inside TX with calendar lock");
+  }
+  if (!/retirar:\s*authedQuery/.test(part) && !part.includes('role !== "proveedor"')) {
+    throw new Error("retirar must be proveedor-only (not admin via proveedorQuery)");
+  }
+  if (/invalidar:\s*adminQuery/.test(part)) {
+    throw new Error("invalidar must not use adminQuery");
+  }
+  if (!part.includes("procedureMutation") || !part.includes("invalidar:")) {
+    throw new Error("invalidar must use procedureMutation");
+  }
+  const caps = fs.readFileSync("api/routers/capabilities.ts", "utf8");
+  if (!caps.includes("db.transaction") || !caps.includes("applyCapabilityGrant")) {
+    throw new Error("approveGrant must run grant inside a transaction");
+  }
+  const exp = fs.readFileSync("api/routers/expedientes.ts", "utf8");
+  if (/resolverRevision:\s*adminQuery/.test(exp)) {
+    throw new Error("resolverRevision must not use adminQuery");
+  }
+  const ci = fs.readFileSync(".github/workflows/ci.yml", "utf8");
+  if (ci.includes("|| true") || ci.includes("continue-on-error: true")) {
+    throw new Error("CI must not hide migration failures with || true / continue-on-error");
+  }
+  const migrateIdx = ci.indexOf("Migrate");
+  const testIdx = ci.indexOf("npm test");
+  if (migrateIdx < 0 || testIdx < 0 || migrateIdx > testIdx) {
+    throw new Error("CI must migrate before npm test");
+  }
+  if (!fs.existsSync("api/lib/money.ts")) throw new Error("api/lib/money.ts required");
+  const plane = fs.readFileSync("src/pages/Planeacion.tsx", "utf8");
+  if (plane.includes('tipoContratacion: "BIENES"') || plane.includes('modalidad: "LICITACION_PUBLICA"')) {
+    throw new Error("Planeacion UI must not hardcode tipoContratacion/modalidad");
+  }
+  const im = fs.readFileSync("src/pages/InvestigacionMercado.tsx", "utf8");
+  if (im.includes("Investigación concluida con cotizaciones validadas")) {
+    throw new Error("InvestigacionMercado must not hardcode conclusión");
+  }
+  const cons = fs.readFileSync("api/routers/consorcios.ts", "utf8");
+  if (!cons.includes("CONGELADO") || !cons.includes("RECIBIDA")) {
+    throw new Error("consorcios must freeze and block post-present vincular");
+  }
+  console.log("0018 P2 invariants: OK");
+}
+

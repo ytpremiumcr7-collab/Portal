@@ -1,5 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import { createHash } from "node:crypto";
+import {
+  money, moneyFixed2, moneyCmp, moneyDiv, moneyMul, moneyMin, moneyClamp, moneyGt,
+  type MoneyInput,
+} from "./money";
 
 /** Published / frozen evaluation criterion modes. */
 export type CriterioEvaluacion =
@@ -37,8 +41,8 @@ export type OfferForRanking = {
 export function buildReglasPayload(input: FrozenReglas): Record<string, unknown> {
   return {
     criterioEvaluacion: input.criterioEvaluacion,
-    ponderacionTecnica: Number(input.ponderacionTecnica).toFixed(2),
-    ponderacionEconomica: Number(input.ponderacionEconomica).toFixed(2),
+    ponderacionTecnica: moneyFixed2(input.ponderacionTecnica),
+    ponderacionEconomica: moneyFixed2(input.ponderacionEconomica),
     modoEvaluacion: input.modoEvaluacion,
     tipoLicitacion: input.tipoLicitacion,
     tipoContratacion: input.tipoContratacion,
@@ -56,23 +60,26 @@ export function hashReglas(input: FrozenReglas): string {
  * Economic score (0–100): lowest admissible bid gets 100; others = min/bid * 100.
  * Used for MEJOR_RELACION_CALIDAD_PRECIO and as documentation check for MEJOR_VALOR_TECNICO.
  */
-export function scoreEconomico(montoOferta: number, minAdmissible: number): number {
-  if (!(minAdmissible > 0) || !(montoOferta > 0)) return 0;
-  return Number(Math.max(0, Math.min(100, (minAdmissible / montoOferta) * 100)).toFixed(2));
+export function scoreEconomico(montoOferta: MoneyInput, minAdmissible: MoneyInput): number {
+  const monto = money(montoOferta);
+  const min = money(minAdmissible);
+  if (!(min.gt(0)) || !(monto.gt(0))) return 0;
+  const raw = moneyDiv(min, monto).mul(100);
+  return Number(moneyFixed2(moneyClamp(raw, 0, 100)));
 }
 
 /**
  * Weighted quality-price total.
  */
 export function scoreTotalRelacion(
-  puntajeTecnico: number,
-  puntajeEconomico: number,
-  ponderacionTecnica: number,
-  ponderacionEconomica: number,
+  puntajeTecnico: number | string,
+  puntajeEconomico: number | string,
+  ponderacionTecnica: number | string,
+  ponderacionEconomica: number | string,
 ): number {
-  return Number(
-    (puntajeTecnico * (ponderacionTecnica / 100) + puntajeEconomico * (ponderacionEconomica / 100)).toFixed(2),
-  );
+  const tech = moneyMul(puntajeTecnico, moneyDiv(ponderacionTecnica, 100));
+  const econ = moneyMul(puntajeEconomico, moneyDiv(ponderacionEconomica, 100));
+  return Number(moneyFixed2(tech.plus(econ)));
 }
 
 export type TieBreakKey = "precio" | "fechaRecepcion" | "sorteo_documentado";
@@ -90,7 +97,7 @@ export function compareTieBreak(
   const policyRequiresSorteo = keys.includes("sorteo_documentado");
   for (const key of keys) {
     if (key === "precio") {
-      const dp = Number(a.montoOferta) - Number(b.montoOferta);
+      const dp = moneyCmp(a.montoOferta, b.montoOferta);
       if (dp !== 0) return dp;
     } else if (key === "fechaRecepcion") {
       const ta = a.recibidoAt ? new Date(a.recibidoAt).getTime() : Number.POSITIVE_INFINITY;
@@ -140,7 +147,7 @@ export function rankAdmisibles(
 
   if (criterio === "PRECIO_MAS_BAJO") {
     copy.sort((a, b) => {
-      const da = Number(a.montoOferta) - Number(b.montoOferta);
+      const da = moneyCmp(a.montoOferta, b.montoOferta);
       if (da !== 0) return da;
       return compareTieBreak(a, b, tieBreak.filter((k) => k !== "precio"));
     });
@@ -155,7 +162,9 @@ export function rankAdmisibles(
           message: "MEJOR_VALOR_TECNICO exige puntaje técnico completo en ofertas admisibles.",
         });
       }
-      if (!Number.isFinite(Number(o.montoOferta)) || Number(o.montoOferta) <= 0) {
+      try {
+        if (!moneyGt(o.montoOferta, 0)) throw new Error("<=0");
+      } catch {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "MEJOR_VALOR_TECNICO exige oferta económica solvente (monto > 0) en admisibles.",
@@ -220,27 +229,35 @@ export function computeScoresAndOrden(
 ): Array<{ id: number; puntajeEconomico: string; puntajeTotal: string; ordenMerito: number }> {
   const criterio = reglas.criterioEvaluacion;
   const minBid = admisibles.length
-    ? Math.min(...admisibles.map((x) => Number(x.montoOferta)))
-    : 0;
-  const pt = Number(reglas.ponderacionTecnica);
-  const pe = Number(reglas.ponderacionEconomica);
+    ? moneyMin(...admisibles.map((x) => x.montoOferta))
+    : money(0);
+  const pt = money(reglas.ponderacionTecnica);
+  const pe = money(reglas.ponderacionEconomica);
 
   const scored: OfferForRanking[] = admisibles.map((o) => {
-    const technical = Number(o.puntajeTecnico);
-    if (!Number.isFinite(technical)) {
+    if (o.puntajeTecnico == null || o.puntajeTecnico === "") {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
         message: "Existe una oferta admisible sin evaluación técnica completa.",
       });
     }
-    const economic = scoreEconomico(Number(o.montoOferta), minBid);
+    let technical: number;
+    try {
+      technical = Number(moneyFixed2(o.puntajeTecnico));
+    } catch {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Existe una oferta admisible sin evaluación técnica completa.",
+      });
+    }
+    const economic = scoreEconomico(o.montoOferta, minBid);
     let total: number;
     if (criterio === "PRECIO_MAS_BAJO") {
       total = economic;
     } else if (criterio === "MEJOR_VALOR_TECNICO") {
       total = technical;
     } else {
-      total = scoreTotalRelacion(technical, economic, pt, pe);
+      total = scoreTotalRelacion(technical, economic, pt.toString(), pe.toString());
     }
     return {
       id: o.id,
@@ -257,8 +274,8 @@ export function computeScoresAndOrden(
   const orderIndex = new Map(order.map((id, i) => [id, i + 1]));
   return scored.map((o) => ({
     id: o.id,
-    puntajeEconomico: Number(o.puntajeEconomico).toFixed(2),
-    puntajeTotal: Number(o.puntajeTotal).toFixed(2),
+    puntajeEconomico: moneyFixed2(o.puntajeEconomico ?? 0),
+    puntajeTotal: moneyFixed2(o.puntajeTotal ?? 0),
     ordenMerito: orderIndex.get(o.id)!,
   }));
 }
@@ -298,8 +315,8 @@ export function computeEmpateSet(
 
   let best: OfferForRanking[] = [];
   if (criterio === "PRECIO_MAS_BAJO") {
-    const min = Math.min(...offers.map((o) => Number(o.montoOferta)));
-    best = offers.filter((o) => Number(o.montoOferta) === min);
+    const min = moneyMin(...offers.map((o) => o.montoOferta));
+    best = offers.filter((o) => moneyCmp(o.montoOferta, min) === 0);
   } else if (criterio === "MEJOR_VALOR_TECNICO") {
     const max = Math.max(...offers.map((o) => Number(o.puntajeTecnico ?? -Infinity)));
     best = offers.filter((o) => Number(o.puntajeTecnico ?? -Infinity) === max);
@@ -310,14 +327,14 @@ export function computeEmpateSet(
   if (best.length <= 1) return best.map((o) => o.id);
 
   const primaryKey = (o: OfferForRanking): string => {
-    if (criterio === "PRECIO_MAS_BAJO") return Number(o.montoOferta).toFixed(2);
-    if (criterio === "MEJOR_VALOR_TECNICO") return Number(o.puntajeTecnico ?? 0).toFixed(2);
-    return Number(o.puntajeTotal ?? 0).toFixed(2);
+    if (criterio === "PRECIO_MAS_BAJO") return moneyFixed2(o.montoOferta);
+    if (criterio === "MEJOR_VALOR_TECNICO") return moneyFixed2(o.puntajeTecnico ?? 0);
+    return moneyFixed2(o.puntajeTotal ?? 0);
   };
   const sig = (o: OfferForRanking) => {
     const parts: string[] = [primaryKey(o)];
     for (const key of keysBeforeSorteo) {
-      if (key === "precio") parts.push(`p:${Number(o.montoOferta).toFixed(2)}`);
+      if (key === "precio") parts.push(`p:${moneyFixed2(o.montoOferta)}`);
       if (key === "fechaRecepcion") {
         parts.push(`f:${o.recibidoAt ? new Date(o.recibidoAt).toISOString() : ""}`);
       }

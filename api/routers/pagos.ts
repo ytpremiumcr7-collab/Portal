@@ -8,6 +8,7 @@ import { estimacionesPago, contratos } from "@db/schema";
 import { assertEstimacionTransition } from "../lib/phase3-transitions";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
+import { moneyAdd, moneySub, moneyFixed2, moneyGt } from "../lib/money";
 import { pageInput, pageResult } from "../lib/pagination";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
@@ -34,8 +35,8 @@ export const pagosRouter = createRouter({
   })).mutation(async ({ input, ctx }) => {
     assertNonNegativeDecimal(input.montoBruto, "montoBruto");
     assertNonNegativeDecimal(input.retencion, "retencion");
-    const neto = (Number(input.montoBruto) - Number(input.retencion)).toFixed(2);
-    if (Number(neto) < 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Retención excede bruto." });
+    const neto = moneyFixed2(moneySub(input.montoBruto, input.retencion));
+    if (moneyGt(0, neto)) throw new TRPCError({ code: "BAD_REQUEST", message: "Retención excede bruto." });
     const db = getDb();
     let id = 0;
     await db.transaction(async (tx) => {
@@ -58,11 +59,12 @@ export const pagosRouter = createRouter({
         eq(estimacionesPago.contratoId, input.contratoId),
         ne(estimacionesPago.estado, "RECHAZADA"),
       ));
-      const acumulado = Number(sumRows[0]?.total ?? 0);
-      if (acumulado + Number(neto) > Number(contrato.monto) + 1e-9) {
+      const acumulado = moneyFixed2(sumRows[0]?.total ?? 0);
+      const proyectado = moneyFixed2(moneyAdd(acumulado, neto));
+      if (moneyGt(proyectado, contrato.monto)) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: `Suma de estimaciones (${(acumulado + Number(neto)).toFixed(2)}) excede monto del contrato (${contrato.monto}).`,
+          message: `Suma de estimaciones (${proyectado}) excede monto del contrato (${contrato.monto}).`,
         });
       }
       const result = await tx.insert(estimacionesPago).values({

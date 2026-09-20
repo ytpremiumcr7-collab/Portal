@@ -80,9 +80,12 @@ export const calendarioRouter = createRouter({
     const db = getDb();
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.licitacionId);
     const row = await db.transaction(async (tx) => {
-      const existing = await tx.query.calendarioActos.findFirst({
-        where: and(eq(calendarioActos.tenantId, ctx.user.tenantId), eq(calendarioActos.licitacionId, input.licitacionId), eq(calendarioActos.acto, input.acto)),
-      });
+      // Lock calendar row so concurrent recepción cannot race past a mid-edit window.
+      const locked = await tx.select().from(calendarioActos)
+        .where(and(eq(calendarioActos.tenantId, ctx.user.tenantId), eq(calendarioActos.licitacionId, input.licitacionId), eq(calendarioActos.acto, input.acto)))
+        .for("update")
+        .limit(1);
+      const existing = locked[0] ?? null;
       let id = 0;
       const prev = existing ? { ...existing } : null;
       if (existing) {

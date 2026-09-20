@@ -93,7 +93,14 @@ export const consorciosRouter = createRouter({
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const cons = await assertOwnsConsorcio(ctx.user.tenantId, input.consorcioId, ctx.user.id, ctx.user.role);
-    if (cons.estado !== "BORRADOR") throw new TRPCError({ code: "CONFLICT", message: "Sólo se agregan miembros en BORRADOR." });
+    if (cons.estado !== "BORRADOR") {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: cons.estado === "CONGELADO" || cons.estado === "ACTIVO"
+          ? "Consorcio congelado/activo: miembros inmutables tras activación/presentación."
+          : "Sólo se agregan miembros en BORRADOR.",
+      });
+    }
     const db = getDb();
     const prov = await db.query.proveedores.findFirst({
       where: and(eq(proveedores.id, input.proveedorId), eq(proveedores.tenantId, ctx.user.tenantId)),
@@ -137,7 +144,11 @@ export const consorciosRouter = createRouter({
     return updated;
   }),
 
-  /** Convocante validates/links only — does not create/own. */
+  /**
+   * Prefer linking BEFORE present via participaciones.create({ consorcioId }).
+   * Post-present link is FORBIDDEN once proposición is RECIBIDA/SELLADA (manifest frozen).
+   * On successful pre-present link, consorcio is CONGELADO (members immutable).
+   */
   vincularParticipacion: capabilityQuery("crear_procedimiento").input(z.object({
     consorcioId: z.number().int().positive(),
     participacionId: z.number().int().positive(),
@@ -147,25 +158,40 @@ export const consorciosRouter = createRouter({
     const cons = await db.query.consorcios.findFirst({
       where: and(eq(consorcios.id, input.consorcioId), eq(consorcios.tenantId, ctx.user.tenantId)),
     });
-    if (!cons || cons.estado !== "ACTIVO") {
-      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sólo un consorcio ACTIVO puede vincularse a una participación." });
+    if (!cons || !["ACTIVO", "CONGELADO"].includes(cons.estado)) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sólo un consorcio ACTIVO (o ya CONGELADO) puede vincularse." });
     }
     const part = await db.query.participaciones.findFirst({
       where: and(eq(participaciones.id, input.participacionId), eq(participaciones.tenantId, ctx.user.tenantId)),
     });
     if (!part) throw new TRPCError({ code: "NOT_FOUND", message: "Participación no encontrada." });
-    await db.update(participaciones).set({ consorcioId: input.consorcioId } as any)
-      .where(and(eq(participaciones.id, input.participacionId), eq(participaciones.tenantId, ctx.user.tenantId)));
     const prop = await db.query.proposiciones.findFirst({
       where: and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.participacionId)),
     });
-    if (prop) {
-      await db.update(proposiciones).set({ consorcioId: input.consorcioId } as any)
-        .where(and(eq(proposiciones.id, prop.id), eq(proposiciones.tenantId, ctx.user.tenantId)));
+    if (prop && ["RECIBIDA", "SELLADA", "ADMISIBLE", "NO_ADMISIBLE", "GANADORA", "DESECHADA"].includes(prop.estado)) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "No se puede vincular consorcio tras proposición presentada/sellada; incluya consorcioId en present y congelación previa.",
+      });
     }
-    await writeAudit({
-      ctx: ctxForAudit(ctx), accion: "VINCULAR_PARTICIPACION", entidad: "consorcios", entidadId: input.consorcioId,
-      valorNuevo: { participacionId: input.participacionId, proposicionId: prop?.id ?? null }, motivo: input.motivo,
+    if (part.consorcioId && Number(part.consorcioId) !== Number(input.consorcioId)) {
+      throw new TRPCError({ code: "CONFLICT", message: "La participación ya tiene otro consorcio congelado." });
+    }
+    await db.transaction(async (tx) => {
+      await tx.update(participaciones).set({ consorcioId: input.consorcioId } as any)
+        .where(and(eq(participaciones.id, input.participacionId), eq(participaciones.tenantId, ctx.user.tenantId)));
+      if (prop) {
+        await tx.update(proposiciones).set({ consorcioId: input.consorcioId } as any)
+          .where(and(eq(proposiciones.id, prop.id), eq(proposiciones.tenantId, ctx.user.tenantId)));
+      }
+      if (cons.estado === "ACTIVO") {
+        await tx.update(consorcios).set({ estado: "CONGELADO" } as any)
+          .where(and(eq(consorcios.id, input.consorcioId), eq(consorcios.tenantId, ctx.user.tenantId)));
+      }
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "VINCULAR_PARTICIPACION", entidad: "consorcios", entidadId: input.consorcioId,
+        valorNuevo: { participacionId: input.participacionId, proposicionId: prop?.id ?? null }, motivo: input.motivo, tx,
+      });
     });
     return { ok: true, participacionId: input.participacionId, proposicionId: prop?.id ?? null };
   }),

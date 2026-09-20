@@ -1532,7 +1532,7 @@ export const consorcios = mysqlTable("consorcios", {
   ...tenantColumns,
   nombre: varchar("nombre", { length: 200 }).notNull(),
   rfcLider: varchar("rfc_lider", { length: 13 }),
-  estado: mysqlEnum("estado", ["BORRADOR", "ACTIVO", "DISUELTO"]).default("BORRADOR").notNull(),
+  estado: mysqlEnum("estado", ["BORRADOR", "ACTIVO", "CONGELADO", "DISUELTO"]).default("BORRADOR").notNull(),
   creadoPor: bigint("creado_por", { mode: "number", unsigned: true }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),

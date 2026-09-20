@@ -38,14 +38,14 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npx tsc -b --pretty false
+      - name: Migrate (required before tests / concurrency DB)
+        run: |
+          set -euo pipefail
+          for f in $(ls db/migrations/*.sql | sort); do
+            echo "Applying $f"
+            mysql -h 127.0.0.1 -u ares -pares_dev_local ares < "$f"
+          done
       - name: Unit tests
         run: npm test
       - name: Static governance
         run: npm run test:static
-      - name: Migrate (optional MariaDB concurrency path)
-        run: |
-          for f in db/migrations/*.sql; do
-            echo "Applying $f"
-            mysql -h 127.0.0.1 -u ares -pares_dev_local ares < "$f" || true
-          done
-        continue-on-error: true

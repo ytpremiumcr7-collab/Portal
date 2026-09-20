@@ -269,6 +269,31 @@ Migration: **`0015_procedure_authority.sql`**.
 
 Migration: **`0017_audit_p1_closeout.sql`**.
 
+
+
+## P2 audit invariants (0018) — reception / authority / money / consorcio
+
+| ID | Fix |
+|----|-----|
+| P2-1 | Recepción: lock calendar FOR UPDATE inside domain TX; `recibidoAt` stamped then `assertRecepcionDentroDeVentana({ at, tx, lock })` — validation and commit share same instant |
+| P2-2 | `approveGrant`: APPROVED + capability grant in **same TX**; SoD failure rolls back entire approve |
+| P2-3 | `retirar`: proveedor owner only (not admin via proveedorQuery); admin/autoridad uses `invalidar` |
+| P2-4 | `invalidar`: `procedureMutation(crear_procedimiento + creador)` — not tenant-wide `adminQuery`; expediente actor=`autoridad` |
+| P2-5 | `expedientes.resolverRevision`: `procedureMutation(aprobar_juridico + creador\|dictaminador)` |
+| P2-6 | CI: migrations **before** `npm test`; no `\|\| true` / continue-on-error hiding migration failure |
+| P2-7 | Money: `api/lib/money.ts` (decimal.js); evaluation scores, suficiencia, pagos acumulados, modificaciones monto |
+| P2-8 | UI: Planeación tipoContratacion + modalidad selectable; Investigación conclusión user-entered |
+| P2-9 | Consorcio: require ACTIVO at present (`consorcioId` on create); freeze CONGELADO; block post-present vincular; membros in `manifestHash` |
+| P2-10 | Extra: sealed `proposicion_documentos` immutable on replace (any tipo); calendar configurar locks row |
+
+Migration: **`0018_audit_p2_invariants.sql`**.
+
+### Residuals for cross-check
+- Soft-delete vs hard-delete on non-evidence tables (proveedores.delete still hard-deletes when unused)
+- Public endpoints: offer docs already gated; keep auditing OCDS fields for pre-apertura leakage
+- Capability without procedure on remaining admin-only config mutations (categorias, proveedores CRUD)
+- Finiquito gate still uses Number for cumulative bruto display path (tolerance via decimal preferred next)
+
 ## Residual risks (intentionally open)
 
 1. **HSM / KMS for envelope keys** — EnvKeyProvider default; AwsKms/Vault stubs exist but need real credentials (AES-256-GCM software). Production should move active keys to HSM/KMS with app-level unwrap; rotation stub (`ARES_ENVELOPE_KEY_V{n}`) remains software-side until then.
