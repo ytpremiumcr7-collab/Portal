@@ -94,9 +94,22 @@ export const entidades = mysqlTable("entidades", {
   check("entidad_rfc_mx", sql`CHAR_LENGTH(${t.rfc}) IN (12, 13)`),
 ]);
 
+export const supplierLegalEntities = mysqlTable("supplier_legal_entities", {
+  id: serial("id").primaryKey(),
+  rfc: varchar("rfc", { length: 13 }).notNull(),
+  razonSocial: varchar("razon_social", { length: 200 }).notNull(),
+  tipoPersona: mysqlEnum("tipo_persona", ["PERSONA_FISICA", "PERSONA_MORAL", "COOPERATIVA", "CONSORCIO"]).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("sle_rfc_uq").on(t.rfc),
+  check("sle_rfc_mx", sql`CHAR_LENGTH(${t.rfc}) IN (12, 13)`),
+]);
+
 export const proveedores = mysqlTable("proveedores", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
+  legalEntityId: bigint("legal_entity_id", { mode: "number", unsigned: true }),
   razonSocial: varchar("razon_social", { length: 200 }).notNull(),
   nombreFantasia: varchar("nombre_fantasia", { length: 200 }),
   rfc: varchar("rfc", { length: 13 }).notNull(),
@@ -123,6 +136,8 @@ export const proveedores = mysqlTable("proveedores", {
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => [
   uniqueIndex("proveedores_tenant_rfc_uq").on(t.tenantId, t.rfc),
+  index("proveedores_legal_entity_idx").on(t.legalEntityId),
+  foreignKey({ name: "proveedores_legal_entity_fk", columns: [t.legalEntityId], foreignColumns: [supplierLegalEntities.id] }).onDelete("restrict"),
   uniqueIndex("proveedores_tenant_usuario_uq").on(t.tenantId, t.usuarioId),
   index("proveedores_tenant_idx").on(t.tenantId),
   uniqueIndex("proveedores_tenant_id_uq").on(t.tenantId, t.id),
@@ -166,12 +181,12 @@ export const licitaciones = mysqlTable("licitaciones", {
   titulo: varchar("titulo", { length: 300 }).notNull(),
   objeto: text("objeto").notNull(),
   descripcionDetallada: text("descripcion_detallada"),
-  estado: mysqlEnum("estado", ["BORRADOR", "CONSULTAS", "PUBLICADA", "EN_EVALUACION", "ADJUDICADA", "DESIERTA", "CANCELADA", "FINALIZADA", "ARCHIVADA"]).default("BORRADOR").notNull(),
+  estado: mysqlEnum("estado", ["BORRADOR", "CONSULTAS", "PUBLICADA", "EN_EVALUACION", "ADJUDICADA", "DESIERTA", "CANCELADA", "FINALIZADA", "ARCHIVADA", "ELIMINADA"]).default("BORRADOR").notNull(),
   etapa: mysqlEnum("etapa", ["PREPARACION", "JUNTA_ACLARACIONES", "CONVOCATORIA", "PRESENTACION", "EVALUACION", "DICTAMEN", "FALLO", "ADJUDICACION", "CONTRATACION", "EJECUCION", "FINALIZACION"]).default("PREPARACION").notNull(),
   entidadId: bigint("entidad_id", { mode: "number", unsigned: true }).notNull(),
   categoriaId: bigint("categoria_id", { mode: "number", unsigned: true }).notNull(),
   convocanteId: bigint("convocante_id", { mode: "number", unsigned: true }).notNull(),
-  tipoLicitacion: mysqlEnum("tipo_licitacion", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "ADJUDICACION_DIRECTA"]).notNull(),
+  tipoLicitacion: mysqlEnum("tipo_licitacion", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "INVITACION_TRES", "ADJUDICACION_DIRECTA", "DIALOGO_COMPETITIVO", "ADJUDICACION_DIRECTA_NEGOCIACION", "ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN"]).notNull(),
   tipoContratacion: mysqlEnum("tipo_contratacion", ["OBRA", "SERVICIO", "BIENES", "CONCESION", "ARRENDAMIENTO"]).notNull(),
   montoPresupuestado: decimal("monto_presupuestado", { precision: 18, scale: 2 }).notNull(),
   moneda: mysqlEnum("moneda", ["MXN"]).default("MXN").notNull(),
@@ -189,6 +204,7 @@ export const licitaciones = mysqlTable("licitaciones", {
   policyId: bigint("policy_id", { mode: "number", unsigned: true }),
   policyVersionId: bigint("policy_version_id", { mode: "number", unsigned: true }),
   cucopId: bigint("cucop_id", { mode: "number", unsigned: true }),
+  deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => [
@@ -898,7 +914,7 @@ export const estrategiasProcedimiento = mysqlTable("estrategias_procedimiento", 
   id: serial("id").primaryKey(),
   ...tenantColumns,
   necesidadId: bigint("necesidad_id", { mode: "number", unsigned: true }).notNull(),
-  modalidad: mysqlEnum("modalidad", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "ADJUDICACION_DIRECTA"]).notNull(),
+  modalidad: mysqlEnum("modalidad", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "INVITACION_TRES", "ADJUDICACION_DIRECTA", "DIALOGO_COMPETITIVO", "ADJUDICACION_DIRECTA_NEGOCIACION", "ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN"]).notNull(),
   justificacionModalidad: text("justificacion_modalidad").notNull(),
   procedencia: text("procedencia").notNull(),
   estado: mysqlEnum("estado", ["BORRADOR", "APROBADA", "APLICADA"]).default("BORRADOR").notNull(),
@@ -1313,7 +1329,7 @@ export const legalRegimes = mysqlTable("legal_regimes", {
 export const procedurePolicies = mysqlTable("procedure_policies", {
   id: serial("id").primaryKey(),
   regimeId: bigint("regime_id", { mode: "number", unsigned: true }).notNull(),
-  modalidad: mysqlEnum("modalidad", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "ADJUDICACION_DIRECTA"]).notNull(),
+  modalidad: mysqlEnum("modalidad", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "INVITACION_TRES", "ADJUDICACION_DIRECTA", "DIALOGO_COMPETITIVO", "ADJUDICACION_DIRECTA_NEGOCIACION", "ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN"]).notNull(),
   criterioEvaluacion: varchar("criterio_evaluacion", { length: 40 }).notNull(),
   modoEvaluacion: varchar("modo_evaluacion", { length: 20 }).default("HIBRIDA").notNull(),
   ponderacionTecnica: decimal("ponderacion_tecnica", { precision: 5, scale: 2 }).default("40.00").notNull(),

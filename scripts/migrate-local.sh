@@ -1,26 +1,17 @@
 #!/usr/bin/env bash
+# Apply ALL db/migrations/*.sql in lexical order (same set as CI / docker init).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-for f in \
-  0001_ares_mexico_baseline.sql \
-  0002_phase1_expediente.sql \
-  0003_phase2_dominios_transaccionales.sql \
-  0004_phase3_ciclo_completo.sql \
-  0005_audit_harden_sod.sql \
-  0006_sod_procedimiento.sql \
-  0007_evaluation_freeze_doc_fks.sql \
-  0008_procedure_policy.sql \
-  0009_proposiciones.sql \
-  0010_outbox.sql \
-  0011_audit_harden.sql \
-  0012_audit_hash_consorcios.sql \
-  0013_preprod_p0p1.sql \
-  0014_sobre_economico.sql \
-  0015_procedure_authority.sql \
-  0016_four_eyes_requests.sql \
-  0017_audit_p1_closeout.sql
-do
-  echo "Applying $f ..."
-  mysql -u ares -pares_dev_local ares < "$ROOT/db/migrations/$f"
+MIG_DIR="$ROOT/db/migrations"
+shopt -s nullglob
+files=("$MIG_DIR"/*.sql)
+if ((${#files[@]} == 0)); then
+  echo "No migrations found in $MIG_DIR" >&2
+  exit 1
+fi
+IFS=$'\n' sorted=($(printf '%s\n' "${files[@]}" | sort))
+for f in "${sorted[@]}"; do
+  echo "Applying $(basename "$f") ..."
+  mysql -u ares -pares_dev_local ares < "$f"
 done
-echo "Migraciones 0001-0017 aplicadas."
+echo "Migraciones aplicadas (${#sorted[@]} archivos)."

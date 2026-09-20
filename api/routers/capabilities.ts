@@ -8,6 +8,7 @@ import {
   resolveCapabilities, ROLE_CAPABILITIES, isCapability, assertCapabilityCompatibility,
 } from "../lib/capabilities";
 import { writeAudit } from "../lib/security";
+import { assertFourEyesActorInequality } from "../lib/four-eyes";
 
 async function applyCapabilityGrant(
   db: ReturnType<typeof getDb> | any,
@@ -149,12 +150,12 @@ export const capabilitiesRouter = createRouter({
     });
     if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Solicitud no encontrada." });
     if (req.status !== "PENDING") throw new TRPCError({ code: "CONFLICT", message: "Sólo se aprueban solicitudes PENDING." });
-    if (ctx.user.id === Number(req.requestedBy) || ctx.user.id === Number(req.userId)) {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "El aprobador debe ser distinto del solicitante y del beneficiario (cuatro ojos).",
-      });
-    }
+    assertFourEyesActorInequality({
+      approverUserId: ctx.user.id,
+      requesterUserId: req.requestedBy,
+      beneficiaryUserId: req.userId,
+      label: "otorgamiento de capacidad",
+    });
     // Atomic: APPROVED mark + capability grant in SAME TX; SoD failure rolls back entire approve.
     const { row, request } = await db.transaction(async (tx) => {
       const upd = await tx.update(capabilityGrantRequests).set({

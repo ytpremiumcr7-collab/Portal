@@ -7,6 +7,9 @@ import { useAuth } from "@/hooks/useAuth";
 
 export default function Dictamenes() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
+  const caps = new Set((user as any)?.capabilities ?? []);
+  const canEmitir = caps.has("emitir_dictamen") || user?.role === "admin";
+  const canAprobar = caps.has("aprobar_juridico") || user?.role === "admin";
   const [page, setPage] = useState(1);
   const [lic, setLic] = useState("");
   const [prov, setProv] = useState("");
@@ -19,13 +22,17 @@ export default function Dictamenes() {
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white">Dictámenes</h2>
+      <p className="text-xs text-slate-400">
+        La acción «Firmar» registra una <strong className="text-slate-300">confirmación de sesión autenticada</strong> (SESSION_CONFIRMATION).
+        No es e.firma ni FIEL del SAT; la firma criptográfica calificada queda pendiente de proveedor SatEFirma.
+      </p>
       <Card className="border-slate-700 bg-slate-800/50">
         <CardHeader><CardTitle className="text-white">Nuevo dictamen (recomendar adjudicación)</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-4">
           <Input placeholder="ID licitación" value={lic} onChange={e => setLic(e.target.value)} className="bg-slate-700 border-slate-600 text-white" />
           <Input placeholder="ID proveedor 1er lugar" value={prov} onChange={e => setProv(e.target.value)} className="bg-slate-700 border-slate-600 text-white" />
           <Input placeholder="Monto" value={monto} onChange={e => setMonto(e.target.value)} className="bg-slate-700 border-slate-600 text-white" />
-          <Button className="bg-amber-600" disabled={!user || !lic || !prov || !monto || crear.isPending} onClick={() => crear.mutate({
+          <Button className="bg-amber-600" disabled={!user || !canEmitir || !lic || !prov || !monto || crear.isPending} onClick={() => crear.mutate({
             licitacionId: Number(lic), resultado: "RECOMENDAR_ADJUDICACION", proveedorRecomendadoId: Number(prov), montoRecomendado: monto,
             fundamento: "Dictamen técnico-económico conforme a la evaluación concluida y al criterio de adjudicación vigente.",
             firmantes: [{ usuarioId: user!.id, rolFirma: "EVALUADOR" }],
@@ -51,9 +58,9 @@ export default function Dictamenes() {
                   <td className="p-3 text-sm text-white">{d.version}</td>
                   <td className="p-3 text-xs text-slate-300">{d.estado}</td>
                   <td className="p-3 text-right flex justify-end gap-2">
-                    {d.estado === "BORRADOR" && <Button size="sm" variant="outline" onClick={() => firmar.mutate({ dictamenId: d.id, motivo: "Firma del dictamen" })}>Firmar</Button>}
-                    {d.estado === "BORRADOR" && <Button size="sm" onClick={() => emitir.mutate({ id: d.id, motivo: "Emisión del dictamen" })}>Emitir</Button>}
-                    {d.estado === "EMITIDO" && user?.role === "admin" && <Button size="sm" onClick={() => aprobar.mutate({ id: d.id, motivo: "Aprobación del dictamen" })}>Aprobar</Button>}
+                    {d.estado === "BORRADOR" && canEmitir && <Button size="sm" variant="outline" onClick={() => firmar.mutate({ dictamenId: d.id, motivo: "Confirmación de sesión del dictamen" })}>Confirmar sesión</Button>}
+                    {d.estado === "BORRADOR" && canEmitir && <Button size="sm" onClick={() => emitir.mutate({ id: d.id, motivo: "Emisión del dictamen" })}>Emitir</Button>}
+                    {d.estado === "EMITIDO" && canAprobar && <Button size="sm" onClick={() => aprobar.mutate({ id: d.id, motivo: "Aprobación del dictamen" })}>Aprobar</Button>}
                   </td>
                 </tr>
               ))}

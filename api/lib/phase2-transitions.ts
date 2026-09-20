@@ -124,13 +124,33 @@ export function assertAdjudicacionRequiresFallo(input: {
   }
 }
 
-export function assertEvaluacionRequiresApertura(aperturaEstado: string | null | undefined) {
+/**
+ * LP/ITP require full governed apertura PUBLICADA before evaluación.
+ * AD (and modalities whose ProcedurePolicy omits APERTURA) skip the public apertura gate
+ * when `requiereAperturaPublica === false`. Economic envelope encryption is NOT weakened here.
+ */
+export function assertEvaluacionRequiresApertura(
+  aperturaEstado: string | null | undefined,
+  opts?: { requiereAperturaPublica?: boolean; modalidad?: string },
+) {
+  const requiere = opts?.requiereAperturaPublica !== false
+    && opts?.modalidad !== "ADJUDICACION_DIRECTA"
+    && opts?.modalidad !== "ADJUDICACION_DIRECTA_NEGOCIACION"
+    && opts?.modalidad !== "ACUERDO_MARCO_ASIGNACION"
+    && opts?.modalidad !== "TIENDA_DIGITAL_ORDEN";
+  if (!requiere) return;
   if (aperturaEstado !== "PUBLICADA") {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Se requiere apertura gobernada PUBLICADA (cierre → sello → apertura → registro → acta → publicación) antes de evaluar.",
     });
   }
+}
+
+/** Derive requiereAperturaPublica from frozen/policy actosObligatorios. */
+export function policyRequiresAperturaPublica(actosObligatorios: string[] | null | undefined): boolean {
+  if (!actosObligatorios || !actosObligatorios.length) return true;
+  return actosObligatorios.includes("APERTURA");
 }
 
 export function assertFalloRequiresDictamen(dictamen: {

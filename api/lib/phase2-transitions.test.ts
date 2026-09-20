@@ -79,6 +79,11 @@ describe("Phase 2 — dictamen / fallo / adjudicación", () => {
     expect(msg(() => assertEvaluacionRequiresApertura("SELLADA"))).toContain("apertura gobernada PUBLICADA");
     expect(() => assertEvaluacionRequiresApertura("PUBLICADA")).not.toThrow();
   });
+  it("AD / policy without APERTURA skips public apertura gate", () => {
+    expect(() => assertEvaluacionRequiresApertura(null, { requiereAperturaPublica: false })).not.toThrow();
+    expect(() => assertEvaluacionRequiresApertura("SELLADA", { modalidad: "ADJUDICACION_DIRECTA" })).not.toThrow();
+    expect(msg(() => assertEvaluacionRequiresApertura("SELLADA", { modalidad: "LICITACION_PUBLICA" }))).toContain("apertura gobernada PUBLICADA");
+  });
 });
 
 describe("Phase 2 — contrato / garantía", () => {

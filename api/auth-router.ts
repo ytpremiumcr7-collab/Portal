@@ -9,16 +9,18 @@ import { pageInput, pageResult } from "./lib/pagination";
 import { TRPCError } from "@trpc/server";
 import { env } from "./lib/env";
 import { assertLoginAllowed, recordLoginFailure, recordLoginSuccess } from "./lib/login-rate-limit";
+import { resolveCapabilities } from "./lib/capabilities";
 import { requestMeta } from "./lib/security";
 
 const rfcMx = z.string().trim().toUpperCase().regex(/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3}$/i, "RFC mexicano inválido.");
 const strongPassword = z.string().min(12, "La contraseña debe tener al menos 12 caracteres.");
 
 export const authRouter = createRouter({
-  me: authedQuery.query(({ ctx }) => {
+  me: authedQuery.query(async ({ ctx }) => {
     const { passwordHash: _omit, ...safe } = ctx.user as typeof ctx.user & { passwordHash?: string | null };
     void _omit;
-    return safe;
+    const capabilities = [...(await resolveCapabilities(ctx.user))];
+    return { ...safe, capabilities };
   }),
 
   register: publicQuery.input(z.object({

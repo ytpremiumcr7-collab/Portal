@@ -13,7 +13,7 @@ import { assertProveedorPuedeParticipar } from "../lib/sanciones-gate";
 import { computeScoresAndOrden, parseDesempateOrden, type CriterioEvaluacion, type FrozenReglas } from "../lib/evaluation-engine";
 import { mapEvalToProposicionEstado, buildProposicionManifest, mapDocTipoToRol, assertProposicionDocsCompletos } from "../lib/proposicion";
 import { parseTieBreakPolicy, parseRequisitos } from "../lib/procedure-policy";
-import { assertRecepcionDentroDeVentana } from "../lib/calendario-gates";
+import { assertRecepcionDentroDeVentana, assertRetiroProposicionPermitido } from "../lib/calendario-gates";
 import {
   loadAperturaEstado,
   redactParticipacionEconomica,
@@ -441,7 +441,25 @@ export const participacionesRouter = createRouter({
       throw new TRPCError({ code: "CONFLICT", message: `No se puede retirar en estado ${current.estadoEvaluacion}.` });
     }
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, current.licitacionId);
+    const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, current.licitacionId);
     await db.transaction(async (tx) => {
+      // TOCTOU: lock participación + RECEPCION calendar, re-check ventana, THEN mutate.
+      const locked = await tx.select().from(participaciones)
+        .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)))
+        .for("update")
+        .limit(1);
+      const row = locked[0];
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
+      if (["GANADORA", "ADMISIBLE", "RETIRADA", "INVALIDADA"].includes(row.estadoEvaluacion)) {
+        throw new TRPCError({ code: "CONFLICT", message: `No se puede retirar en estado ${row.estadoEvaluacion}.` });
+      }
+      const now = new Date();
+      await assertRetiroProposicionPermitido(ctx.user.tenantId, current.licitacionId, {
+        at: now,
+        tx,
+        lock: true,
+        aperturaEstado,
+      });
       await tx.update(participaciones).set({ estadoEvaluacion: "RETIRADA" } as any)
         .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
       await tx.update(proposiciones).set({ estado: "DESECHADA" } as any)
@@ -449,8 +467,8 @@ export const participacionesRouter = createRouter({
       if (expediente) {
         await appendExpedienteEvent(tx, ctx, {
           expedienteId: expediente.id, tipo: "PARTICIPACION_RETIRADA",
-          estadoAnterior: current.estadoEvaluacion, estadoNuevo: "RETIRADA", motivo: input.motivo,
-          payload: { participacionId: input.id, actor: "proveedor" },
+          estadoAnterior: row.estadoEvaluacion, estadoNuevo: "RETIRADA", motivo: input.motivo,
+          payload: { participacionId: input.id, actor: "proveedor", retiroAt: now.toISOString() },
         });
       }
       await writeAudit({ ctx: ctxForAudit(ctx), accion: "RETIRAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });

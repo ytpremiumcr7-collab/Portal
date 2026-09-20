@@ -97,10 +97,13 @@ export async function assertJuntaSiPoliticaLoExige(tenantId: number, licitacionI
   if (!clarification) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La política exige hito de Junta de Aclaraciones antes de publicar." });
 }
 
-export async function assertLicitacionExists(tenantId: number, id: number) {
+export async function assertLicitacionExists(tenantId: number, id: number, opts?: { allowDeleted?: boolean }) {
   const db = getDb();
   const lic = await db.query.licitaciones.findFirst({ where: and(eq(licitaciones.id, id), eq(licitaciones.tenantId, tenantId)) });
   if (!lic) throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada en el tenant actual." });
+  if (!opts?.allowDeleted && ((lic as any).deletedAt || lic.estado === "ELIMINADA")) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada en el tenant actual." });
+  }
   return lic;
 }
 

@@ -3,10 +3,45 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { legalRegimes, procedurePolicies } from "@db/schema";
 
+/**
+ * LAASSP art. 35 procedure types (catalog).
+ * INVITACION_RESTRINGIDA retained as legacy alias of INVITACION_TRES.
+ * Workflow specialization MVP: LP / ITP / AD. Others exist in catalog with
+ * gates that refuse unsupported transitions rather than silent wrong LP flow.
+ */
 export type ModalidadProcedimiento =
   | "LICITACION_PUBLICA"
   | "INVITACION_RESTRINGIDA"
-  | "ADJUDICACION_DIRECTA";
+  | "INVITACION_TRES"
+  | "ADJUDICACION_DIRECTA"
+  | "DIALOGO_COMPETITIVO"
+  | "ADJUDICACION_DIRECTA_NEGOCIACION"
+  | "ACUERDO_MARCO_ASIGNACION"
+  | "TIENDA_DIGITAL_ORDEN";
+
+export const LAASSP_MODALIDADES: readonly ModalidadProcedimiento[] = [
+  "LICITACION_PUBLICA",
+  "INVITACION_TRES",
+  "ADJUDICACION_DIRECTA",
+  "DIALOGO_COMPETITIVO",
+  "ADJUDICACION_DIRECTA_NEGOCIACION",
+  "ACUERDO_MARCO_ASIGNACION",
+  "TIENDA_DIGITAL_ORDEN",
+] as const;
+
+/** Modalities whose full workflow is MVP-supported (LP/ITP/AD). */
+export const WORKFLOW_SUPPORTED_MODALIDADES: ReadonlySet<ModalidadProcedimiento> = new Set([
+  "LICITACION_PUBLICA",
+  "INVITACION_RESTRINGIDA",
+  "INVITACION_TRES",
+  "ADJUDICACION_DIRECTA",
+]);
+
+/** IV/V — Hacienda / Comité constrained (policy metadata). */
+export const HACIENDA_COMITE_CONSTRAINED: ReadonlySet<ModalidadProcedimiento> = new Set([
+  "DIALOGO_COMPETITIVO",
+  "ADJUDICACION_DIRECTA_NEGOCIACION",
+]);
 
 export type TieBreakKey = "precio" | "fechaRecepcion" | "sorteo_documentado";
 
@@ -29,7 +64,15 @@ export type PolicyRequisitos = {
   ofertaTecnica?: boolean;
   ofertaEconomica?: boolean;
   garantiaSeriedad?: boolean;
+  constrainedBy?: string;
+  workflowSupported?: boolean;
+  aliasOf?: string;
 };
+
+export function normalizeModalidad(modalidad: string): ModalidadProcedimiento {
+  if (modalidad === "INVITACION_RESTRINGIDA") return "INVITACION_TRES";
+  return modalidad as ModalidadProcedimiento;
+}
 
 export function parseTieBreakPolicy(raw: unknown): TieBreakKey[] {
   if (!Array.isArray(raw) || !raw.length) {
@@ -98,8 +141,6 @@ export function assertActosPermitidosPorPolitica(
   const configured = new Set(actosConfigurados);
 
   const missing = actosObligatorios.filter((a) => {
-    // RECEPCION/APERTURA/EVALUACION/DICTAMEN/FALLO are procedural machine states —
-    // only calendar/hito-configured acts (e.g. JUNTA_ACLARACIONES) must be present as hitos.
     if (a === "JUNTA_ACLARACIONES") return !configured.has(a);
     return false;
   });
@@ -111,7 +152,8 @@ export function assertActosPermitidosPorPolitica(
   }
 
   const extras = actosConfigurados.filter((a) => !allowed.has(a));
-  if (modalidad !== "LICITACION_PUBLICA") {
+  const isLp = modalidad === "LICITACION_PUBLICA";
+  if (!isLp) {
     const forbidden = actosConfigurados.filter((a) => a === "JUNTA_ACLARACIONES" && !allowed.has(a));
     if (forbidden.length) {
       throw new TRPCError({
@@ -120,10 +162,10 @@ export function assertActosPermitidosPorPolitica(
       });
     }
   }
-  if (extras.length && modalidad === "ADJUDICACION_DIRECTA") {
+  if (extras.length && (modalidad === "ADJUDICACION_DIRECTA" || modalidad === "ADJUDICACION_DIRECTA_NEGOCIACION")) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: `ADJUDICACION_DIRECTA solo admite actos de política: ${actosObligatorios.join(", ")}.`,
+      message: `${modalidad} solo admite actos de política: ${actosObligatorios.join(", ")}.`,
     });
   }
 }
@@ -132,22 +174,49 @@ export function defaultPolicyForModalidad(modalidad: ModalidadProcedimiento): {
   actosObligatorios: string[];
   tieBreakPolicy: TieBreakKey[];
 } {
-  if (modalidad === "ADJUDICACION_DIRECTA") {
+  const m = normalizeModalidad(modalidad);
+  if (m === "ADJUDICACION_DIRECTA" || m === "ADJUDICACION_DIRECTA_NEGOCIACION") {
     return {
       actosObligatorios: ["EVALUACION", "DICTAMEN", "FALLO"],
       tieBreakPolicy: ["precio", "sorteo_documentado"],
     };
   }
-  if (modalidad === "INVITACION_RESTRINGIDA") {
+  if (m === "INVITACION_TRES" || modalidad === "INVITACION_RESTRINGIDA") {
     return {
       actosObligatorios: ["RECEPCION", "APERTURA", "EVALUACION", "DICTAMEN", "FALLO"],
       tieBreakPolicy: ["precio", "fechaRecepcion", "sorteo_documentado"],
+    };
+  }
+  if (m === "DIALOGO_COMPETITIVO") {
+    return {
+      actosObligatorios: ["RECEPCION", "EVALUACION", "DICTAMEN", "FALLO"],
+      tieBreakPolicy: ["precio", "sorteo_documentado"],
+    };
+  }
+  if (m === "ACUERDO_MARCO_ASIGNACION" || m === "TIENDA_DIGITAL_ORDEN") {
+    return {
+      actosObligatorios: ["EVALUACION", "FALLO"],
+      tieBreakPolicy: ["precio"],
     };
   }
   return {
     actosObligatorios: ["JUNTA_ACLARACIONES", "RECEPCION", "APERTURA", "EVALUACION", "DICTAMEN", "FALLO"],
     tieBreakPolicy: ["precio", "fechaRecepcion", "sorteo_documentado"],
   };
+}
+
+/** Refuse publish/transition for catalog modalities without MVP workflow. */
+export function assertModalidadWorkflowSupported(modalidad: ModalidadProcedimiento, requisitos?: PolicyRequisitos) {
+  const m = normalizeModalidad(modalidad);
+  if (WORKFLOW_SUPPORTED_MODALIDADES.has(modalidad) || WORKFLOW_SUPPORTED_MODALIDADES.has(m)) return;
+  if (requisitos?.workflowSupported === true) return;
+  const constraint = HACIENDA_COMITE_CONSTRAINED.has(m)
+    ? " Requiere autorización Hacienda/Comité (LAASSP)."
+    : "";
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: `La modalidad ${modalidad} está en catálogo LAASSP pero su flujo especializado aún no está habilitado en ARES.${constraint} Use LP / Invitación a cuando menos tres / Adjudicación directa.`,
+  });
 }
 
 /** OBRA → LOPSRM; else LAASSP. */
@@ -177,19 +246,31 @@ export async function resolvePolicyForPublish(
     });
   }
 
-  const policy = await db.query.procedurePolicies.findFirst({
+  // Prefer exact modalidad; fall back INVITACION_TRES ↔ INVITACION_RESTRINGIDA.
+  let policy = await db.query.procedurePolicies.findFirst({
     where: and(
       eq(procedurePolicies.regimeId, regime.id),
       eq(procedurePolicies.modalidad, opts.modalidad),
     ),
     orderBy: [desc(procedurePolicies.version)],
   });
+  if (!policy && (opts.modalidad === "INVITACION_TRES" || opts.modalidad === "INVITACION_RESTRINGIDA")) {
+    const alt = opts.modalidad === "INVITACION_TRES" ? "INVITACION_RESTRINGIDA" : "INVITACION_TRES";
+    policy = await db.query.procedurePolicies.findFirst({
+      where: and(
+        eq(procedurePolicies.regimeId, regime.id),
+        eq(procedurePolicies.modalidad, alt),
+      ),
+      orderBy: [desc(procedurePolicies.version)],
+    });
+  }
   if (!policy) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: `No hay ProcedurePolicy para modalidad ${opts.modalidad} bajo régimen ${code}. La publicación requiere política.`,
     });
   }
+  assertModalidadWorkflowSupported(opts.modalidad, parseRequisitos(policy.requisitos));
   return policy as ProcedurePolicySnapshot;
 }
 

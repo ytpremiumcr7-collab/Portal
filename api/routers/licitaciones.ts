@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { eq, desc, like, and, count, sql } from "drizzle-orm";
+import { eq, desc, like, and, count, sql, isNull, ne } from "drizzle-orm";
 import { createRouter, capabilityQuery, procedureMutation, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { licitaciones, entidades, categorias, users, proveedores, participaciones, hitos, alertasSeguridad, aperturas, dictamenes, fallos, licitacionReglasVersion, proposiciones, actoAdjudicacion, actosDesempate, procedimientoAsignaciones } from "@db/schema";
 import { TRPCError } from "@trpc/server";
 import { assertDateOrder, assertLicitacionReadyForPublish, assertLicitacionExists, nextLicitacionCode, validateWeights, validateRubric, listHitosTiposConfigurados, assertJuntaSiPoliticaLoExige } from "../lib/domain";
 import { findExpedienteByLicitacion, appendExpedienteEvent, createExpedienteForLicitacion } from "../lib/expediente";
-import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura } from "../lib/phase2-transitions";
+import { assertAdjudicacionRequiresFallo, assertEvaluacionRequiresApertura, policyRequiresAperturaPublica } from "../lib/phase2-transitions";
 import { assertProveedorPuedeAdjudicarse } from "../lib/sanciones-gate";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
@@ -28,7 +28,11 @@ async function getByTenant(id: number, tenantId: number) {
 export const licitacionesRouter = createRouter({
   list: authedQuery.input(z.object({ estado: z.enum(["BORRADOR","CONSULTAS","PUBLICADA","EN_EVALUACION","ADJUDICADA","DESIERTA","CANCELADA","FINALIZADA","ARCHIVADA"]).optional(), search: z.string().trim().optional(), entidadId: z.number().int().positive().optional(), categoriaId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
-    const conditions = [eq(licitaciones.tenantId, ctx.user.tenantId)];
+    const conditions = [
+      eq(licitaciones.tenantId, ctx.user.tenantId),
+      isNull(licitaciones.deletedAt),
+      ne(licitaciones.estado, "ELIMINADA"),
+    ];
     if (ctx.user.role === "proveedor") conditions.push(eq(licitaciones.estado, "PUBLICADA"));
     if (input?.estado) conditions.push(eq(licitaciones.estado, input.estado));
     if (input?.search) conditions.push(like(licitaciones.titulo, `%${input.search}%`));
@@ -46,6 +50,9 @@ export const licitacionesRouter = createRouter({
   getById: authedQuery.input(z.object({ id: z.number().int().positive() })).query(async ({ input, ctx }) => {
     const lic = await getByTenant(input.id, ctx.user.tenantId);
     if (!lic) throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada." });
+    if (((lic as any).deletedAt || lic.estado === "ELIMINADA") && ctx.user.role !== "admin") {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada." });
+    }
     if (ctx.user.role === "proveedor") {
       lic.participaciones = lic.participaciones.filter((p: any) => p.proveedor?.usuarioId === ctx.user.id);
       lic.documentos = lic.documentos.filter((d: any) => d.esPublico || d.proveedorId === lic.participaciones.find((p: any) => p.proveedor?.usuarioId === ctx.user.id)?.proveedorId);
@@ -64,7 +71,7 @@ export const licitacionesRouter = createRouter({
 
   create: capabilityQuery("crear_procedimiento").input(z.object({
     titulo: z.string().trim().min(5).max(300), objeto: z.string().trim().min(10), descripcionDetallada: z.string().trim().optional(), entidadId: z.number().int().positive(), categoriaId: z.number().int().positive(), convocanteId: z.number().int().positive().optional(),
-    tipoLicitacion: z.enum(["LICITACION_PUBLICA","INVITACION_RESTRINGIDA","ADJUDICACION_DIRECTA"]), tipoContratacion: z.enum(["OBRA","SERVICIO","BIENES","CONCESION","ARRENDAMIENTO"]), montoPresupuestado: money, fechaPublicacion: dateMx.optional(), fechaCierre: dateMx.optional(), fechaApertura: dateMx.optional(), criterioEvaluacion: z.enum(["PRECIO_MAS_BAJO","MEJOR_RELACION_CALIDAD_PRECIO","MEJOR_VALOR_TECNICO"]).default("MEJOR_RELACION_CALIDAD_PRECIO"), ponderacionTecnica: money.default("40.00"), ponderacionEconomica: money.default("60.00"), rubricaTecnica: z.string().optional(), modoEvaluacion: z.enum(["MANUAL","HIBRIDA","AUTOMATICA"]).default("HIBRIDA"),
+    tipoLicitacion: z.enum(["LICITACION_PUBLICA","INVITACION_RESTRINGIDA","INVITACION_TRES","ADJUDICACION_DIRECTA","DIALOGO_COMPETITIVO","ADJUDICACION_DIRECTA_NEGOCIACION","ACUERDO_MARCO_ASIGNACION","TIENDA_DIGITAL_ORDEN"]), tipoContratacion: z.enum(["OBRA","SERVICIO","BIENES","CONCESION","ARRENDAMIENTO"]), montoPresupuestado: money, fechaPublicacion: dateMx.optional(), fechaCierre: dateMx.optional(), fechaApertura: dateMx.optional(), criterioEvaluacion: z.enum(["PRECIO_MAS_BAJO","MEJOR_RELACION_CALIDAD_PRECIO","MEJOR_VALOR_TECNICO"]).default("MEJOR_RELACION_CALIDAD_PRECIO"), ponderacionTecnica: money.default("40.00"), ponderacionEconomica: money.default("60.00"), rubricaTecnica: z.string().optional(), modoEvaluacion: z.enum(["MANUAL","HIBRIDA","AUTOMATICA"]).default("HIBRIDA"),
   })).mutation(async ({ input, ctx }) => {
     assertNonNegativeDecimal(input.montoPresupuestado, "montoPresupuestado");
     validateWeights(input.ponderacionTecnica, input.ponderacionEconomica);
@@ -194,14 +201,25 @@ export const licitacionesRouter = createRouter({
     // Reception/evaluation clocks: calendario jurídico only (assertCalendarioPermite above). Never day-granularity fechaCierre.
     const db = getDb();
     const apertura = await db.query.aperturas.findFirst({ where: and(eq(aperturas.tenantId, ctx.user.tenantId), eq(aperturas.licitacionId, input.id)) });
-    assertEvaluacionRequiresApertura(apertura?.estado);
+    const frozenForGate = await db.query.licitacionReglasVersion.findFirst({
+      where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, input.id)),
+      orderBy: [desc(licitacionReglasVersion.version)],
+    });
+    const actosGate = Array.isArray((frozenForGate as any)?.actosObligatorios)
+      ? (frozenForGate as any).actosObligatorios.map(String)
+      : null;
+    const requiereApertura = policyRequiresAperturaPublica(actosGate);
+    assertEvaluacionRequiresApertura(apertura?.estado, {
+      requiereAperturaPublica: requiereApertura,
+      modalidad: current.tipoLicitacion,
+    });
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
     let updated;
     await db.transaction(async (tx) => {
       const result = await tx.update(licitaciones).set({ estado: "EN_EVALUACION", etapa: "EVALUACION" }).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, current.estado)));
       if (Number(result[0]?.affectedRows ?? 0) !== 1) throw new TRPCError({ code: "CONFLICT", message: "La licitación cambió de estado antes de iniciar la evaluación." });
-      await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: "EVALUACION_INICIADA", estadoAnterior: current.estado, estadoNuevo: "EN_EVALUACION", motivo: input.motivo, payload: { licitacionId: input.id, aperturaId: apertura!.id } });
+      await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: "EVALUACION_INICIADA", estadoAnterior: current.estado, estadoNuevo: "EN_EVALUACION", motivo: input.motivo, payload: { licitacionId: input.id, aperturaId: apertura?.id ?? null, requiereAperturaPublica: requiereApertura } });
     });
     updated = await getByTenant(input.id, ctx.user.tenantId);
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "INICIAR_EVALUACION", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
@@ -307,9 +325,29 @@ export const licitacionesRouter = createRouter({
 
   delete: adminQuery.input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const db = getDb(); const current = await assertLicitacionExists(ctx.user.tenantId, input.id);
+    if ((current as any).deletedAt || current.estado === "ELIMINADA") {
+      throw new TRPCError({ code: "CONFLICT", message: "La licitación ya está eliminada (soft-delete)." });
+    }
     if (current.estado !== "BORRADOR") throw new TRPCError({ code: "CONFLICT", message: "Sólo se puede eliminar una licitación en BORRADOR." });
-    await db.delete(licitaciones).where(and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId), eq(licitaciones.estado, "BORRADOR")));
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo });
-    return { success: true };
+    // Soft-delete preserves expediente / audit trail — hard DELETE is forbidden.
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      const result = await tx.update(licitaciones).set({
+        estado: "ELIMINADA",
+        deletedAt: now,
+      } as any).where(and(
+        eq(licitaciones.id, input.id),
+        eq(licitaciones.tenantId, ctx.user.tenantId),
+        eq(licitaciones.estado, "BORRADOR"),
+      ));
+      if (Number(result[0]?.affectedRows ?? 0) !== 1) {
+        throw new TRPCError({ code: "CONFLICT", message: "No se pudo soft-eliminar (estado cambió)." });
+      }
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "ELIMINAR_SOFT", entidad: "licitaciones", entidadId: input.id,
+        valorAnterior: current, valorNuevo: { estado: "ELIMINADA", deletedAt: now }, motivo: input.motivo, tx,
+      });
+    });
+    return { success: true, softDeleted: true as const };
   }),
 });

@@ -11,6 +11,7 @@ import {
   PROCEDIMIENTO_ROLES, isProcedimientoRole, assertNoRoleConflict, DEFAULT_ROLE_INCOMPATIBILIDADES,
 } from "../lib/sod";
 import { writeAudit } from "../lib/security";
+import { assertFourEyesActorInequality } from "../lib/four-eyes";
 
 export const sodRouter = createRouter({
   rolesCatalog: authedQuery.query(() => ({
@@ -92,12 +93,12 @@ export const sodRouter = createRouter({
     });
     if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Solicitud no encontrada." });
     if (req.status !== "PENDING") throw new TRPCError({ code: "CONFLICT", message: "Sólo se aprueban solicitudes PENDING." });
-    if (ctx.user.id === Number(req.requestedBy) || ctx.user.id === Number(req.userId)) {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "El aprobador debe ser distinto del solicitante y del beneficiario (cuatro ojos).",
-      });
-    }
+    assertFourEyesActorInequality({
+      approverUserId: ctx.user.id,
+      requesterUserId: req.requestedBy,
+      beneficiaryUserId: req.userId,
+      label: "asignación SoD",
+    });
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, req.licitacionId);
     let asignacionId = 0;
     await db.transaction(async (tx) => {
@@ -259,12 +260,12 @@ export const sodRouter = createRouter({
     if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Grant no encontrado." });
     if (cur.status !== "REQUESTED") throw new TRPCError({ code: "CONFLICT", message: "Sólo se aprueban grants REQUESTED." });
     const requester = cur.requestedBy ?? cur.grantedBy;
-    if (ctx.user.id === Number(requester) || ctx.user.id === Number(cur.userId)) {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "El aprobador de break_glass debe ser distinto del solicitante y del beneficiario.",
-      });
-    }
+    assertFourEyesActorInequality({
+      approverUserId: ctx.user.id,
+      requesterUserId: requester,
+      beneficiaryUserId: cur.userId,
+      label: "break_glass",
+    });
     const expediente = cur.licitacionId
       ? await findExpedienteByLicitacion(ctx.user.tenantId, cur.licitacionId)
       : null;

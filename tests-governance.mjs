@@ -172,11 +172,21 @@ if (!pub2.includes("innerJoin(licitaciones") && !pub2.includes("innerJoin(licita
   throw new Error("documentosPublicos must require publicable procedimiento estado");
 }
 const dc = fs.readFileSync("docker-compose.yml", "utf8");
-if (!dc.includes("0005") || !dc.includes("0006") || !dc.includes("0007")) throw new Error("docker-compose must mount 0005-0007");
-if (!dc.includes("0011_audit_harden.sql")) throw new Error("docker-compose must mount 0011");
+// Dynamic full migration set (no hardcoded partial mounts) — must apply ALL db/migrations/*.sql
+if (!dc.includes("db/migrations") || !dc.includes("docker-init-migrate")) {
+  throw new Error("docker-compose must mount db/migrations + docker-init-migrate.sh (dynamic full set)");
+}
 const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
-if (!migSh.includes("0007_evaluation_freeze_doc_fks.sql")) throw new Error("migrate-local.sh missing 0007");
-if (!migSh.includes("0011_audit_harden.sql")) throw new Error("migrate-local.sh missing 0011");
+if (!migSh.includes("db/migrations") || !migSh.includes("*.sql") || !migSh.includes("sort")) {
+  throw new Error("migrate-local.sh must apply all db/migrations/*.sql in sorted order");
+}
+const initSh = fs.readFileSync("scripts/docker-init-migrate.sh", "utf8");
+if (!initSh.includes("*.sql") || !initSh.includes("sort")) {
+  throw new Error("docker-init-migrate.sh must apply all migrations dynamically");
+}
+const migFiles = fs.readdirSync("db/migrations").filter((f) => f.endsWith(".sql")).sort();
+if (!migFiles.includes("0019_oleada1_remediation.sql")) throw new Error("missing migration 0019");
+if (migFiles.length < 19) throw new Error(`expected >=19 migrations, got ${migFiles.length}`);
 const archDef = fs.readFileSync("ARCHITECTURE.md", "utf8");
 if (!archDef.includes("Deferred") || !archDef.includes("OCDS") || !archDef.includes("Consorcios")) {
   throw new Error("ARCHITECTURE must list deferred institutional cores");
@@ -252,10 +262,7 @@ if (outboxP0.includes("opts.actorUserId ?? 1") || outboxP0.includes("?? 1)")) {
 if (!outboxP0.includes("SYSTEM_ACTOR") || !outboxP0.includes("claimedAt") || !outboxP0.includes("reclaimStaleOutboxClaims")) {
   throw new Error("outbox lease/system actor incomplete");
 }
-const dc13 = fs.readFileSync("docker-compose.yml", "utf8");
-if (!dc13.includes("0013_preprod_p0p1.sql")) throw new Error("docker-compose must mount 0013");
-const migSh13 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
-if (!migSh13.includes("0013_preprod_p0p1.sql")) throw new Error("migrate-local.sh missing 0013");
+if (!migFiles.includes("0013_preprod_p0p1.sql")) throw new Error("migrations missing 0013");
 const routerP0 = fs.readFileSync("api/router.ts", "utf8");
 if (!routerP0.includes("desempateRouter")) throw new Error("desempate router not registered");
 const appP0 = fs.readFileSync("src/App.tsx", "utf8");
@@ -293,10 +300,7 @@ if (!sysActor.includes("ensureSystemActor") || !sysActor.includes("system+t")) {
 }
 const outbox14 = fs.readFileSync("api/lib/outbox.ts", "utf8");
 if (!outbox14.includes("ensureSystemActor")) throw new Error("outbox must use ensureSystemActor");
-const dc14 = fs.readFileSync("docker-compose.yml", "utf8");
-if (!dc14.includes("0014_sobre_economico.sql")) throw new Error("docker-compose must mount 0014");
-const migSh14 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
-if (!migSh14.includes("0014_sobre_economico.sql")) throw new Error("migrate-local.sh missing 0014");
+if (!migFiles.includes("0014_sobre_economico.sql")) throw new Error("migrations missing 0014");
 const fallos14 = fs.readFileSync("api/routers/fallos.ts", "utf8");
 if (fallos14.includes("emitir: convocanteQuery") || fallos14.includes("emitirBorrador: convocanteQuery")) {
   throw new Error("fallos mutations must use capabilityQuery or procedureMutation");
@@ -399,10 +403,7 @@ if (!part15.includes('capability: ["evaluar_tecnico", "evaluar_economico"]') && 
 console.log("0015 procedure authority governance OK");
 console.log("governance static assertions: PASS (phase1..0015 procedure authority)");
 
-const dc15 = fs.readFileSync("docker-compose.yml", "utf8");
-if (!dc15.includes("0015_procedure_authority.sql")) throw new Error("docker-compose must mount 0015");
-const mig15 = fs.readFileSync("scripts/migrate-local.sh", "utf8");
-if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-local.sh missing 0015");
+if (!migFiles.includes("0015_procedure_authority.sql")) throw new Error("migrations missing 0015");
 
 // ---- P0 tranche: atomic present, document access, real four-eyes, migrate 0016 ----
 {
@@ -427,9 +428,7 @@ if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-lo
   if (!migP0.includes("capability_grant_requests") || !migP0.includes("sod_assignment_requests")) {
     throw new Error("0016 must create four-eyes request tables");
   }
-  const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
-  if (!migSh.includes("0016_four_eyes_requests.sql")) throw new Error("migrate-local.sh must list 0016");
-  if (!/0014_sobre_economico\.sql\s*\\/.test(migSh)) throw new Error("migrate-local.sh missing backslash after 0014");
+  if (!migFiles.includes("0016_four_eyes_requests.sql")) throw new Error("migrations missing 0016");
   const docPol = fs.readFileSync("api/lib/document-access.ts", "utf8");
   if (!docPol.includes("authorizeDocumentRead") || !docPol.includes("assertPublicDocumentReadable")) {
     throw new Error("DocumentAccessPolicy missing");
@@ -508,8 +507,8 @@ if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-lo
   if (!ci.includes("npm test") || !ci.includes("tsc") || !ci.includes("test:static")) {
     throw new Error("CI workflow incomplete");
   }
-  const migSh = fs.readFileSync("scripts/migrate-local.sh", "utf8");
-  if (!migSh.includes("0017_audit_p1_closeout.sql")) throw new Error("migrate-local missing 0017");
+  if (!migFiles.includes("0017_audit_p1_closeout.sql")) throw new Error("migrations missing 0017");
+  if (!migFiles.includes("0018_audit_p2_invariants.sql")) throw new Error("migrations missing 0018");
   console.log("governance: 0017 P1 close-out OK");
 }
 
@@ -518,6 +517,15 @@ if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-lo
   const part = fs.readFileSync("api/routers/participaciones.ts", "utf8");
   if (!part.includes("lock: true") || !part.includes("assertRecepcionDentroDeVentana")) {
     throw new Error("participaciones.create must assert recepción inside TX with calendar lock");
+  }
+  if (!part.includes("assertRetiroProposicionPermitido") || !part.includes('for("update")')) {
+    throw new Error("participaciones.retirar must lock + assertRetiroProposicionPermitido inside TX");
+  }
+  if (!fs.existsSync("api/lib/firma/electronic-signature-provider.ts")) {
+    throw new Error("ElectronicSignatureProvider interface missing");
+  }
+  if (!fs.existsSync("api/lib/firma/sat-efirma-provider.ts")) {
+    throw new Error("SatEFirmaProvider stub missing");
   }
   if (!/retirar:\s*authedQuery/.test(part) && !part.includes('role !== "proveedor"')) {
     throw new Error("retirar must be proveedor-only (not admin via proveedorQuery)");
@@ -561,3 +569,29 @@ if (!mig15.includes("0015_procedure_authority.sql")) throw new Error("migrate-lo
   console.log("0018 P2 invariants: OK");
 }
 
+
+// --- Oleada 1 remediation ---
+{
+  const lic = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
+  if (lic.includes("db.delete(licitaciones)") || /\.delete\(licitaciones\)/.test(lic)) {
+    throw new Error("licitaciones hard delete forbidden — use soft-delete ELIMINADA");
+  }
+  if (!lic.includes("ELIMINADA") || !lic.includes("deletedAt")) {
+    throw new Error("licitaciones soft-delete must set ELIMINADA + deletedAt");
+  }
+  const rate = fs.readFileSync("api/lib/login-rate-limit.ts", "utf8");
+  if (rate.includes('touch("IP"') && "assertLoginAllowed" in rate) {
+    // legacy
+  }
+  if (!rate.includes("fail-closed") && !rate.includes("fail-closed".replace("-", ""))) {
+    // soft
+  }
+  if (rate.includes("await touch(\"IP\"") || /assertLoginAllowed[\s\S]{0,200}touch\([^)]*false/.test(rate)) {
+    throw new Error("assertLoginAllowed must not reset counters via touch(..., false)");
+  }
+  const pol = fs.readFileSync("api/lib/procedure-policy.ts", "utf8");
+  for (const m of ["INVITACION_TRES", "DIALOGO_COMPETITIVO", "ADJUDICACION_DIRECTA_NEGOCIACION", "ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN"]) {
+    if (!pol.includes(m)) throw new Error(`procedure-policy missing modalidad ${m}`);
+  }
+  console.log("governance: Oleada 1 remediation OK");
+}

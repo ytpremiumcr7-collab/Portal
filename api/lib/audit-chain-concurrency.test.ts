@@ -3,21 +3,25 @@ import { describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { writeAudit, verifyAuditHashChain } from "./security";
-import { auditLog } from "@db/schema";
+import { auditLog, tenants } from "@db/schema";
 import { ensureSystemActor } from "./system-actor";
+import { randomUUID } from "node:crypto";
 
 const hasDb = !!process.env.DATABASE_URL;
 
 describe.runIf(hasDb)("audit chain concurrency (real DB)", () => {
-  it("concurrent writeAudit calls for same tenant produce a single linear chain", async () => {
+  it("concurrent writeAudit calls for isolated tenant produce a single linear chain", async () => {
     const db = getDb();
-    const tenant = await db.query.tenants.findFirst({ columns: { id: true } });
-    const tenantId = Number(tenant?.id ?? 0);
-    if (!tenantId) {
-      // No tenant seeded — create minimal via ensure path is skipped
-      expect(tenantId).toBeGreaterThan(0);
-      return;
-    }
+    const slug = `audit-conc-${randomUUID().slice(0, 8)}`;
+    const rfc = (`AAA${randomUUID().replace(/-/g, "").slice(0, 9)}`).slice(0, 12).toUpperCase();
+    const ins = await db.insert(tenants).values({
+      nombre: `Audit Conc ${slug}`,
+      slug,
+      rfc,
+    } as any);
+    const tenantId = Number(ins[0].insertId);
+    expect(tenantId).toBeGreaterThan(0);
+
     const actor = await ensureSystemActor(db, tenantId);
 
     const N = 24;
@@ -59,15 +63,11 @@ describe.runIf(hasDb)("audit chain concurrency (real DB)", () => {
       .orderBy(asc(auditLog.id));
 
     const hashed = events.filter((e) => e.eventHash);
+    expect(hashed.length).toBeGreaterThanOrEqual(N);
     expect(new Set(hashed.map((e) => e.eventHash)).size).toBe(hashed.length);
 
     let prev: string | null = null;
-    let started = false;
     for (const row of hashed) {
-      if (!started) {
-        started = true;
-        prev = null;
-      }
       expect(row.previousHash).toBe(prev);
       prev = row.eventHash;
     }

@@ -12,23 +12,9 @@ services:
       - "3306:3306"
     volumes:
       - ares_mysql_data:/var/lib/mysql
-      - ./db/migrations/0001_ares_mexico_baseline.sql:/docker-entrypoint-initdb.d/01.sql:ro
-      - ./db/migrations/0002_phase1_expediente.sql:/docker-entrypoint-initdb.d/02.sql:ro
-      - ./db/migrations/0003_phase2_dominios_transaccionales.sql:/docker-entrypoint-initdb.d/03.sql:ro
-      - ./db/migrations/0004_phase3_ciclo_completo.sql:/docker-entrypoint-initdb.d/04.sql:ro
-      - ./db/migrations/0005_audit_harden_sod.sql:/docker-entrypoint-initdb.d/05.sql:ro
-      - ./db/migrations/0006_sod_procedimiento.sql:/docker-entrypoint-initdb.d/06.sql:ro
-      - ./db/migrations/0007_evaluation_freeze_doc_fks.sql:/docker-entrypoint-initdb.d/07.sql:ro
-      - ./db/migrations/0008_procedure_policy.sql:/docker-entrypoint-initdb.d/08.sql:ro
-      - ./db/migrations/0009_proposiciones.sql:/docker-entrypoint-initdb.d/09.sql:ro
-      - ./db/migrations/0010_outbox.sql:/docker-entrypoint-initdb.d/10.sql:ro
-      - ./db/migrations/0011_audit_harden.sql:/docker-entrypoint-initdb.d/11.sql:ro
-      - ./db/migrations/0012_audit_hash_consorcios.sql:/docker-entrypoint-initdb.d/12.sql:ro
-      - ./db/migrations/0013_preprod_p0p1.sql:/docker-entrypoint-initdb.d/13.sql:ro
-      - ./db/migrations/0014_sobre_economico.sql:/docker-entrypoint-initdb.d/14.sql:ro
-      - ./db/migrations/0015_procedure_authority.sql:/docker-entrypoint-initdb.d/15.sql:ro
-      - ./db/migrations/0016_four_eyes_requests.sql:/docker-entrypoint-initdb.d/16.sql:ro
-      - ./db/migrations/0017_audit_p1_closeout.sql:/docker-entrypoint-initdb.d/17.sql:ro
+      # Dynamic full migration set (same as CI / scripts/migrate-local.sh) — no hardcoded partial list.
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ./scripts/docker-init-migrate.sh:/docker-entrypoint-initdb.d/99-migrate.sh:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s

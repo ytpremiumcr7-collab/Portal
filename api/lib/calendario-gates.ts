@@ -130,3 +130,44 @@ export function isWithinRecepcionMs(atMs: number, ventanaFinMs: number): boolean
 export function isCanonicalRecepcionSource(source: string): boolean {
   return source === "calendario";
 }
+
+/**
+ * Retiro de proposición: only while RECEPCION window is still open (now <= ventana_fin ms).
+ * After recepción close (or seal/apertura started), retiro is juridically barred.
+ * Same transactional pattern as presentación: lock calendar FOR UPDATE, re-read, assert, THEN mutate.
+ */
+export async function assertRetiroProposicionPermitido(
+  tenantId: number,
+  licitacionId: number,
+  opts: {
+    at?: Date;
+    tx?: any;
+    lock?: boolean;
+    /** When true (default), also reject if apertura already past RECEPCION_ABIERTA / sealed. */
+    blockAfterAperturaSeal?: boolean;
+    aperturaEstado?: string | null;
+  } = {},
+) {
+  const at = opts.at ?? new Date();
+  // Reception must still be open — reuse canonical ms window (lock inside domain TX).
+  const ventana = await assertRecepcionDentroDeVentana(tenantId, licitacionId, {
+    at,
+    tx: opts.tx,
+    lock: opts.lock ?? true,
+  });
+
+  const blockAfter = opts.blockAfterAperturaSeal !== false;
+  if (blockAfter && opts.aperturaEstado) {
+    const sealed = ["SELLADA", "ABIERTA", "REGISTRADA", "ACTA_EMITIDA", "PUBLICADA"].includes(opts.aperturaEstado);
+    if (sealed) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `No se puede retirar la proposición: la recepción/apertura ya está en estado ${opts.aperturaEstado}. El retiro sólo procede antes del cierre de recepción y del sello.`,
+      });
+    }
+  }
+
+  // Extra clarity when exactly at/after close — assertRecepcion already rejects t > fin.
+  // Retiro policy: now must be strictly before or at ventana_fin (same as presentación).
+  return { ...ventana, acto: "RETIRO" as const };
+}

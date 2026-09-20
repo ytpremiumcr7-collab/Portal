@@ -162,7 +162,7 @@ export const planeacionRouter = createRouter({
 
   definirEstrategia: capabilityQuery("administrar_planeacion").input(z.object({
     necesidadId: z.number().int().positive(),
-    modalidad: z.enum(["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "ADJUDICACION_DIRECTA"]),
+    modalidad: z.enum(["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "INVITACION_TRES", "ADJUDICACION_DIRECTA", "DIALOGO_COMPETITIVO", "ADJUDICACION_DIRECTA_NEGOCIACION", "ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN"]),
     justificacionModalidad: z.string().trim().min(10), procedencia: z.string().trim().min(10),
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {

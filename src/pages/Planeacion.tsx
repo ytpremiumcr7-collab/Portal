@@ -32,7 +32,7 @@ export default function Planeacion() {
   const [titulo, setTitulo] = useState("");
   const [monto, setMonto] = useState("");
   const [tipoContratacion, setTipoContratacion] = useState<"OBRA" | "SERVICIO" | "BIENES" | "CONCESION" | "ARRENDAMIENTO">("BIENES");
-  const [modalidad, setModalidad] = useState<"LICITACION_PUBLICA" | "INVITACION_RESTRINGIDA" | "ADJUDICACION_DIRECTA">("LICITACION_PUBLICA");
+  const [modalidad, setModalidad] = useState<"LICITACION_PUBLICA" | "INVITACION_TRES" | "INVITACION_RESTRINGIDA" | "ADJUDICACION_DIRECTA" | "DIALOGO_COMPETITIVO" | "ADJUDICACION_DIRECTA_NEGOCIACION" | "ACUERDO_MARCO_ASIGNACION" | "TIENDA_DIGITAL_ORDEN">("LICITACION_PUBLICA");
   const [progNombre, setProgNombre] = useState("");
   const [progAnio, setProgAnio] = useState(String(new Date().getFullYear()));
   const [partidaProgId, setPartidaProgId] = useState("");
@@ -46,6 +46,9 @@ export default function Planeacion() {
   const [estNecId, setEstNecId] = useState("");
   const [vincNecId, setVincNecId] = useState("");
   const [vincCatId, setVincCatId] = useState("1");
+  const [justificacionNec, setJustificacionNec] = useState("");
+  const [justificacionModalidad, setJustificacionModalidad] = useState("");
+  const [procedenciaEst, setProcedenciaEst] = useState("");
 
   return (
     <div className="space-y-5">
@@ -78,8 +81,9 @@ export default function Planeacion() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-end"><Button disabled={crearNec.isPending || !entidadId || !folio || !titulo || !monto}
-                onClick={() => crearNec.mutate({ entidadId: Number(entidadId), folio, titulo, descripcion: `${titulo} — necesidad registrada`, justificacion: "Justificación operativa", montoEstimado: monto, tipoContratacion, motivo: "Alta necesidad" })}>Registrar</Button></div>
+              <div className="sm:col-span-3"><Label>Justificación jurídica (obligatoria — redacte el motivo)</Label><Input value={justificacionNec} onChange={(e) => setJustificacionNec(e.target.value)} placeholder="Fundamento / motivo de la necesidad (mín. 10 caracteres)" /></div>
+              <div className="flex items-end"><Button disabled={crearNec.isPending || !entidadId || !folio || !titulo || !monto || justificacionNec.trim().length < 10}
+                onClick={() => crearNec.mutate({ entidadId: Number(entidadId), folio, titulo, descripcion: `${titulo} — necesidad registrada`, justificacion: justificacionNec.trim(), montoEstimado: monto, tipoContratacion, motivo: "Alta necesidad" })}>Registrar</Button></div>
             </CardContent>
           </Card>
           <Card className="border-slate-700/80 bg-slate-900/70 shadow-none"><CardContent className="p-0">
@@ -147,14 +151,21 @@ export default function Planeacion() {
         <Card className="border-slate-700/80 bg-slate-900/70"><CardContent className="flex flex-wrap gap-3 p-4">
           <Input placeholder="Necesidad ID (estrategia)" value={estNecId} onChange={(e) => setEstNecId(e.target.value)} className="max-w-[10rem]" />
           <Select value={modalidad} onValueChange={(v) => setModalidad(v as typeof modalidad)}>
-            <SelectTrigger className="max-w-[16rem]"><SelectValue placeholder="Modalidad" /></SelectTrigger>
+            <SelectTrigger className="max-w-[18rem]"><SelectValue placeholder="Modalidad" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="LICITACION_PUBLICA">Licitación pública</SelectItem>
-              <SelectItem value="INVITACION_RESTRINGIDA">Invitación restringida</SelectItem>
-              <SelectItem value="ADJUDICACION_DIRECTA">Adjudicación directa</SelectItem>
+              <SelectItem value="LICITACION_PUBLICA">1. Licitación pública</SelectItem>
+              <SelectItem value="INVITACION_TRES">2. Invitación a cuando menos tres</SelectItem>
+              <SelectItem value="ADJUDICACION_DIRECTA">3. Adjudicación directa</SelectItem>
+              <SelectItem value="DIALOGO_COMPETITIVO">4. Diálogo competitivo (Hacienda/Comité)</SelectItem>
+              <SelectItem value="ADJUDICACION_DIRECTA_NEGOCIACION">5. AD con negociación (Hacienda/Comité)</SelectItem>
+              <SelectItem value="ACUERDO_MARCO_ASIGNACION">6. Acuerdo marco / asignación</SelectItem>
+              <SelectItem value="TIENDA_DIGITAL_ORDEN">7. Tienda digital / orden</SelectItem>
             </SelectContent>
           </Select>
-          <Button disabled={definirEst.isPending} onClick={() => definirEst.mutate({ necesidadId: Number(estNecId), modalidad, justificacionModalidad: "Procedimiento conforme a normativa aplicable", procedencia: "Procedente por suficiencia y necesidad aprobada", motivo: "Definir estrategia" })}>Definir estrategia</Button>
+          <Input className="min-w-[16rem] flex-1" placeholder="Justificación de modalidad (obligatoria)" value={justificacionModalidad} onChange={(e) => setJustificacionModalidad(e.target.value)} />
+          <Input className="min-w-[16rem] flex-1" placeholder="Procedencia (obligatoria)" value={procedenciaEst} onChange={(e) => setProcedenciaEst(e.target.value)} />
+          <Button disabled={definirEst.isPending || !estNecId || justificacionModalidad.trim().length < 10 || procedenciaEst.trim().length < 10}
+            onClick={() => definirEst.mutate({ necesidadId: Number(estNecId), modalidad, justificacionModalidad: justificacionModalidad.trim(), procedencia: procedenciaEst.trim(), motivo: "Definir estrategia" })}>Definir estrategia</Button>
           <Input placeholder="Necesidad ID (vincular)" value={vincNecId} onChange={(e) => setVincNecId(e.target.value)} className="max-w-[10rem]" />
           <Input placeholder="Categoría ID" value={vincCatId} onChange={(e) => setVincCatId(e.target.value)} className="max-w-[8rem]" />
           <Button disabled={vincular.isPending} onClick={() => vincular.mutate({ necesidadId: Number(vincNecId), categoriaId: Number(vincCatId), motivo: "Vincular a nuevo procedimiento" })}>Vincular a licitación</Button>
