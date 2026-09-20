@@ -26,6 +26,7 @@ import {
 import { ciphertextHash } from "../lib/envelope-crypto";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { licitacionIdFromParticipacion } from "../lib/procedure-resolvers";
+import { moneyGt } from "../lib/money";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -139,7 +140,7 @@ export const participacionesRouter = createRouter({
     const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
     // Money gate before TX (format already zod-validated); reception window asserted INSIDE TX at commit instant.
-    if (!(Number(input.montoOferta) > 0)) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
+    if (!moneyGt(input.montoOferta, 0)) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
     const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
     if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });

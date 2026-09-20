@@ -250,9 +250,9 @@ export const ejecucionRouter = createRouter({
       criticalIncidenciasOpen: Number(crit[0]?.total ?? 0),
       pendingEstimaciones: Number(pendEst[0]?.total ?? 0),
       pendingEntregables: Number(pendEnt[0]?.total ?? 0),
-      paidCumulativeBruto: Number(paidRows[0]?.total ?? 0),
-      contratoMonto: Number(contrato.monto),
-      montoFinal: Number(input.montoFinal),
+      paidCumulativeBruto: String(paidRows[0]?.total ?? "0"),
+      contratoMonto: String(contrato.monto ?? "0"),
+      montoFinal: input.montoFinal,
       blockingGarantias: Number(blockGar[0]?.total ?? 0),
     });
 

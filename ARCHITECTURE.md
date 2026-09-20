@@ -289,10 +289,16 @@ Migration: **`0017_audit_p1_closeout.sql`**.
 Migration: **`0018_audit_p2_invariants.sql`**.
 
 ### Residuals for cross-check
-- Soft-delete vs hard-delete on non-evidence tables (proveedores.delete still hard-deletes when unused)
-- Public endpoints: offer docs already gated; keep auditing OCDS fields for pre-apertura leakage
 - Capability without procedure on remaining admin-only config mutations (categorias, proveedores CRUD)
-- Finiquito gate still uses Number for cumulative bruto display path (tolerance via decimal preferred next)
+- Detection heuristics (`api/lib/detection.ts`) still use Number for alert scoring (non-gate path)
+
+### P2.1 quick close (post-afffec6)
+| ID | Close |
+|----|-------|
+| Q-1 | Finiquito gates / cumulative bruto → `moneyAlmostEqual` / `moneyFixed2` (no Number/epsilon) |
+| Q-2 | Dictamen/adjudicación/presentación money compares → `moneyCmp` / `moneyGt` |
+| Q-3 | `consultaPublica.ocdsRelease` via `buildOcdsRelease`; bid montos redacted until apertura ABIERTA/PUBLICADA; draft contracts gated |
+| Q-4 | `proveedores.delete` → soft-delete (`activo=false`, `SUSPENDIDO`); no hard DELETE |
 
 ## Residual risks (intentionally open)
 

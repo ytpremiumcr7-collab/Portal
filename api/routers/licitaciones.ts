@@ -16,6 +16,7 @@ import { parseTieBreakPolicy, parseActosObligatorios, assertActosPermitidosPorPo
 import { enqueueOutbox } from "../lib/outbox";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
 import { loadAperturaEstado, redactParticipacionEconomica } from "../lib/sobre-economico";
+import { moneyCmp } from "../lib/money";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -259,7 +260,7 @@ export const licitacionesRouter = createRouter({
     if (decidido !== Number(input.proveedorGanadorId)) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El proveedor adjudicado debe coincidir con el acto de adjudicación publicado." });
     }
-    if (Number(input.montoAdjudicado) !== Number(offer.montoOferta)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El monto adjudicado debe coincidir con la oferta ganadora." });
+    if (moneyCmp(input.montoAdjudicado, offer.montoOferta) !== 0) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El monto adjudicado debe coincidir con la oferta ganadora." });
     const dictamen = await db.query.dictamenes.findFirst({ where: and(eq(dictamenes.tenantId, ctx.user.tenantId), eq(dictamenes.licitacionId, input.id), eq(dictamenes.estado, "APROBADO")), orderBy: [desc(dictamenes.version)] });
     const fallo = await db.query.fallos.findFirst({ where: and(eq(fallos.tenantId, ctx.user.tenantId), eq(fallos.licitacionId, input.id)) });
     assertAdjudicacionRequiresFallo({

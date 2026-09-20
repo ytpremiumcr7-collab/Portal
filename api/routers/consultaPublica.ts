@@ -4,9 +4,10 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import {
   licitaciones, fallos, contratos, documentos, proveedoresImpedidos, proveedores,
-  programasAnuales, investigacionesMercado,
+  programasAnuales, investigacionesMercado, aperturas,
 } from "@db/schema";
 import { pageInput, pageResult } from "../lib/pagination";
+import { buildOcdsRelease } from "../lib/ocds-projection";
 
 /**
  * Public (unauthenticated) read surfaces — open-data style.
@@ -178,7 +179,10 @@ export const consultaPublicaRouter = createRouter({
     }).from(fallos).where(and(eq(fallos.tenantId, proc.tenantId), eq(fallos.licitacionId, proc.id), eq(fallos.estado, "PUBLICADO"))).limit(1);
     const ctr = await db.select({
       id: contratos.id, folio: contratos.folio, estado: contratos.estado, monto: contratos.monto, fechaFirma: contratos.fechaFirma,
-    }).from(contratos).where(and(eq(contratos.tenantId, proc.tenantId), eq(contratos.licitacionId, proc.id))).limit(1);
+    }).from(contratos).where(and(
+      eq(contratos.tenantId, proc.tenantId), eq(contratos.licitacionId, proc.id),
+      sql`${contratos.estado} IN ('FORMALIZADO','VIGENTE','TERMINADO')`,
+    )).limit(1);
     return { procedimiento: proc, documentosPublicos: docs.map((d: any) => ({ ...d, downloadUrl: `/api/public/documents/${d.id}` })), adjudicacion: adj[0] ?? null, contrato: ctr[0] ?? null };
   }),
 
@@ -212,47 +216,41 @@ export const consultaPublicaRouter = createRouter({
       sql`${licitaciones.estado} IN ('PUBLICADA','EN_EVALUACION','ADJUDICADA','FINALIZADA','DESIERTA','CANCELADA')`,
     ];
     if (input.tenantId) conditions.push(eq(licitaciones.tenantId, input.tenantId));
-    const [proc] = await db.select().from(licitaciones).where(and(...conditions)).limit(1);
+    const [proc] = await db.select({
+      id: licitaciones.id, tenantId: licitaciones.tenantId, codigo: licitaciones.codigo,
+      titulo: licitaciones.titulo, objeto: licitaciones.objeto, estado: licitaciones.estado,
+      tipoLicitacion: licitaciones.tipoLicitacion, tipoContratacion: licitaciones.tipoContratacion,
+      montoPresupuestado: licitaciones.montoPresupuestado,
+      fechaPublicacion: licitaciones.fechaPublicacion, fechaCierre: licitaciones.fechaCierre,
+      createdAt: licitaciones.createdAt,
+    }).from(licitaciones).where(and(...conditions)).limit(1);
     if (!proc) return null;
-    const ocid = `ocds-ares-mx-${proc.tenantId}-${proc.codigo ?? proc.id}`;
-    const adj = await db.select().from(fallos).where(and(eq(fallos.tenantId, proc.tenantId), eq(fallos.licitacionId, proc.id), eq(fallos.estado, "PUBLICADO"))).limit(1);
-    const ctr = await db.select().from(contratos).where(and(eq(contratos.tenantId, proc.tenantId), eq(contratos.licitacionId, proc.id))).limit(1);
-    return {
-      ocid,
-      id: `${ocid}-release-1`,
-      date: proc.fechaPublicacion ?? proc.createdAt,
-      tag: ["tender"],
-      initiationType: "tender",
-      planning: {
-        budget: { amount: { amount: Number(proc.montoPresupuestado), currency: "MXN" } },
-        rationale: proc.objeto,
-      },
-      tender: {
-        id: proc.codigo,
-        title: proc.titulo,
-        description: proc.objeto,
-        status: proc.estado,
-        procurementMethod: proc.tipoLicitacion,
-        procurementMethodDetails: proc.tipoContratacion,
-        tenderPeriod: { startDate: proc.fechaPublicacion, endDate: proc.fechaCierre },
-        value: { amount: Number(proc.montoPresupuestado), currency: "MXN" },
-      },
-      awards: adj[0] ? [{
-        id: `award-${adj[0].id}`,
-        status: "active",
-        date: adj[0].publicadoAt,
-        value: { amount: Number(adj[0].montoAdjudicado), currency: "MXN" },
-        suppliers: [{ id: String(adj[0].proveedorGanadorId) }],
-      }] : [],
-      contracts: ctr[0] ? [{
-        id: ctr[0].folio,
-        awardID: adj[0] ? `award-${adj[0].id}` : undefined,
-        status: ctr[0].estado,
-        period: { startDate: ctr[0].fechaInicio, endDate: ctr[0].fechaFin },
-        value: { amount: Number(ctr[0].monto), currency: "MXN" },
-        dateSigned: ctr[0].fechaFirma,
-      }] : [],
-    };
+    // Awards only when fallo PUBLICADO (post-adjudicación publica).
+    const adj = await db.select({
+      id: fallos.id, publicadoAt: fallos.publicadoAt, montoAdjudicado: fallos.montoAdjudicado,
+      proveedorGanadorId: fallos.proveedorGanadorId,
+    }).from(fallos).where(and(eq(fallos.tenantId, proc.tenantId), eq(fallos.licitacionId, proc.id), eq(fallos.estado, "PUBLICADO"))).limit(1);
+    // Contracts only in formalized public states — never draft montos.
+    const ctr = await db.select({
+      id: contratos.id, folio: contratos.folio, estado: contratos.estado, monto: contratos.monto,
+      fechaInicio: contratos.fechaInicio, fechaFin: contratos.fechaFin, fechaFirma: contratos.fechaFirma,
+    }).from(contratos).where(and(
+      eq(contratos.tenantId, proc.tenantId), eq(contratos.licitacionId, proc.id),
+      sql`${contratos.estado} IN ('FORMALIZADO','VIGENTE','TERMINADO')`,
+    )).limit(1);
+    const ap = await db.query.aperturas.findFirst({
+      where: and(eq(aperturas.tenantId, proc.tenantId), eq(aperturas.licitacionId, proc.id)),
+      columns: { estado: true },
+    });
+    // Never attach sealed offer / bid economic amounts here — projector redacts unless post-apertura.
+    // Bids intentionally omitted from this public MVP (no participaciones join) to avoid pre-apertura leaks.
+    return buildOcdsRelease({
+      proc,
+      award: adj[0] ?? null,
+      contract: ctr[0] ?? null,
+      bids: [],
+      aperturaEstado: ap?.estado ?? null,
+    });
   }),
 
 

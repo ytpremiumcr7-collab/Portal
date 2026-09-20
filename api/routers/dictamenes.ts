@@ -12,6 +12,7 @@ import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertEvaluacionesCompletas } from "../lib/eval-completeness";
 import { createFirmaElectronica } from "../lib/firmas-electronicas";
+import { moneyCmp } from "../lib/money";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -58,7 +59,7 @@ export const dictamenesRouter = createRouter({
         where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, input.proveedorRecomendadoId), eq(participaciones.estadoEvaluacion, "ADMISIBLE")),
       });
       if (!offer || offer.ordenMerito !== 1) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El proveedor recomendado debe ser el 1er lugar admisible." });
-      if (Number(input.montoRecomendado) !== Number(offer.montoOferta)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El monto recomendado debe coincidir con la oferta." });
+      if (moneyCmp(input.montoRecomendado, offer.montoOferta) !== 0) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El monto recomendado debe coincidir con la oferta." });
     }
     const db = getDb();
     let id = 0;

@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { moneyAlmostEqual, moneyFixed2, type MoneyInput } from "./money";
 
 /** Incidencia severities that block finiquito while open. */
 export const FINIQUITO_CRITICAL_INCIDENCIA_ESTADOS = ["ABIERTA", "EN_ANALISIS", "ACCION_CORRECTIVA", "ESCALADA"] as const;
@@ -22,7 +23,7 @@ export const FINIQUITO_BLOCKING_GARANTIA_ESTADOS = ["REQUERIDA", "PRESENTADA"] a
  * 1. Cumulative **montoBruto** of PAGADA estimaciones must reconcile vs contrato.monto
  *    (contrato.monto already reflects formalized modificaciones).
  * 2. Client **montoFinal** must match that computed cumulative bruto (not an arbitrary figure)
- *    within a tiny epsilon (default 0.01 MXN).
+ *    within tolerance (default 0.01 MXN) via decimal.js — never IEEE-754 Number.
  * Net paid (montoNeto) is informational; the gate uses bruto as the recognized amount.
  */
 export type FiniquitoGateInput = {
@@ -30,13 +31,13 @@ export type FiniquitoGateInput = {
   pendingEstimaciones: number;
   pendingEntregables: number;
   /** Sum of PAGADA estimaciones (montoBruto — recognized cumulative amount). */
-  paidCumulativeBruto: number;
+  paidCumulativeBruto: MoneyInput;
   /** Contrato monto (already adjusted by formalized modificaciones). */
-  contratoMonto: number;
+  contratoMonto: MoneyInput;
   /** Client-supplied finiquito montoFinal — must match paidCumulativeBruto. */
-  montoFinal: number;
-  /** Tolerance for floating reconciliation (default 0.01 MXN). */
-  tolerance?: number;
+  montoFinal: MoneyInput;
+  /** Tolerance for reconciliation (default 0.01 MXN). */
+  tolerance?: MoneyInput;
   blockingGarantias: number;
 };
 
@@ -51,15 +52,18 @@ export function evaluateFiniquitoGates(input: FiniquitoGateInput): string[] {
   if (input.pendingEntregables > 0) {
     errors.push(`Hay ${input.pendingEntregables} entregable(s) pendientes de aceptación.`);
   }
-  const tol = input.tolerance ?? 0.01;
-  if (Math.abs(input.paidCumulativeBruto - input.contratoMonto) > tol) {
+  const tol = input.tolerance ?? "0.01";
+  const bruto = moneyFixed2(input.paidCumulativeBruto);
+  const contrato = moneyFixed2(input.contratoMonto);
+  const final = moneyFixed2(input.montoFinal);
+  if (!moneyAlmostEqual(input.paidCumulativeBruto, input.contratoMonto, tol)) {
     errors.push(
-      `Pagos acumulados bruto (${input.paidCumulativeBruto.toFixed(2)}) no concilian con monto del contrato (${input.contratoMonto.toFixed(2)}).`,
+      `Pagos acumulados bruto (${bruto}) no concilian con monto del contrato (${contrato}).`,
     );
   }
-  if (Math.abs(input.montoFinal - input.paidCumulativeBruto) > tol) {
+  if (!moneyAlmostEqual(input.montoFinal, input.paidCumulativeBruto, tol)) {
     errors.push(
-      `montoFinal (${input.montoFinal.toFixed(2)}) no concilia con el acumulado bruto reconocido (${input.paidCumulativeBruto.toFixed(2)}); no se aceptan montos arbitrarios del cliente.`,
+      `montoFinal (${final}) no concilia con el acumulado bruto reconocido (${bruto}); no se aceptan montos arbitrarios del cliente.`,
     );
   }
   if (input.blockingGarantias > 0) {

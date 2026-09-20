@@ -206,6 +206,15 @@ if (!css.includes("light formal governmental") && !css.includes("light formal"))
 }
 const consulta = fs.readFileSync("api/routers/consultaPublica.ts", "utf8");
 if (!consulta.includes("ocdsRelease")) throw new Error("OCDS public projection missing");
+if (!consulta.includes("buildOcdsRelease")) throw new Error("OCDS must use buildOcdsRelease projector");
+const ocdsLib = fs.readFileSync("api/lib/ocds-projection.ts", "utf8");
+if (!ocdsLib.includes("isAperturaEconomiaPublica") || !ocdsLib.includes("sealed")) throw new Error("OCDS pre-apertura redaction missing");
+const finiSrc = fs.readFileSync("api/lib/finiquito-gates.ts", "utf8");
+if (finiSrc.includes("Math.abs") || !finiSrc.includes("moneyAlmostEqual")) throw new Error("finiquito gates must use moneyAlmostEqual not Math.abs");
+const provSrc = fs.readFileSync("api/routers/proveedores.ts", "utf8");
+if (provSrc.includes("db.delete(proveedores)") || provSrc.includes(".delete(proveedores)")) throw new Error("proveedores.delete must not hard-delete");
+if (!provSrc.includes("softDeleted") && !provSrc.includes("activo:false")) throw new Error("proveedores.delete must soft-delete");
+
 
 
 // Pre-prod P0/P1 (0013)
