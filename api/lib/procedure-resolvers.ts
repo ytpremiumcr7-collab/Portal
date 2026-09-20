@@ -212,3 +212,15 @@ export async function licitacionIdFromExpediente(input: unknown, tenantId: numbe
   if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Expediente no encontrado." });
   return row.licitacionId;
 }
+
+export async function licitacionIdFromDialogoRonda(input: unknown, tenantId: number): Promise<number> {
+  const id = Number((input as { id?: number }).id);
+  const { dialogoRondas } = await import("@db/schema");
+  const row = await getDb().query.dialogoRondas.findFirst({
+    where: and(eq(dialogoRondas.id, id), eq(dialogoRondas.tenantId, tenantId)),
+    columns: { licitacionId: true },
+  });
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Ronda de diálogo no encontrada." });
+  return row.licitacionId;
+}
+

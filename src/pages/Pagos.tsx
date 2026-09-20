@@ -11,6 +11,29 @@ import { Banknote } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
 
+function CapButton({
+  allowed,
+  missingLabel,
+  disabledExtra,
+  children,
+  ...rest
+}: React.ComponentProps<typeof Button> & {
+  allowed: boolean;
+  missingLabel: string;
+  disabledExtra?: boolean;
+}) {
+  const blocked = !allowed;
+  return (
+    <Button
+      {...rest}
+      disabled={blocked || !!disabledExtra || rest.disabled}
+      title={blocked ? missingLabel : rest.title}
+    >
+      {children}
+    </Button>
+  );
+}
+
 export default function Pagos() {
   useAuth({ redirectOnUnauthenticated: true });
   const { allowed: canPresentar } = useCapability("presentar_pago");
@@ -20,12 +43,16 @@ export default function Pagos() {
   const [folio, setFolio] = useState("");
   const [numero, setNumero] = useState("1");
   const [monto, setMonto] = useState("");
+  const [motivoPresentar, setMotivoPresentar] = useState("");
   const list = trpc.pagos.list.useQuery({ page, pageSize: 20 });
   const presentar = trpc.pagos.presentar.useMutation({ onSuccess: () => list.refetch() });
   const revisar = trpc.pagos.revisar.useMutation({ onSuccess: () => list.refetch() });
   const autorizar = trpc.pagos.autorizar.useMutation({ onSuccess: () => list.refetch() });
   const pagar = trpc.pagos.pagar.useMutation({ onSuccess: () => list.refetch() });
   const rechazar = trpc.pagos.rechazar.useMutation({ onSuccess: () => list.refetch() });
+
+  const noPresentar = "Sin capacidad «presentar_pago» / asignación de procedimiento";
+  const noAprobar = "Sin capacidad «aprobar_pago» / asignación de procedimiento";
 
   return (
     <div className="space-y-5">
@@ -67,9 +94,20 @@ export default function Pagos() {
             <Label className="ares-label ares-required">Monto bruto</Label>
             <Input value={monto} onChange={(e) => setMonto(e.target.value)} className="ares-input max-w-[10rem]" />
           </div>
-          <Button
+          <div className="space-y-1.5">
+            <Label className="ares-label ares-required">Motivo</Label>
+            <Input
+              value={motivoPresentar}
+              onChange={(e) => setMotivoPresentar(e.target.value)}
+              className="ares-input max-w-xs"
+              placeholder="Motivo (obligatorio)"
+            />
+          </div>
+          <CapButton
             className="ares-cta"
-            disabled={!canPresentar || !contratoId || !folio || !monto || presentar.isPending}
+            allowed={canPresentar}
+            missingLabel={noPresentar}
+            disabledExtra={!contratoId || !folio || !monto || motivoPresentar.trim().length < 3 || presentar.isPending}
             onClick={() =>
               presentar.mutate({
                 contratoId: Number(contratoId),
@@ -77,12 +115,12 @@ export default function Pagos() {
                 numero: Number(numero),
                 montoBruto: monto,
                 retencion: "0.00",
-                motivo: "Presentación de estimación",
+                motivo: motivoPresentar.trim(),
               })
             }
           >
             Presentar
-          </Button>
+          </CapButton>
         </CardContent>
       </Card>
 
@@ -120,55 +158,79 @@ export default function Pagos() {
                       </td>
                       <td className="space-x-2 text-right">
                         {row.estado === "PRESENTADA" && (
-                          <Button
+                          <CapButton
                             size="sm"
                             variant="outline"
                             className="h-7 border-slate-600 text-xs text-slate-300"
-                            disabled={!canAprobar} onClick={() => revisar.mutate({ id: row.id, motivo: "Pasar a revisión" })}
+                            allowed={canAprobar}
+                            missingLabel={noAprobar}
+                            disabledExtra={revisar.isPending}
+                            onClick={() => {
+                              const motivo = window.prompt("Motivo para pasar a revisión:");
+                              if (!motivo || motivo.trim().length < 3) return;
+                              revisar.mutate({ id: row.id, motivo: motivo.trim() });
+                            }}
                           >
                             Revisar
-                          </Button>
+                          </CapButton>
                         )}
                         {row.estado === "EN_REVISION" && (
                           <>
-                            <Button
+                            <CapButton
                               size="sm"
                               className="ares-cta h-7 text-xs"
+                              allowed={canAprobar}
+                              missingLabel={noAprobar}
+                              disabledExtra={autorizar.isPending}
                               onClick={() => {
+                                const motivo = window.prompt("Motivo de autorización:");
+                                if (!motivo || motivo.trim().length < 3) return;
                                 if (!window.confirm("¿Confirma autorizar este pago?")) return;
-                                autorizar.mutate({ id: row.id, motivo: "Autorizar pago" });
+                                autorizar.mutate({ id: row.id, motivo: motivo.trim() });
                               }}
                             >
                               Autorizar
-                            </Button>
-                            <Button
+                            </CapButton>
+                            <CapButton
                               size="sm"
                               variant="outline"
                               className="h-7 border-red-900/50 text-xs text-red-300"
+                              allowed={canAprobar}
+                              missingLabel={noAprobar}
+                              disabledExtra={rechazar.isPending}
                               onClick={() => {
+                                const motivoRechazo = window.prompt("Motivo de rechazo (mín. 5 caracteres):");
+                                if (!motivoRechazo || motivoRechazo.trim().length < 5) return;
+                                const motivo = window.prompt("Motivo de auditoría:");
+                                if (!motivo || motivo.trim().length < 3) return;
                                 if (!window.confirm("¿Confirma rechazar esta estimación?")) return;
                                 rechazar.mutate({
                                   id: row.id,
-                                  motivoRechazo: "No procede la estimación presentada",
-                                  motivo: "Rechazo",
+                                  motivoRechazo: motivoRechazo.trim(),
+                                  motivo: motivo.trim(),
                                 });
                               }}
                             >
                               Rechazar
-                            </Button>
+                            </CapButton>
                           </>
                         )}
                         {row.estado === "AUTORIZADA" && (
-                          <Button
+                          <CapButton
                             size="sm"
                             className="ares-cta h-7 text-xs"
+                            allowed={canAprobar}
+                            missingLabel={noAprobar}
+                            disabledExtra={pagar.isPending}
                             onClick={() => {
+                              const motivo = window.prompt("Motivo de registro de pago:");
+                              if (!motivo || motivo.trim().length < 3) return;
                               if (!window.confirm("¿Confirma registrar el pago ejecutado?")) return;
-                              pagar.mutate({ id: row.id, motivo: "Registrar pago" });
+                              pagar.mutate({ id: row.id, motivo: motivo.trim() });
                             }}
                           >
                             Registrar pago
-                          </Button>
+                          </CapButton>
                         )}
                       </td>
                     </tr>

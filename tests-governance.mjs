@@ -595,3 +595,48 @@ if (!migFiles.includes("0015_procedure_authority.sql")) throw new Error("migrati
   }
   console.log("governance: Oleada 1 remediation OK");
 }
+
+// --- Oleada 3 residuals (dialogo / legal_entity / pagos UI / FIEL honesty) ---
+{
+  if (!migFiles.includes("0021_dialogo_legal_entity.sql")) throw new Error("migrations missing 0021");
+  const mig21 = fs.readFileSync("db/migrations/0021_dialogo_legal_entity.sql", "utf8");
+  if (!mig21.includes("dialogo_rondas") || !mig21.includes("legal_entity_id")) {
+    throw new Error("0021 must create dialogo_rondas and enforce legal_entity_id");
+  }
+  if (!schema.includes("dialogoRondas") || !schema.includes('legalEntityId: bigint("legal_entity_id"')) {
+    throw new Error("schema missing dialogoRondas or legalEntityId");
+  }
+  if (!/legalEntityId:\s*bigint\("legal_entity_id"[^)]*\)\.notNull\(\)/.test(schema)) {
+    throw new Error("proveedores.legalEntityId must be .notNull() in schema");
+  }
+  if (!routerIndex.includes("dialogoRouter") && !routerIndex.includes('dialogo:')) {
+    throw new Error("dialogo router not registered");
+  }
+  const dialogo = fs.readFileSync("api/routers/dialogo.ts", "utf8");
+  for (const m of ["abrirRonda", "cerrarRonda", "registrarNota", "DIALOGO_COMPETITIVO", "appendExpedienteEvent"]) {
+    if (!dialogo.includes(m)) throw new Error(`dialogo router missing ${m}`);
+  }
+  const pol = fs.readFileSync("api/lib/procedure-policy.ts", "utf8");
+  if (!pol.includes("DIALOGO_RONDA_ABRIR") || !pol.includes("DIALOGO_RONDA_CERRAR")) {
+    throw new Error("assertTransitionAllowed must wire diálogo ronda acts");
+  }
+  const pagosUi = fs.readFileSync("src/pages/Pagos.tsx", "utf8");
+  if (!pagosUi.includes('useCapability("presentar_pago")') || !pagosUi.includes('useCapability("aprobar_pago")')) {
+    throw new Error("Pagos UI must gate presentar/aprobar via useCapability");
+  }
+  for (const label of ["Autorizar", "Rechazar", "Registrar pago", "Revisar", "Presentar"]) {
+    if (!pagosUi.includes(label)) throw new Error(`Pagos UI missing action ${label}`);
+  }
+  // Action buttons must not render enabled without capability mirror
+  if (!pagosUi.includes("missingLabel") && !pagosUi.includes("Sin capacidad")) {
+    throw new Error("Pagos UI must tooltip/disable when capability missing");
+  }
+  if (!fs.existsSync("src/pages/DialogoCompetitivo.tsx")) throw new Error("DialogoCompetitivo page missing");
+  if (!fs.existsSync("docs/EFIRMA_E2E.md")) throw new Error("docs/EFIRMA_E2E.md missing");
+  if (!fs.existsSync("api/lib/firma/sat-cas/README.md")) throw new Error("sat-cas README missing");
+  const readmeCas = fs.readFileSync("api/lib/firma/sat-cas/README.md", "utf8");
+  if (!readmeCas.includes("AC4") || !readmeCas.toLowerCase().includes("private key")) {
+    throw new Error("sat-cas README must document AC4 drop + no private keys");
+  }
+  console.log("governance: Oleada 3 residuals OK");
+}

@@ -47,6 +47,7 @@ import Comision from "@/pages/Comision";
 import Terminacion from "@/pages/Terminacion";
 import Calendario from "@/pages/Calendario";
 import Consorcios from "@/pages/Consorcios";
+import DialogoCompetitivo from "@/pages/DialogoCompetitivo";
 
 
 function RoleGate({ roles, children }: { roles: Array<"admin" | "licitante" | "proveedor">; children: React.ReactNode }) {
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="/documentos" element={<Documentos />} />
             <Route path="/hitos" element={<RoleGate roles={["admin","licitante"]}><Hitos /></RoleGate>} />
             <Route path="/aclaraciones" element={<RoleGate roles={["admin","licitante","proveedor"]}><Aclaraciones /></RoleGate>} />
+            <Route path="/dialogo" element={<RoleGate roles={["admin","licitante"]}><DialogoCompetitivo /></RoleGate>} />
             <Route path="/aperturas" element={<RoleGate roles={["admin","licitante"]}><Aperturas /></RoleGate>} />
             <Route path="/dictamenes" element={<RoleGate roles={["admin","licitante"]}><Dictamenes /></RoleGate>} />
             <Route path="/fallos" element={<RoleGate roles={["admin","licitante"]}><Fallos /></RoleGate>} />

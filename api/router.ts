@@ -38,6 +38,7 @@ import { cucopRouter } from "./routers/cucop";
 import { desempateRouter } from "./routers/desempate";
 import { smtpRouter } from "./routers/smtp";
 import { firmasRouter } from "./routers/firmas";
+import { dialogoRouter } from "./routers/dialogo";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -80,6 +81,7 @@ export const appRouter = createRouter({
   desempate: desempateRouter,
   smtp: smtpRouter,
   firmas: firmasRouter,
+  dialogo: dialogoRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -109,7 +109,7 @@ export const supplierLegalEntities = mysqlTable("supplier_legal_entities", {
 export const proveedores = mysqlTable("proveedores", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
-  legalEntityId: bigint("legal_entity_id", { mode: "number", unsigned: true }),
+  legalEntityId: bigint("legal_entity_id", { mode: "number", unsigned: true }).notNull(),
   razonSocial: varchar("razon_social", { length: 200 }).notNull(),
   nombreFantasia: varchar("nombre_fantasia", { length: 200 }),
   rfc: varchar("rfc", { length: 13 }).notNull(),
@@ -513,6 +513,35 @@ export const aclaracionesRespuestas = mysqlTable("aclaraciones_respuestas", {
   foreignKey({ name: "aclar_resp_actor_fk", columns: [t.tenantId, t.respondidaPor], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
 ]);
 
+
+export const dialogoRondas = mysqlTable("dialogo_rondas", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  expedienteId: bigint("expediente_id", { mode: "number", unsigned: true }).notNull(),
+  ronda: int("ronda").notNull(),
+  tema: varchar("tema", { length: 240 }).notNull(),
+  participantes: json("participantes"),
+  notas: text("notas"),
+  documentoId: bigint("documento_id", { mode: "number", unsigned: true }),
+  estado: mysqlEnum("estado", ["ABIERTA", "CERRADA"]).default("ABIERTA").notNull(),
+  createdBy: bigint("created_by", { mode: "number", unsigned: true }).notNull(),
+  cerradaBy: bigint("cerrada_by", { mode: "number", unsigned: true }),
+  cerradaAt: timestamp("cerrada_at"),
+  motivoApertura: text("motivo_apertura").notNull(),
+  motivoCierre: text("motivo_cierre"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => [
+  uniqueIndex("dialogo_rondas_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("dialogo_rondas_lic_ronda_uq").on(t.tenantId, t.licitacionId, t.ronda),
+  index("dialogo_rondas_lic_estado_idx").on(t.tenantId, t.licitacionId, t.estado),
+  foreignKey({ name: "dialogo_rondas_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+  foreignKey({ name: "dialogo_rondas_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "dialogo_rondas_actor_fk", columns: [t.tenantId, t.createdBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  check("dialogo_rondas_ronda_pos", sql`${t.ronda} > 0`),
+]);
+
 export const aperturas = mysqlTable("aperturas", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
@@ -728,6 +757,7 @@ export type Hito = typeof hitos.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
 
 export type AclaracionJunta = typeof aclaracionesJuntas.$inferSelect;
+export type DialogoRonda = typeof dialogoRondas.$inferSelect;
 export type Apertura = typeof aperturas.$inferSelect;
 export type Dictamen = typeof dictamenes.$inferSelect;
 export type Fallo = typeof fallos.$inferSelect;

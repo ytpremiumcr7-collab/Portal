@@ -354,11 +354,35 @@ export function assertTransitionAllowed(
   }
 
   if (m === "DIALOGO_COMPETITIVO") {
-    // MVP: planning + diálogo rounds (reuse aclaraciones-like) — block classic LP junta-only path without auth
+    // Classic LP junta without Comité auth is refused; diálogo uses dialogo_rondas MVP.
     if (act === "JUNTA_ACLARACIONES" && !(req.autorizacionComiteRef || "").toString().trim()) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: "DIALOGO_COMPETITIVO: diálogo/rondas requieren autorizacionComiteRef (MVP: reutilizar aclaraciones o tabla dialogo_rondas diferida).",
+        message: "DIALOGO_COMPETITIVO: junta LP clásica requiere autorizacionComiteRef; use rondas de diálogo (dialogo_rondas).",
+      });
+    }
+  }
+
+  // Diálogo / negociación acts — refuse on LP-only modalities
+  const dialogoActs = ["DIALOGO_RONDA_ABRIR", "DIALOGO_RONDA_CERRAR", "DIALOGO_NOTA"];
+  if (dialogoActs.includes(act)) {
+    if (act === "DIALOGO_NOTA") {
+      if (m !== "DIALOGO_COMPETITIVO" && m !== "ADJUDICACION_DIRECTA_NEGOCIACION") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Acto ${act} no aplica a modalidad ${m} (sólo DIALOGO_COMPETITIVO / ADJUDICACION_DIRECTA_NEGOCIACION).`,
+        });
+      }
+    } else if (m !== "DIALOGO_COMPETITIVO") {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Acto ${act} sólo aplica a DIALOGO_COMPETITIVO (modalidad actual: ${m}).`,
+      });
+    }
+    if (m === "DIALOGO_COMPETITIVO" && !(req.autorizacionComiteRef || "").toString().trim()) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "DIALOGO_COMPETITIVO: actos de ronda requieren autorizacionComiteRef en modalidadMeta.",
       });
     }
   }

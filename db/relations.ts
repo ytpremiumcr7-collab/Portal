@@ -3,7 +3,7 @@ import {
   tenants, users, sessions, entidades, proveedores, categorias, licitaciones,
   expedientes, expedienteRequirements, expedienteEvents, participaciones,
   alertasSeguridad, documentos, hitos, auditLog, sobresEconomicos,
-  aclaracionesJuntas, aclaracionesPreguntas, aclaracionesRespuestas,
+  aclaracionesJuntas, aclaracionesPreguntas, aclaracionesRespuestas, dialogoRondas,
   aperturas, aperturaRegistros, dictamenes, dictamenFirmantes, fallos,
   contratos, garantias,
   userCapabilities, procedimientoAsignaciones, programasAnuales, partidasPresupuestarias, necesidades,
@@ -147,6 +147,13 @@ export const aclaracionesPreguntasRelations = relations(aclaracionesPreguntas, (
 export const aclaracionesRespuestasRelations = relations(aclaracionesRespuestas, ({ one }) => ({
   pregunta: one(aclaracionesPreguntas, { fields: [aclaracionesRespuestas.preguntaId], references: [aclaracionesPreguntas.id] }),
   junta: one(aclaracionesJuntas, { fields: [aclaracionesRespuestas.juntaId], references: [aclaracionesJuntas.id] }),
+}));
+
+export const dialogoRondasRelations = relations(dialogoRondas, ({ one }) => ({
+  tenant: one(tenants, { fields: [dialogoRondas.tenantId], references: [tenants.id] }),
+  licitacion: one(licitaciones, { fields: [dialogoRondas.licitacionId], references: [licitaciones.id] }),
+  expediente: one(expedientes, { fields: [dialogoRondas.expedienteId], references: [expedientes.id] }),
+  createdByUser: one(users, { fields: [dialogoRondas.createdBy], references: [users.id] }),
 }));
 
 export const aperturasRelations = relations(aperturas, ({ one, many }) => ({

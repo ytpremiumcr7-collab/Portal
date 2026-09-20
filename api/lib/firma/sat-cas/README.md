@@ -4,25 +4,50 @@ Piedra Angular `SatEFirmaProvider` requires issuer + OCSP-signer certificates to
 CRYPTO_SIGNATURE validation. Without them the provider reports `NOT_CONFIGURED`
 (SESSION_CONFIRMATION still works for non-juridical confirmations).
 
-## Official source
+**Never commit private keys, .key files, FIEL passwords, or contributor personal certificates.**
 
-SAT CSD / FIEL authority certificates are published by the SAT at:
+## Official source (public CA material only)
 
-- http://omawww.sat.gob.mx/tramitesyservicios/Paginas/certificado_sello_digital.htm
-- OCSP endpoint (production): `https://cfdi.sat.gob.mx/edofiel`
+SAT publishes CSD / FIEL **authority** certificates (not end-entity FIEL) at:
 
-Community documentation (phpcfdi/credentials — VerificacionCertificadosSAT.md) describes
-using `AC4_SAT` / `AC5_SAT` as `-issuer` against that OCSP URL.
+1. Portal trámites — Certificado de sello digital / autoridades certificadoras  
+   http://omawww.sat.gob.mx/tramitesyservicios/Paginas/certificado_sello_digital.htm
+2. Related “Certificados de la Autoridad Certificadora” pages under sat.gob.mx  
+   (look for AC4 / AC5 / AC Raíz downloads — DER `.cer` or PEM).
+3. OCSP production endpoint for e.firma status: `https://cfdi.sat.gob.mx/edofiel`
 
-## Expected files in this directory
+Community docs (e.g. phpcfdi/credentials — VerificacionCertificadosSAT.md) describe using
+`AC4_SAT` / `AC5_SAT` as `-issuer` against that OCSP URL, plus OCSP responder signer certs.
 
-| File | Role |
-|------|------|
-| `AC4_SAT.cer` or `AC4_SAT.pem` | Autoridad Certificadora 4 (issuer) |
-| `AC5_SAT.cer` or `AC5_SAT.pem` | Autoridad Certificadora 5 (issuer) |
-| `OCSP_AC4.cer` / `OCSP_AC5.cer` (or `.pem`) | OCSP response signer cert(s) for AC4/AC5 |
+### How to drop certs into this directory
 
-Place DER (`.cer`) or PEM files here. Do **not** commit private keys or contributor FIEL material.
+```bash
+# From a workstation with access to the SAT download pages (no login for public CAs):
+# 1) Download AC4_SAT.cer and AC5_SAT.cer (issuer / autoridad certificadora).
+# 2) Download OCSP responder signer certs if published separately (name them OCSP_AC4.cer / OCSP_AC5.cer).
+# 3) Copy ONLY those public certs here:
+
+cp ~/Downloads/AC4_SAT.cer api/lib/firma/sat-cas/
+cp ~/Downloads/AC5_SAT.cer api/lib/firma/sat-cas/
+cp ~/Downloads/OCSP_AC4.cer api/lib/firma/sat-cas/   # if available
+cp ~/Downloads/OCSP_AC5.cer api/lib/firma/sat-cas/   # if available
+
+# Optional: convert DER → PEM
+openssl x509 -inform DER -in AC4_SAT.cer -out AC4_SAT.pem
+```
+
+`loadSatCasBundle()` accepts `.cer` / `.crt` / `.pem` and classifies by filename:
+
+| Filename pattern | Role |
+|------------------|------|
+| `*AC4*` / `*AC5*` / `*AC_*` / `*SAT*` / `*AUTORIDAD*` (without OCSP) | Issuer |
+| `*OCSP*` | OCSP response signer |
+
+If downloads fail, licensing is unclear, or files are absent, leave this folder with only
+this README — the app stays on the honest `NOT_CONFIGURED` path (no fake FIEL).
+
+Automated fetch from CI is **not** required; live E2E with real `.cer`/`.key` is an
+external gate (see `docs/EFIRMA_E2E.md`).
 
 ## Env flags
 
