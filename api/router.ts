@@ -39,6 +39,7 @@ import { desempateRouter } from "./routers/desempate";
 import { smtpRouter } from "./routers/smtp";
 import { firmasRouter } from "./routers/firmas";
 import { dialogoRouter } from "./routers/dialogo";
+import { continuidadRouter, legalHoldRouter } from "./routers/continuidad";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -82,6 +83,8 @@ export const appRouter = createRouter({
   smtp: smtpRouter,
   firmas: firmasRouter,
   dialogo: dialogoRouter,
+  continuidad: continuidadRouter,
+  legalHold: legalHoldRouter,
 });
 
 export type AppRouter = typeof appRouter;

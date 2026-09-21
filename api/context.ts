@@ -13,7 +13,13 @@ export type TrpcContext = {
 
 export async function createContext(opts: FetchCreateContextFnOptions): Promise<TrpcContext> {
   const meta = requestMeta(opts.req);
-  const ctx: TrpcContext = { req: opts.req, resHeaders: opts.resHeaders, ...meta };
+  const ctx: TrpcContext = {
+    req: opts.req,
+    resHeaders: opts.resHeaders,
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent,
+    requestId: meta.requestId,
+  };
   try {
     ctx.user = (await authenticateRequest(opts.req.headers)) ?? undefined;
   } catch {

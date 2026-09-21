@@ -1,73 +1,47 @@
-# React + TypeScript + Vite
+# Piedra Angular
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Plataforma transaccional de **contratación pública** de los Estados Unidos Mexicanos.
 
-Currently, two official plugins are available:
+Límite de producto: **ARES only**. No se mezcla con plataformas de preparación de obra. Piedra Angular contrata, administra y gobierna el expediente.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Ciclo
 
-## React Compiler
+planeación → investigación de mercado → convocatoria → aclaraciones → recepción / apertura → evaluación → dictamen → fallo → acto de adjudicación → contrato → garantías → ejecución → pagos → incidencias / sanciones / inconformidades → consulta pública.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+No es un CRUD. Cada acto material es un agregado con estados, gates, SoD y evidencia encadenada.
 
-## Expanding the ESLint configuration
+## Local
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Ver `LOCAL_RUN.md`.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cp .env.example .env
+docker compose up -d
+bash scripts/migrate-local.sh
+npm install
+npm run dev
+npm run seed:ops
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Gobierno (honesto)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Control | Estado |
+|---|---|
+| Expediente | Cadena v1 histórica + **v2** en eventos nuevos (tenant, IP, requestId institucional) |
+| Firma de sesión | `SESSION_CONFIRMATION` — no es e.firma / FIEL |
+| e.firma / FIEL | `SatEFirmaProvider` + OCSP si hay AC4/AC5; si no, `NOT_CONFIGURED` |
+| TSA | Anclas `PENDING_EXTERNAL` hasta `ARES_TSA_URL` |
+| Documentos | SHA-256 + object version id (filesystem versionado; S3 opcional) |
+| Legal hold | Tablas + bloqueo de purga |
+| SoD apertura | Roles especializados. Si no están asignados, `creador` opera y el evento registra `CONCENTRATED_CREADOR` |
+| IM | `FUENTE_CAPTURADA` (autoridad + fuente + documento) ≠ `RESPUESTA_PROVEEDOR` (token) |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Flags (default off): `ARES_REQUIRE_CRYPTO_FIRMA`, `ARES_REQUIRE_STEP_UP`, `ARES_APERTURA_SOD_STRICT`.
+
+`docs-audit-brief.md` es **histórico**. Arquitectura vigente: `ARCHITECTURE.md`. FIEL live: `docs/EFIRMA_E2E.md`.
+
+```bash
+npx tsc -b
+npm test
+npm run test:static
 ```
