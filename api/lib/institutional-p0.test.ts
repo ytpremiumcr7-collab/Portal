@@ -65,13 +65,17 @@ describe("IM document support gate", () => {
     expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "RECHAZADO", licitacionId: 1 })).toMatch(/RECHAZADO/);
     expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "OBSOLETO", licitacionId: 1 })).toMatch(/OBSOLETO/);
     expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "APROBADO", licitacionId: 9 }, 3)).toMatch(/otra licitación/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "PENDIENTE", licitacionId: null }, 3)).toMatch(/vinculado a la licitación/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "PENDIENTE", licitacionId: 3, tipo: "OFERTA_ECONOMICA" }, 3)).toMatch(/no acredita/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "PENDIENTE", licitacionId: 3, tipo: "CONVOCATORIA" }, 3)).toMatch(/no acredita/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "PENDIENTE", licitacionId: 3, tipo: "OTRO" }, 3)).toBeNull();
     expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "PENDIENTE", licitacionId: 3 }, 3)).toBeNull();
   });
 });
 
 describe("IM close gate", () => {
   it("rejects undocumented or single-type sources", async () => {
-    const { assertEstudioPuedeCerrarse } = await import("./investigacion-mercado");
+    const { assertEstudioPuedeCerrarse, assertEstudioListoParaCerrar } = await import("./investigacion-mercado");
     expect(() => assertEstudioPuedeCerrarse([{ tipo: "OFICIO", documentoId: 1 }])).toThrow();
     expect(() => assertEstudioPuedeCerrarse([
       { tipo: "OFICIO", documentoId: 1 },
@@ -85,5 +89,13 @@ describe("IM close gate", () => {
       { tipo: "OFICIO", documentoId: 1 },
       { tipo: "CONSULTA_WEB", documentoId: 2 },
     ])).not.toThrow();
+    expect(() => assertEstudioListoParaCerrar({
+      licitacionId: null,
+      fuentes: [{ tipo: "OFICIO", documentoId: 1 }, { tipo: "CONSULTA_WEB", documentoId: 2 }],
+    })).toThrow(/huérfano/);
+    expect(() => assertEstudioListoParaCerrar({
+      licitacionId: 9,
+      fuentes: [{ tipo: "OFICIO", documentoId: 1 }, { tipo: "CONSULTA_WEB", documentoId: 2 }],
+    })).not.toThrow();
   });
 });
