@@ -36,10 +36,42 @@ describe("Apertura SoD", () => {
 });
 
 describe("Honest FIEL labels", () => {
-  it("SESSION never says FIEL", () => {
-    expect(labelForSignatureKind("SESSION_CONFIRMATION").toLowerCase()).not.toMatch(/fiel/);
+  it("SESSION is labelled as session confirmation, not as FIEL", () => {
+    const label = labelForSignatureKind("SESSION_CONFIRMATION").toLowerCase();
+    expect(label).toMatch(/no es e\.firma ni fiel/);
+    expect(label).toMatch(/sesión|session/);
+    expect(label.startsWith("confirmación de sesión")).toBe(true);
   });
   it("crypto gate defaults off", () => {
     expect(cryptoRequiredForAct()).toBe(false);
+  });
+});
+
+describe("Honest object store / TSA", () => {
+  it("live store is filesystem and anchors stay PENDING_EXTERNAL", async () => {
+    const { describeObjectStore } = await import("./document-store");
+    const snap = describeObjectStore();
+    expect(snap.backend).toBe("filesystem");
+    expect(snap.anchorsDefault).toBe("PENDING_EXTERNAL");
+    expect(snap.note.toLowerCase()).toMatch(/filesystem/);
+  });
+});
+
+describe("IM close gate", () => {
+  it("rejects undocumented or single-type sources", async () => {
+    const { assertEstudioPuedeCerrarse } = await import("./investigacion-mercado");
+    expect(() => assertEstudioPuedeCerrarse([{ tipo: "OFICIO", documentoId: 1 }])).toThrow();
+    expect(() => assertEstudioPuedeCerrarse([
+      { tipo: "OFICIO", documentoId: 1 },
+      { tipo: "OFICIO", documentoId: 2 },
+    ])).toThrow();
+    expect(() => assertEstudioPuedeCerrarse([
+      { tipo: "OFICIO", documentoId: null },
+      { tipo: "CONSULTA_WEB", documentoId: 2 },
+    ])).toThrow();
+    expect(() => assertEstudioPuedeCerrarse([
+      { tipo: "OFICIO", documentoId: 1 },
+      { tipo: "CONSULTA_WEB", documentoId: 2 },
+    ])).not.toThrow();
   });
 });
