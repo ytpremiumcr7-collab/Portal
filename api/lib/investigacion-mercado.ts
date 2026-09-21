@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../queries/connection";
-import { investigacionesMercado } from "@db/schema";
+import { documentos, investigacionesMercado, licitaciones } from "@db/schema";
 import { fuentesMercado } from "@db/schema-institutional";
 
 /** Fuentes del art. 47 RLAASSP / práctica LOPSRM. No son proposiciones. */
@@ -28,6 +28,47 @@ export const MODALIDADES_RECOMENDADAS = [
 /** Diálogo competitivo: la ley exceptúa IM previa. */
 export function procedimientoExigeInvestigacionMercado(tipoLicitacion: string) {
   return tipoLicitacion !== "DIALOGO_COMPETITIVO";
+}
+
+/** Pure predicate so unit tests can cover the gate without MariaDB. */
+export function evaluateFuenteDocumento(
+  doc: { esVersionVigente: boolean; estado: string; licitacionId?: number | null } | null | undefined,
+  licitacionId?: number | null,
+): string | null {
+  if (!doc) return "El documento de soporte de la fuente no existe en el tenant.";
+  if (!doc.esVersionVigente) return "El documento de soporte debe ser la versión vigente del expediente.";
+  if (doc.estado === "RECHAZADO" || doc.estado === "OBSOLETO") {
+    return `El documento de soporte está ${doc.estado}; no acredita la fuente.`;
+  }
+  if (licitacionId != null && doc.licitacionId != null && Number(doc.licitacionId) !== Number(licitacionId)) {
+    return "El documento de la fuente está vinculado a otra licitación.";
+  }
+  return null;
+}
+
+export async function assertFuenteDocumento(input: {
+  tenantId: number;
+  documentoId: number;
+  licitacionId?: number | null;
+}) {
+  const db = getDb();
+  const doc = await db.query.documentos.findFirst({
+    where: and(eq(documentos.id, input.documentoId), eq(documentos.tenantId, input.tenantId)),
+  });
+  const reason = evaluateFuenteDocumento(doc, input.licitacionId);
+  if (reason) throw new TRPCError({ code: "PRECONDITION_FAILED", message: reason });
+  return doc!;
+}
+
+export async function assertLicitacionDelTenant(tenantId: number, licitacionId: number) {
+  const lic = await getDb().query.licitaciones.findFirst({
+    where: and(eq(licitaciones.id, licitacionId), eq(licitaciones.tenantId, tenantId)),
+    columns: { id: true, estado: true, codigo: true },
+  });
+  if (!lic || lic.estado === "ELIMINADA") {
+    throw new TRPCError({ code: "NOT_FOUND", message: "La licitación no existe en el tenant." });
+  }
+  return lic;
 }
 
 export async function listFuentes(tenantId: number, investigacionId: number) {

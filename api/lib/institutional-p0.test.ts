@@ -57,6 +57,18 @@ describe("Honest object store / TSA", () => {
   });
 });
 
+describe("IM document support gate", () => {
+  it("rejects missing, obsolete, rejected or foreign documents", async () => {
+    const { evaluateFuenteDocumento } = await import("./investigacion-mercado");
+    expect(evaluateFuenteDocumento(null)).toMatch(/no existe/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: false, estado: "APROBADO", licitacionId: 1 })).toMatch(/vigente/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "RECHAZADO", licitacionId: 1 })).toMatch(/RECHAZADO/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "OBSOLETO", licitacionId: 1 })).toMatch(/OBSOLETO/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "APROBADO", licitacionId: 9 }, 3)).toMatch(/otra licitación/);
+    expect(evaluateFuenteDocumento({ esVersionVigente: true, estado: "PENDIENTE", licitacionId: 3 }, 3)).toBeNull();
+  });
+});
+
 describe("IM close gate", () => {
   it("rejects undocumented or single-type sources", async () => {
     const { assertEstudioPuedeCerrarse } = await import("./investigacion-mercado");
