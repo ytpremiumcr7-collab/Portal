@@ -1,9 +1,18 @@
-import { createHash } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../queries/connection";
 import { expedienteEvents, expedienteRequirements, expedientes, documentos, licitaciones } from "@db/schema";
+import { evidenceAnchors } from "@db/schema-institutional";
 import type { TrpcContext } from "../context";
+import {
+  EVIDENCE_SCHEMA_V1,
+  EVIDENCE_SCHEMA_V2,
+  canonicalEventV1,
+  canonicalEventV2,
+  hashCanonical,
+  schemaVersionOf,
+} from "./evidence-canonical";
+import { institutionalEnv } from "./institutional-env";
 
 export const EXPEDIENTE_STATES = ["INTEGRACION", "REVISION_JURIDICA", "APROBADO", "OBSERVADO", "CERRADO", "ARCHIVADO"] as const;
 export type ExpedienteState = typeof EXPEDIENTE_STATES[number];
@@ -17,8 +26,6 @@ const COMMON_REQUIREMENTS = [
 ];
 
 export function defaultRequirements(_marco: "LAASSP" | "LOPSRM") {
-  // Fase 1: sólo requisitos de integración y revisión jurídica previos a publicación.
-  // Acta de apertura, dictamen, fallo, contrato, etc. pertenecen a fases posteriores.
   return [...COMMON_REQUIREMENTS];
 }
 
@@ -71,10 +78,6 @@ export async function createExpedienteForLicitacion(tx: any, ctx: TrpcContext, l
   return expedienteId;
 }
 
-function canonicalEvent(input: { expedienteId: number; secuencia: number; tipo: string; estadoAnterior: string | null; estadoNuevo: string | null; actorUserId: number; motivo: string | null; payload: unknown; timestamp: string; previousHash: string | null }) {
-  return JSON.stringify(input);
-}
-
 export async function appendExpedienteEvent(tx: any, ctx: TrpcContext, input: {
   expedienteId: number;
   tipo: string;
@@ -82,6 +85,7 @@ export async function appendExpedienteEvent(tx: any, ctx: TrpcContext, input: {
   estadoNuevo?: string | null;
   motivo?: string | null;
   payload?: unknown;
+  actorCapability?: string | null;
 }) {
   await tx.update(expedientes).set({ eventSequence: sql`${expedientes.eventSequence} + 1` }).where(and(eq(expedientes.tenantId, ctx.user!.tenantId), eq(expedientes.id, input.expedienteId)));
   const sequenceRow = await tx.query.expedientes.findFirst({ where: and(eq(expedientes.tenantId, ctx.user!.tenantId), eq(expedientes.id, input.expedienteId)) });
@@ -94,39 +98,64 @@ export async function appendExpedienteEvent(tx: any, ctx: TrpcContext, input: {
   const timestamp = new Date().toISOString();
   const previousHash = last?.eventHash ?? null;
   const payload = input.payload ?? null;
-  const base = canonicalEvent({ expedienteId: input.expedienteId, secuencia, tipo: input.tipo, estadoAnterior: input.estadoAnterior ?? null, estadoNuevo: input.estadoNuevo ?? null, actorUserId: ctx.user!.id, motivo: input.motivo ?? null, payload, timestamp, previousHash });
-  const eventHash = createHash("sha256").update(base).digest("hex");
-  const meta = { ipAddress: ctx.ipAddress, requestId: ctx.requestId };
+  const schemaVersion = institutionalEnv.evidenceSchemaVersion >= 2 ? EVIDENCE_SCHEMA_V2 : EVIDENCE_SCHEMA_V1;
+  const v1 = {
+    expedienteId: input.expedienteId, secuencia, tipo: input.tipo,
+    estadoAnterior: input.estadoAnterior ?? null, estadoNuevo: input.estadoNuevo ?? null,
+    actorUserId: ctx.user!.id, motivo: input.motivo ?? null, payload, timestamp, previousHash,
+  };
+  const eventHash = schemaVersion === EVIDENCE_SCHEMA_V2
+    ? hashCanonical(canonicalEventV2({
+      ...v1, schemaVersion: EVIDENCE_SCHEMA_V2, tenantId: ctx.user!.tenantId,
+      actorCapability: input.actorCapability ?? null, requestId: ctx.requestId,
+      sourceIp: ctx.ipAddress, verifiedClientIp: ctx.ipAddress,
+    }))
+    : hashCanonical(canonicalEventV1(v1));
   await tx.insert(expedienteEvents).values({
-    tenantId: ctx.user!.tenantId,
-    expedienteId: input.expedienteId,
-    secuencia,
-    tipo: input.tipo,
-    estadoAnterior: input.estadoAnterior ?? null,
-    estadoNuevo: input.estadoNuevo ?? null,
-    actorUserId: ctx.user!.id,
-    motivo: input.motivo ?? null,
+    tenantId: ctx.user!.tenantId, expedienteId: input.expedienteId, secuencia,
+    tipo: input.tipo, estadoAnterior: input.estadoAnterior ?? null, estadoNuevo: input.estadoNuevo ?? null,
+    actorUserId: ctx.user!.id, motivo: input.motivo ?? null,
     payload: payload == null ? null : JSON.stringify(payload),
-    timestamp: new Date(timestamp),
-    ipAddress: meta.ipAddress,
-    requestId: meta.requestId,
-    previousHash,
-    eventHash,
+    timestamp: new Date(timestamp), ipAddress: ctx.ipAddress, requestId: ctx.requestId,
+    previousHash, eventHash,
   });
-  return { secuencia, eventHash };
+  await tx.execute(sql`UPDATE expediente_events SET schema_version = ${schemaVersion}, actor_capability = ${input.actorCapability ?? null}, verified_client_ip = ${ctx.ipAddress}, anchor_status = ${"PENDING_EXTERNAL"} WHERE tenant_id = ${ctx.user!.tenantId} AND expediente_id = ${input.expedienteId} AND secuencia = ${secuencia}`);
+  await tx.insert(evidenceAnchors).values({
+    tenantId: ctx.user!.tenantId, expedienteId: input.expedienteId, eventSequence: secuencia,
+    eventHash, algorithm: "SHA256", status: "PENDING_EXTERNAL", tsaUrl: institutionalEnv.tsaUrl || null,
+  });
+  return { secuencia, eventHash, schemaVersion };
 }
 
 export async function verifyExpedienteEvidenceChain(tenantId: number, expedienteId: number) {
   const db = getDb();
   const events = await db.select().from(expedienteEvents).where(and(eq(expedienteEvents.tenantId, tenantId), eq(expedienteEvents.expedienteId, expedienteId))).orderBy(asc(expedienteEvents.secuencia));
+  const extras = await db.execute(sql`SELECT secuencia, schema_version, actor_capability, verified_client_ip, request_id, ip_address FROM expediente_events WHERE tenant_id = ${tenantId} AND expediente_id = ${expedienteId} ORDER BY secuencia ASC`) as any;
+  const extraRows: any[] = Array.isArray(extras) ? (Array.isArray(extras[0]) ? extras[0] : extras) : (extras?.rows ?? []);
+  const extraBySeq = new Map<number, any>();
+  for (const r of extraRows) extraBySeq.set(Number(r.secuencia ?? r.SECUENCIA), r);
   let previous: string | null = null;
   for (const event of events) {
-    if (event.previousHash !== previous) return { valid: false, brokenAt: event.secuencia };
+    if (event.previousHash !== previous) return { valid: false, brokenAt: event.secuencia, reason: "previousHash" };
     let parsedPayload: unknown = null;
-    try { parsedPayload = event.payload ? JSON.parse(event.payload) : null; } catch { return { valid: false, brokenAt: event.secuencia }; }
-    const base = canonicalEvent({ expedienteId: event.expedienteId, secuencia: event.secuencia, tipo: event.tipo, estadoAnterior: event.estadoAnterior, estadoNuevo: event.estadoNuevo, actorUserId: event.actorUserId, motivo: event.motivo, payload: parsedPayload, timestamp: event.timestamp.toISOString(), previousHash: event.previousHash });
-    const expected = createHash("sha256").update(base).digest("hex");
-    if (expected !== event.eventHash) return { valid: false, brokenAt: event.secuencia };
+    try { parsedPayload = event.payload ? JSON.parse(event.payload) : null; } catch { return { valid: false, brokenAt: event.secuencia, reason: "payload" }; }
+    const extra = extraBySeq.get(event.secuencia) ?? {};
+    const version = schemaVersionOf({ schemaVersion: extra.schema_version ?? extra.schemaVersion ?? (event as any).schemaVersion });
+    const v1 = {
+      expedienteId: event.expedienteId, secuencia: event.secuencia, tipo: event.tipo,
+      estadoAnterior: event.estadoAnterior, estadoNuevo: event.estadoNuevo, actorUserId: event.actorUserId,
+      motivo: event.motivo, payload: parsedPayload, timestamp: event.timestamp.toISOString(), previousHash: event.previousHash,
+    };
+    const base = version === EVIDENCE_SCHEMA_V2
+      ? canonicalEventV2({
+        ...v1, schemaVersion: EVIDENCE_SCHEMA_V2, tenantId: event.tenantId,
+        actorCapability: extra.actor_capability ?? extra.actorCapability ?? null,
+        requestId: extra.request_id ?? extra.requestId ?? event.requestId ?? "",
+        sourceIp: extra.ip_address ?? extra.ipAddress ?? event.ipAddress ?? null,
+        verifiedClientIp: extra.verified_client_ip ?? extra.verifiedClientIp ?? event.ipAddress ?? null,
+      })
+      : canonicalEventV1(v1);
+    if (hashCanonical(base) !== event.eventHash) return { valid: false, brokenAt: event.secuencia, reason: "eventHash", schemaVersion: version };
     previous = event.eventHash;
   }
   return { valid: true, brokenAt: null, events: events.length };
