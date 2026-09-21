@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../queries/connection";
-import { documentos, legalHoldTargets, legalHolds } from "@db/schema";
+import { documentos } from "@db/schema";
+import { legalHoldTargets, legalHolds } from "@db/schema-institutional";
 
 export async function isTargetOnHold(tenantId: number, targetType: string, targetId: string | number): Promise<boolean> {
   const db = getDb();
