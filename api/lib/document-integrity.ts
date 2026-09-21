@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { documentos } from "@db/schema";
-import { env } from "./env";
+import { getObjectStore } from "./document-store";
 
 export async function verifyDocumentStoreIntegrity(opts: {
   tenantId: number;
@@ -28,7 +26,7 @@ export async function verifyDocumentStoreIntegrity(opts: {
   }> = [];
   for (const doc of rows) {
     try {
-      const bytes = await readFile(path.resolve(env.storagePath, doc.storageKey));
+      const bytes = await getObjectStore().get({ storageKey: doc.storageKey, objectKey: (doc as any).objectKey });
       const computed = createHash("sha256").update(bytes).digest("hex");
       results.push({
         documentoId: doc.id,
