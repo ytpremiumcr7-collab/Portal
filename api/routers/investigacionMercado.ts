@@ -8,7 +8,18 @@ import { fuentesMercado } from "@db/schema-institutional";
 import { assertInvMercadoTransition } from "../lib/phase3-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { FUENTES_MERCADO, MODALIDADES_RECOMENDADAS, assertEstudioPuedeCerrarse, assertFuenteDocumento, assertLicitacionDelTenant, listFuentes } from "../lib/investigacion-mercado";
+import {
+  FUENTES_MERCADO,
+  MODALIDADES_RECOMENDADAS,
+  TIPOS_SOPORTE_FUENTE,
+  assertEstudioListoParaCerrar,
+  assertFuenteDocumento,
+  assertLicitacionDelTenant,
+  estadoInvestigacionParaLicitacion,
+  listDocumentosSoporte,
+  listFuentes,
+  listFuentesConDocumento,
+} from "../lib/investigacion-mercado";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -27,9 +38,15 @@ function assertAbierta(estado: string) {
 }
 
 export const investigacionMercadoRouter = createRouter({
-  list: authedQuery.input(z.object({ page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
+  list: authedQuery.input(z.object({
+    page: z.number().int().positive().optional(),
+    pageSize: z.number().int().positive().max(100).optional(),
+    licitacionId: z.number().int().positive().optional(),
+  }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
-    const where = eq(investigacionesMercado.tenantId, ctx.user.tenantId);
+    const conditions = [eq(investigacionesMercado.tenantId, ctx.user.tenantId)];
+    if (input?.licitacionId) conditions.push(eq(investigacionesMercado.licitacionId, input.licitacionId));
+    const where = and(...conditions);
     const db = getDb();
     const [items, totalRows] = await Promise.all([
       db.query.investigacionesMercado.findMany({ where, orderBy: [desc(investigacionesMercado.createdAt)], limit: pageSize, offset }),
@@ -44,8 +61,34 @@ export const investigacionMercadoRouter = createRouter({
       with: { consultados: { with: { cotizaciones: true } }, cotizaciones: true },
     });
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Investigación no encontrada." });
-    const fuentes = await listFuentes(ctx.user.tenantId, input.id);
-    return { ...item, fuentes, aviso: "Las observaciones de precio no son proposiciones ni ofertas de participación." };
+    const fuentes = await listFuentesConDocumento(ctx.user.tenantId, input.id);
+    return {
+      ...item,
+      fuentes,
+      aviso: "Las observaciones de precio no son proposiciones ni ofertas de participación.",
+    };
+  }),
+
+  porLicitacion: authedQuery.input(z.object({ licitacionId: z.number().int().positive() })).query(async ({ input, ctx }) => {
+    return estadoInvestigacionParaLicitacion(ctx.user.tenantId, input.licitacionId);
+  }),
+
+  documentosSoporte: authedQuery.input(z.object({ investigacionId: z.number().int().positive() })).query(async ({ input, ctx }) => {
+    const inv = await loadInv(ctx.user.tenantId, input.investigacionId);
+    if (!inv.licitacionId) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Vincule la licitación antes de elegir documentos de soporte. El expediente de la fuente es el de esa licitación.",
+      });
+    }
+    const docs = await listDocumentosSoporte(ctx.user.tenantId, inv.licitacionId);
+    const elegibles = docs.filter((d) => (TIPOS_SOPORTE_FUENTE as readonly string[]).includes(d.tipo) && d.estado !== "RECHAZADO" && d.estado !== "OBSOLETO");
+    return {
+      licitacionId: inv.licitacionId,
+      tiposAceptados: TIPOS_SOPORTE_FUENTE,
+      items: elegibles,
+      aviso: "Cargue el oficio, captura CompraNet, tabulador o extracto como FUNDAMENTO_JURIDICO u OTRO en el expediente de la licitación. Una oferta no es fuente.",
+    };
   }),
 
   crear: capabilityQuery("investigar_mercado").input(z.object({
@@ -102,6 +145,12 @@ export const investigacionMercadoRouter = createRouter({
     const db = getDb();
     const inv = await loadInv(ctx.user.tenantId, input.investigacionId);
     assertAbierta(inv.estado);
+    if (!inv.licitacionId) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Vincule la licitación antes de registrar fuentes. El documento de soporte vive en el expediente de ese procedimiento.",
+      });
+    }
     await assertFuenteDocumento({
       tenantId: ctx.user.tenantId,
       documentoId: input.documentoId,
@@ -277,7 +326,10 @@ export const investigacionMercadoRouter = createRouter({
     assertInvMercadoTransition(cur.estado as any, input.to);
     if (input.to === "CERRADA" || input.to === "CONCLUIDA") {
       const fuentes = await listFuentes(ctx.user.tenantId, input.id);
-      assertEstudioPuedeCerrarse(fuentes.map((f) => ({ tipo: f.tipo, documentoId: f.documentoId })));
+      assertEstudioListoParaCerrar({
+        licitacionId: cur.licitacionId,
+        fuentes: fuentes.map((f) => ({ tipo: f.tipo, documentoId: f.documentoId })),
+      });
     }
     if (input.to === "CONCLUIDA") {
       if (!input.conclusion || !input.resultado || !input.precioReferencia || input.existenciaOferta == null || input.potencialesIdentificados == null || !input.modalidadRecomendada) {
