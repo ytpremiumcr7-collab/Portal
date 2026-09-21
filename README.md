@@ -2,7 +2,7 @@
 
 Plataforma transaccional de **contratación pública** de los Estados Unidos Mexicanos.
 
-Límite de producto: **ARES only**. No se mezcla con plataformas de preparación de obra. Piedra Angular contrata, administra y gobierna el expediente.
+Límite de producto: Piedra Angular contrata, administra y gobierna el expediente.
 
 ## Ciclo
 
