@@ -12,30 +12,35 @@ export default function InvestigacionMercado() {
   const [folio, setFolio] = useState("");
   const [objeto, setObjeto] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [tipoFuente, setTipoFuente] = useState("PLATAFORMA_HISTORICA");
+  const [descFuente, setDescFuente] = useState("");
+  const [docId, setDocId] = useState("");
+  const [precioObs, setPrecioObs] = useState("");
   const [razonExt, setRazonExt] = useState("");
-  const [cotProvId, setCotProvId] = useState("");
-  const [cotMonto, setCotMonto] = useState("");
-  const [cotId, setCotId] = useState("");
   const [resultado, setResultado] = useState("");
   const [conclusion, setConclusion] = useState("");
+  const [precioRef, setPrecioRef] = useState("");
+  const [potenciales, setPotenciales] = useState("3");
   const list = trpc.investigacionMercado.list.useQuery({ page, pageSize: 20 });
   const detail = trpc.investigacionMercado.getById.useQuery({ id: selectedId! }, { enabled: !!selectedId });
-  const comparativo = trpc.investigacionMercado.comparativo.useQuery({ investigacionId: selectedId! }, { enabled: !!selectedId });
+  const analisis = trpc.investigacionMercado.analisisPrecios.useQuery({ investigacionId: selectedId! }, { enabled: !!selectedId });
   const crear = trpc.investigacionMercado.crear.useMutation({ onSuccess: () => list.refetch() });
   const trans = trpc.investigacionMercado.transicionar.useMutation({ onSuccess: () => { list.refetch(); detail.refetch(); } });
-  const consultar = trpc.investigacionMercado.consultarProveedor.useMutation({ onSuccess: () => detail.refetch() });
-  const registrarCot = trpc.investigacionMercado.registrarCotizacion.useMutation({ onSuccess: () => { detail.refetch(); comparativo.refetch(); } });
-  const validar = trpc.investigacionMercado.validarCotizacion.useMutation({ onSuccess: () => { detail.refetch(); comparativo.refetch(); } });
-  const descartar = trpc.investigacionMercado.descartarCotizacion.useMutation({ onSuccess: () => { detail.refetch(); comparativo.refetch(); } });
+  const fuente = trpc.investigacionMercado.registrarFuente.useMutation({ onSuccess: () => { detail.refetch(); analisis.refetch(); } });
+  const potencial = trpc.investigacionMercado.identificarPotencial.useMutation({ onSuccess: () => detail.refetch() });
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Investigación de mercado" description="Cotizaciones, validación/descarte, comparativo y conclusión — distinta de participación/oferta." breadcrumbs={[{ label: "Planeación", href: "/planeacion" }, { label: "Investigación de mercado" }]} />
-      <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Abrir investigación</CardTitle></CardHeader>
+      <PageHeader
+        title="Investigación de mercado"
+        description="Estudio previo de planeación: fuentes documentadas, existencia de oferta, precio prevaleciente y modalidad. No es cotización ni proposición."
+        breadcrumbs={[{ label: "Planeación", href: "/planeacion" }, { label: "Investigación de mercado" }]}
+      />
+      <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Abrir estudio</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-3 p-4">
           <Input placeholder="Folio" value={folio} onChange={(e) => setFolio(e.target.value)} className="max-w-xs" />
           <Input placeholder="Objeto (≥10)" value={objeto} onChange={(e) => setObjeto(e.target.value)} className="min-w-[14rem] flex-1" />
-          <Button disabled={!folio || objeto.length < 10 || crear.isPending} onClick={() => crear.mutate({ folio, objeto, motivo: "Apertura investigación de mercado" })}>Crear</Button>
+          <Button disabled={!folio || objeto.length < 10 || crear.isPending} onClick={() => crear.mutate({ folio, objeto, motivo: "Apertura de investigación de mercado" })}>Crear estudio</Button>
         </CardContent></Card>
       <Card className="border-slate-700/80 bg-slate-900/70"><CardContent className="p-0">
         <table className="w-full text-sm"><thead><tr className="border-b border-slate-800 text-left text-xs text-slate-500"><th className="p-3">ID</th><th>Folio</th><th>Estado</th><th /></tr></thead>
@@ -44,13 +49,14 @@ export default function InvestigacionMercado() {
               <td className="p-3"><button type="button" className="text-amber-400 underline" onClick={() => setSelectedId(row.id)}>{row.id}</button></td>
               <td>{row.folio}</td><td><StatusBadge status={row.estado} /></td>
               <td className="space-x-1 p-3 text-right">
-                {row.estado === "BORRADOR" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "EN_CONSULTA", motivo: "Abrir consulta" })}>Consultar</Button>}
-                {row.estado === "EN_CONSULTA" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "CERRADA", motivo: "Cerrar consulta" })}>Cerrar</Button>}
+                {row.estado === "EN_CONSULTA" && <Button size="sm" onClick={() => trans.mutate({ id: row.id, to: "CERRADA", motivo: "Cerrar consulta de fuentes" })}>Cerrar fuentes</Button>}
                 {row.estado === "CERRADA" && (
                   <span className="inline-flex flex-wrap items-center gap-1">
                     <Input placeholder="Resultado" value={resultado} onChange={(e) => setResultado(e.target.value)} className="max-w-[10rem] h-8" />
                     <Input placeholder="Conclusión" value={conclusion} onChange={(e) => setConclusion(e.target.value)} className="max-w-[12rem] h-8" />
-                    <Button size="sm" disabled={!resultado.trim() || !conclusion.trim()} onClick={() => trans.mutate({ id: row.id, to: "CONCLUIDA", resultado, conclusion, motivo: "Concluir" })}>Concluir</Button>
+                    <Input placeholder="Precio estimado" value={precioRef} onChange={(e) => setPrecioRef(e.target.value)} className="max-w-[8rem] h-8" />
+                    <Input placeholder="Potenciales" value={potenciales} onChange={(e) => setPotenciales(e.target.value)} className="max-w-[6rem] h-8" />
+                    <Button size="sm" disabled={!resultado.trim() || !conclusion.trim() || !precioRef} onClick={() => trans.mutate({ id: row.id, to: "CONCLUIDA", resultado, conclusion, precioReferencia: precioRef, existenciaOferta: true, potencialesIdentificados: Number(potenciales), modalidadRecomendada: "LICITACION_PUBLICA", motivo: "Concluir estudio" })}>Concluir estudio</Button>
                   </span>
                 )}
               </td>
@@ -58,34 +64,39 @@ export default function InvestigacionMercado() {
           ))}</tbody>
         </table>
       </CardContent></Card>
-
       {selectedId && (
         <>
-          <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Detalle #{selectedId}</CardTitle></CardHeader>
+          <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Fuentes del estudio #{selectedId}</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4">
+              <p className="text-xs text-slate-400">Mínimo dos tipos distintos, cada uno con documento de soporte. La solicitud informativa a un particular es una fuente, no una oferta.</p>
               <div className="flex flex-wrap gap-3">
-                <div><Label>Razón social externa</Label><Input value={razonExt} onChange={(e) => setRazonExt(e.target.value)} /></div>
-                <Button className="self-end" disabled={consultar.isPending} onClick={() => consultar.mutate({ investigacionId: selectedId, razonSocialExterna: razonExt || "Proveedor externo", fuente: "Consulta directa", motivo: "Registrar consultado" })}>Consultar proveedor</Button>
+                <select value={tipoFuente} onChange={(e) => setTipoFuente(e.target.value)} className="h-9 rounded border border-slate-700 bg-slate-950 px-2 text-sm">
+                  <option>PLATAFORMA_HISTORICA</option>
+                  <option>CAMARA_ORGANISMO</option>
+                  <option>CONSULTA_WEB</option>
+                  <option>OFICIO</option>
+                  <option>SOLICITUD_INFORMATIVA</option>
+                  <option>TABULADOR_RAMO</option>
+                  <option>PRESUPUESTO_BASE</option>
+                </select>
+                <Input placeholder="Descripción de la consulta" value={descFuente} onChange={(e) => setDescFuente(e.target.value)} className="min-w-[16rem] flex-1" />
+                <Input placeholder="Documento ID" value={docId} onChange={(e) => setDocId(e.target.value)} className="max-w-[8rem]" />
+                <Input placeholder="Precio observado (opcional)" value={precioObs} onChange={(e) => setPrecioObs(e.target.value)} className="max-w-[10rem]" />
+                <Button disabled={fuente.isPending || descFuente.length < 10 || !docId} onClick={() => fuente.mutate({ investigacionId: selectedId, tipo: tipoFuente as any, descripcion: descFuente, consultadaAt: new Date().toISOString(), documentoId: Number(docId), precioObservado: precioObs || undefined, motivo: "Registrar fuente del estudio" })}>Registrar fuente</Button>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Input placeholder="Proveedor consultado ID" value={cotProvId} onChange={(e) => setCotProvId(e.target.value)} className="max-w-[10rem]" />
-                <Input placeholder="Monto" value={cotMonto} onChange={(e) => setCotMonto(e.target.value)} className="max-w-[8rem]" />
-                <Button disabled={registrarCot.isPending} onClick={() => registrarCot.mutate({ investigacionId: selectedId, proveedorConsultadoId: Number(cotProvId), monto: cotMonto, motivo: "Registrar cotización" })}>Registrar cotización</Button>
+                <div><Label>Potencial identificado</Label><Input value={razonExt} onChange={(e) => setRazonExt(e.target.value)} /></div>
+                <Button className="self-end" disabled={potencial.isPending} onClick={() => potencial.mutate({ investigacionId: selectedId, razonSocialExterna: razonExt || "Proveedor identificado", fuente: "Directorio / plataforma", motivo: "Identificar potencial" })}>Identificar potencial</Button>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <Input placeholder="Cotización ID" value={cotId} onChange={(e) => setCotId(e.target.value)} className="max-w-[8rem]" />
-                <Button size="sm" onClick={() => validar.mutate({ id: Number(cotId), motivo: "Validar cotización" })}>Validar</Button>
-                <Button size="sm" variant="outline" onClick={() => descartar.mutate({ id: Number(cotId), motivo: "Descartar cotización" })}>Descartar</Button>
-              </div>
-              <pre className="overflow-auto rounded bg-slate-950/50 p-3 text-xs text-slate-400">{JSON.stringify(detail.data?.cotizaciones ?? [], null, 2)}</pre>
+              <pre className="overflow-auto rounded bg-slate-950/50 p-3 text-xs text-slate-400">{JSON.stringify(detail.data?.fuentes ?? [], null, 2)}</pre>
             </CardContent></Card>
-          <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Comparativo (sólo VALIDADA)</CardTitle></CardHeader>
+          <Card className="border-slate-700/80 bg-slate-900/70"><CardHeader><CardTitle className="text-sm">Precio prevaleciente (informativo)</CardTitle></CardHeader>
             <CardContent className="p-4 text-sm text-slate-300">
-              <p>n={comparativo.data?.count ?? 0} · min={String(comparativo.data?.min ?? "—")} · max={String(comparativo.data?.max ?? "—")} · avg={String(comparativo.data?.avg ?? "—")}</p>
+              <p>n={analisis.data?.count ?? 0} · min={String(analisis.data?.min ?? "—")} · max={String(analisis.data?.max ?? "—")} · avg={String(analisis.data?.avg ?? "—")}</p>
+              <p className="text-xs text-slate-500 mt-1">No son proposiciones. El comparativo de ofertas ocurre en evaluación, después de la apertura.</p>
             </CardContent></Card>
         </>
       )}
-
       <div className="flex justify-end gap-2">
         <Button variant="outline" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Anterior</Button>
         <Button variant="outline" onClick={() => setPage((p) => p + 1)}>Siguiente</Button>
