@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { and, eq, asc, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { findExpedienteByLicitacion } from "./expediente";
+import { assertInvestigacionConcluidaParaProcedimiento } from "./investigacion-mercado";
 import { licitaciones, licitacionSequences, documentos, hitos, participaciones, entidades, categorias, users } from "@db/schema";
 
 export const MEXICO_STATES = [
@@ -80,7 +81,7 @@ export async function assertLicitacionReadyForPublish(tenantId: number, id: numb
   const present = new Set(docs.map(d => d.tipo));
   const missing = required.filter((x) => !present.has(x));
   if (missing.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Expediente incompleto. Faltan documentos aprobados: ${missing.join(", ")}.` });
-  // JUNTA_ACLARACIONES is gated by ProcedurePolicy.actosObligatorios at publish (IR/AD may skip).
+  await assertInvestigacionConcluidaParaProcedimiento({ tenantId, licitacionId: id, tipoLicitacion: lic.tipoLicitacion });
   return lic;
 }
 
