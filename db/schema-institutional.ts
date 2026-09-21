@@ -24,6 +24,29 @@ export const marketInvitations = mysqlTable("market_invitations", {
   foreignKey({ name: "mkt_inv_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
 ]);
 
+export const fuentesMercado = mysqlTable("fuentes_mercado", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  investigacionId: bigint("investigacion_id", { mode: "number", unsigned: true }).notNull(),
+  tipo: mysqlEnum("tipo_fuente_merc", [
+    "PLATAFORMA_HISTORICA", "CAMARA_ORGANISMO", "CONSULTA_WEB", "OFICIO",
+    "SOLICITUD_INFORMATIVA", "TABULADOR_RAMO", "PRESUPUESTO_BASE",
+  ]).notNull(),
+  descripcion: text("descripcion").notNull(),
+  consultadaAt: timestamp("consultada_at").notNull(),
+  documentoId: bigint("documento_id", { mode: "number", unsigned: true }).notNull(),
+  urlOReferencia: varchar("url_o_referencia", { length: 400 }),
+  precioObservado: varchar("precio_observado", { length: 20 }),
+  comparable: boolean("comparable").default(true).notNull(),
+  notasComparabilidad: text("notas_comparabilidad"),
+  registradaPor: bigint("registrada_por", { mode: "number", unsigned: true }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("fuente_merc_tenant_id_uq").on(t.tenantId, t.id),
+  index("fuente_merc_inv_idx").on(t.tenantId, t.investigacionId),
+  foreignKey({ name: "fuente_merc_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
+]);
+
 export const legalHolds = mysqlTable("legal_holds", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
@@ -88,3 +111,4 @@ export const backupRestoreDrills = mysqlTable("backup_restore_drills", {
 void investigacionesMercado;
 void proveedoresConsultados;
 void users;
+void marketInvitations;
