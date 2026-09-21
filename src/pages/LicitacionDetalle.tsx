@@ -12,6 +12,7 @@ export default function LicitacionDetalle() {
   const licId = parseInt(id || "0");
 
   const { data: lic, isLoading } = trpc.licitaciones.getById.useQuery({ id: licId });
+  const im = trpc.investigacionMercado.porLicitacion.useQuery({ licitacionId: licId }, { enabled: licId > 0 });
   const utils = trpc.useUtils();
   const evaluate = trpc.participaciones.evaluar.useMutation({
     onSuccess: () => utils.licitaciones.getById.invalidate({ id: licId }),
@@ -83,6 +84,39 @@ export default function LicitacionDetalle() {
           </Link>
         }
       />
+
+      <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
+        <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
+          <CardTitle className="text-sm font-semibold text-slate-100">Investigación de mercado (planeación)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 p-4 text-sm text-slate-300">
+          {im.data?.exigeInvestigacion === false ? (
+            <p>{im.data.nota}</p>
+          ) : (
+            <>
+              <p>
+                {im.data?.estudio
+                  ? `Estudio #${im.data.estudio.id} · ${im.data.estudio.folio} · ${im.data.estudio.estado}`
+                  : "No hay estudio vinculado a este procedimiento."}
+              </p>
+              {im.data?.listoParaPublicarIm ? (
+                <p className="text-emerald-400 text-xs">El gate de publicación encuentra un estudio CONCLUIDO con este licitacionId.</p>
+              ) : (
+                <ul className="list-disc pl-5 text-xs text-amber-400">
+                  {(im.data?.faltantes ?? ["Cargando estado del estudio…"]).map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+          <Link to="/investigacion-mercado">
+            <Button size="sm" variant="outline" className="border-slate-600 text-slate-300">
+              Abrir investigación de mercado
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
         <CardContent className="flex flex-wrap gap-2 p-4">
