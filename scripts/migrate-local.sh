@@ -12,6 +12,6 @@ fi
 IFS=$'\n' sorted=($(printf '%s\n' "${files[@]}" | sort))
 for f in "${sorted[@]}"; do
   echo "Applying $(basename "$f") ..."
-  mysql -u ares -pares_dev_local ares < "$f"
+  mysql -u "${MYSQL_USER:-piedra}" -p"${MYSQL_PASSWORD:-piedra_dev_local}" "${MYSQL_DATABASE:-piedra_angular}" < "$f"
 done
 echo "Migraciones aplicadas (${#sorted[@]} archivos)."
