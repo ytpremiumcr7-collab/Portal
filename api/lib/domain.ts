@@ -52,7 +52,7 @@ export async function nextLicitacionCode(tenantId: number, tx: any = getDb()) {
   const row = await tx.select({ ultimoNumero: licitacionSequences.ultimoNumero }).from(licitacionSequences).where(and(eq(licitacionSequences.tenantId, tenantId), eq(licitacionSequences.anio, year))).for("update").limit(1);
   const next = Number(row[0]?.ultimoNumero ?? 0) + 1;
   await tx.update(licitacionSequences).set({ ultimoNumero: next }).where(and(eq(licitacionSequences.tenantId, tenantId), eq(licitacionSequences.anio, year)));
-  return `ARES-MX-${year}-${String(next).padStart(6, "0")}`;
+  return `PA-MX-${year}-${String(next).padStart(6, "0")}`;
 }
 
 export async function assertLicitacionReadyForPublish(tenantId: number, id: number) {

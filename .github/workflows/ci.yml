@@ -13,9 +13,9 @@ jobs:
         image: mariadb:11.4
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: ares
-          MYSQL_USER: ares
-          MYSQL_PASSWORD: ares_dev_local
+          MYSQL_DATABASE: piedra_angular
+          MYSQL_USER: piedra
+          MYSQL_PASSWORD: piedra_dev_local
         ports:
           - 3306:3306
         options: >-
@@ -24,8 +24,10 @@ jobs:
           --health-timeout=5s
           --health-retries=20
     env:
-      DATABASE_URL: mysql://ares:ares_dev_local@127.0.0.1:3306/ares
+      DATABASE_URL: mysql://piedra:piedra_dev_local@127.0.0.1:3306/piedra_angular
+      PA_STORAGE_PATH: ./storage
       ARES_STORAGE_PATH: ./storage
+      PA_ENVELOPE_KEY: cGllZHJhLWFuZ3VsYXItZGV2LWVudmVsb3BlLWtleSE=
       ARES_ENVELOPE_KEY: cGllZHJhLWFuZ3VsYXItZGV2LWVudmVsb3BlLWtleSE=
       NODE_ENV: test
     steps:
@@ -43,7 +45,7 @@ jobs:
           set -euo pipefail
           for f in $(ls db/migrations/*.sql | sort); do
             echo "Applying $f"
-            mysql -h 127.0.0.1 -u ares -pares_dev_local ares < "$f"
+            mysql -h 127.0.0.1 -u piedra -ppiedra_dev_local piedra_angular < "$f"
           done
       - name: Unit tests
         run: npm test

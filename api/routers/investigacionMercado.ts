@@ -8,7 +8,7 @@ import { fuentesMercado } from "@db/schema-institutional";
 import { assertInvMercadoTransition } from "../lib/phase3-transitions";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-import { FUENTES_MERCADO, MODALIDADES_RECOMENDADAS, assertEstudioPuedeCerrarse, listFuentes } from "../lib/investigacion-mercado";
+import { FUENTES_MERCADO, MODALIDADES_RECOMENDADAS, assertEstudioPuedeCerrarse, assertFuenteDocumento, assertLicitacionDelTenant, listFuentes } from "../lib/investigacion-mercado";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 
@@ -55,6 +55,7 @@ export const investigacionMercadoRouter = createRouter({
     motivo: z.string().trim().min(3),
   })).mutation(async ({ input, ctx }) => {
     const db = getDb();
+    if (input.licitacionId) await assertLicitacionDelTenant(ctx.user.tenantId, input.licitacionId);
     const result = await db.insert(investigacionesMercado).values({
       tenantId: ctx.user.tenantId, folio: input.folio, objeto: input.objeto, estado: "BORRADOR",
       necesidadId: input.necesidadId ?? null, licitacionId: input.licitacionId ?? null, creadaPor: ctx.user.id,
@@ -64,6 +65,26 @@ export const investigacionMercadoRouter = createRouter({
     const created = await db.query.investigacionesMercado.findFirst({ where: and(eq(investigacionesMercado.id, id), eq(investigacionesMercado.tenantId, ctx.user.tenantId)) });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "investigaciones_mercado", entidadId: id, valorNuevo: created, motivo: input.motivo });
     return created;
+  }),
+
+  vincularLicitacion: capabilityQuery("investigar_mercado").input(z.object({
+    id: z.number().int().positive(),
+    licitacionId: z.number().int().positive(),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const inv = await loadInv(ctx.user.tenantId, input.id);
+    if (inv.licitacionId && Number(inv.licitacionId) !== input.licitacionId) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: `El estudio ya está vinculado a la licitación #${inv.licitacionId}. Desvincular exige un acto posterior, no un overwrite silencioso.`,
+      });
+    }
+    await assertLicitacionDelTenant(ctx.user.tenantId, input.licitacionId);
+    await db.update(investigacionesMercado).set({ licitacionId: input.licitacionId } as any)
+      .where(and(eq(investigacionesMercado.id, inv.id), eq(investigacionesMercado.tenantId, ctx.user.tenantId)));
+    await writeAudit({ ctx: ctxForAudit(ctx), accion: "VINCULAR_LICITACION", entidad: "investigaciones_mercado", entidadId: inv.id, motivo: input.motivo });
+    return db.query.investigacionesMercado.findFirst({ where: and(eq(investigacionesMercado.id, inv.id), eq(investigacionesMercado.tenantId, ctx.user.tenantId)) });
   }),
 
   registrarFuente: capabilityQuery("investigar_mercado").input(z.object({
@@ -81,6 +102,11 @@ export const investigacionMercadoRouter = createRouter({
     const db = getDb();
     const inv = await loadInv(ctx.user.tenantId, input.investigacionId);
     assertAbierta(inv.estado);
+    await assertFuenteDocumento({
+      tenantId: ctx.user.tenantId,
+      documentoId: input.documentoId,
+      licitacionId: inv.licitacionId,
+    });
     if (input.precioObservado) assertNonNegativeDecimal(input.precioObservado, "precioObservado");
     const result = await db.insert(fuentesMercado).values({
       tenantId: ctx.user.tenantId, investigacionId: input.investigacionId, tipo: input.tipo,
@@ -156,6 +182,11 @@ export const investigacionMercadoRouter = createRouter({
     const db = getDb();
     const inv = await loadInv(ctx.user.tenantId, input.investigacionId);
     if (inv.estado !== "EN_CONSULTA") throw new TRPCError({ code: "CONFLICT", message: "Sólo en consulta se incorporan observaciones de precio (carácter informativo ≠ proposición)." });
+    await assertFuenteDocumento({
+      tenantId: ctx.user.tenantId,
+      documentoId: input.documentoSoporteId,
+      licitacionId: inv.licitacionId,
+    });
     const fuente = await db.query.fuentesMercado.findFirst({ where: and(eq(fuentesMercado.id, input.fuenteId), eq(fuentesMercado.tenantId, ctx.user.tenantId), eq(fuentesMercado.investigacionId, input.investigacionId)) });
     if (!fuente) throw new TRPCError({ code: "BAD_REQUEST", message: "La observación debe anclarse a una fuente del estudio." });
     const potencial = await db.query.proveedoresConsultados.findFirst({ where: and(eq(proveedoresConsultados.id, input.potencialId), eq(proveedoresConsultados.tenantId, ctx.user.tenantId), eq(proveedoresConsultados.investigacionId, input.investigacionId)) });

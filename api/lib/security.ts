@@ -28,13 +28,14 @@ export type RequestContext = {
 };
 
 export function requestMeta(req: Request, opts?: { trustProxy?: boolean; socketIp?: string | null }) {
-  const trustProxy = opts?.trustProxy ?? process.env.ARES_TRUST_PROXY === "true";
+  const trustProxy = opts?.trustProxy ?? ["true", "1"].includes(
+    (process.env.PA_TRUST_PROXY || process.env.ARES_TRUST_PROXY || "").toLowerCase(),
+  );
   let ipAddress: string | null = null;
   if (trustProxy) {
     const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     ipAddress = forwarded || req.headers.get("x-real-ip") || opts?.socketIp || null;
   } else {
-    // Direct / socket only — do not trust client-controlled X-Forwarded-For.
     ipAddress = opts?.socketIp || null;
   }
   return {
@@ -162,7 +163,6 @@ export async function writeAudit(input: {
   valorAnterior?: unknown;
   valorNuevo?: unknown;
   motivo?: string | null;
-  /** Optional outer transaction — when provided, mutation + audit share one TX. */
   tx?: any;
 }) {
   const db = getDb();
@@ -173,11 +173,21 @@ export async function writeAudit(input: {
   const entidadId = input.entidadId ?? null;
   const timestamp = toAuditTimestampIso();
 
+  const isDuplicateHead = (err: unknown) => {
+    const e = err as { code?: string; errno?: number; cause?: { code?: string; errno?: number } };
+    const code = e?.code || e?.cause?.code;
+    const errno = e?.errno ?? e?.cause?.errno;
+    return code === "ER_DUP_ENTRY" || errno === 1062;
+  };
+
   const run = async (tx: any) => {
-    // Serialize chain head per tenant
     let head = await tx.select().from(auditChainHeads).where(eq(auditChainHeads.tenantId, tenantId)).for("update");
     if (!head.length) {
-      await tx.insert(auditChainHeads).values({ tenantId, lastEventHash: null, lastAuditId: null } as any);
+      try {
+        await tx.insert(auditChainHeads).values({ tenantId, lastEventHash: null, lastAuditId: null } as any);
+      } catch (err) {
+        if (!isDuplicateHead(err)) throw err;
+      }
       head = await tx.select().from(auditChainHeads).where(eq(auditChainHeads.tenantId, tenantId)).for("update");
     }
     const previousHash = (head[0]?.lastEventHash as string | null) ?? null;
@@ -218,8 +228,32 @@ export async function writeAudit(input: {
     } as any).where(eq(auditChainHeads.tenantId, tenantId));
   };
 
-  if (input.tx) await run(input.tx);
-  else await db.transaction(async (tx) => run(tx));
+  const isRetryableTx = (err: unknown) => {
+    const e = err as { code?: string; errno?: number; message?: string; cause?: { code?: string; errno?: number; message?: string } };
+    const code = e?.code || e?.cause?.code;
+    const errno = e?.errno ?? e?.cause?.errno;
+    const msg = String(e?.message || e?.cause?.message || "");
+    return code === "ER_LOCK_DEADLOCK" || code === "ER_LOCK_WAIT_TIMEOUT" || errno === 1213 || errno === 1205
+      || /Deadlock found when trying to get lock|try restarting transaction/i.test(msg);
+  };
+
+  if (input.tx) {
+    await run(input.tx);
+    return;
+  }
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await db.transaction(async (tx) => run(tx));
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableTx(err) || attempt === 5) throw err;
+      await new Promise((r) => setTimeout(r, 20 * (attempt + 1) + Math.floor(Math.random() * 25)));
+    }
+  }
+  throw lastErr;
 }
 
 export async function verifyAuditHashChain(tenantId: number) {
@@ -233,7 +267,6 @@ export async function verifyAuditHashChain(tenantId: number) {
   let started = false;
   for (const row of hashed) {
     if (!started) {
-      // First hashed row may start a new chain (previousHash null) after legacy rows.
       started = true;
       previous = null;
     }

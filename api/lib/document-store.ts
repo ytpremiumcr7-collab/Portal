@@ -44,7 +44,35 @@ class FilesystemVersionedStore implements ObjectStore {
   }
 }
 
+export type ObjectStoreHonesty = {
+  backend: "filesystem";
+  requestedBackend: string;
+  s3Configured: boolean;
+  tsaConfigured: boolean;
+  tsaUrl: string;
+  anchorsDefault: "PENDING_EXTERNAL";
+  note: string;
+};
+
+/** Honest inventory: S3/TSA flags do not switch the live store. Anchors stay PENDING_EXTERNAL. */
+export function describeObjectStore(): ObjectStoreHonesty {
+  const requested = institutionalEnv.objectStoreBackend || "filesystem";
+  const s3Configured = requested === "s3" && !!institutionalEnv.s3Bucket;
+  const tsaConfigured = !!institutionalEnv.tsaUrl;
+  return {
+    backend: "filesystem",
+    requestedBackend: requested,
+    s3Configured,
+    tsaConfigured,
+    tsaUrl: institutionalEnv.tsaUrl,
+    anchorsDefault: "PENDING_EXTERNAL",
+    note: s3Configured
+      ? "S3 solicitado, pero el store activo es filesystem hasta cablear un cliente real. Anclas = PENDING_EXTERNAL."
+      : "Object store = filesystem. No hay cliente S3 ni TSA; las anclas permanecen PENDING_EXTERNAL.",
+  };
+}
+
 export function getObjectStore(): ObjectStore {
-  void institutionalEnv;
+  // Do not fabricate an S3/TSA client from empty env. Filesystem is the live store.
   return new FilesystemVersionedStore();
 }
