@@ -42,8 +42,9 @@ export default function PresentarPropuesta() {
   const offerDocs = useMemo(
     () => (docs.data?.items ?? []).filter((d: any) =>
       ["OFERTA_TECNICA", "OFERTA_ECONOMICA", "GARANTIA", "OTRO"].includes(d.tipo) &&
-      (!proveedorId || Number(d.proveedorId) === Number(proveedorId))),
-    [docs.data, proveedorId],
+      (!proveedorId || Number(d.proveedorId) === Number(proveedorId)) &&
+      (!["OFERTA_TECNICA","OFERTA_ECONOMICA"].includes(d.tipo) || (!!lotId && Number(d.lotId) === Number(lotId)))),
+    [docs.data, proveedorId, lotId],
   );
 
   const toggle = (id: number) =>
@@ -120,7 +121,7 @@ export default function PresentarPropuesta() {
           ) : offerDocs.length === 0 ? (
             <p className="text-xs text-amber-700">
               No hay documentos vigentes.{" "}
-              <Link className="underline" to={`/documentos?licitacionId=${licIdNum}`}>Cargar ofertas</Link>
+              <Link className="underline" to={`/documentos?licitacionId=${licIdNum}&proveedorId=${proveedorId}&lotId=${lotId}`}>Cargar ofertas</Link>
             </p>
           ) : (
             <ul className="divide-y rounded-md border border-slate-200">
@@ -177,7 +178,7 @@ export default function PresentarPropuesta() {
             <Link to="/oportunidades">Volver a oportunidades</Link>
           </Button>
           <Button variant="outline" asChild>
-            <Link to={licIdNum ? `/documentos?licitacionId=${licIdNum}` : "/documentos"}>Adjuntar documentos</Link>
+            <Link to={licIdNum ? `/documentos?licitacionId=${licIdNum}&proveedorId=${proveedorId}&lotId=${lotId}` : "/documentos"}>Adjuntar documentos</Link>
           </Button>
         </div>
         {crear.error && (

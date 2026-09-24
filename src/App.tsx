@@ -50,6 +50,7 @@ import Consorcios from "@/pages/Consorcios";
 import DialogoCompetitivo from "@/pages/DialogoCompetitivo";
 import WorkInbox from "@/pages/WorkInbox";
 import InstitutionalSetup from "@/pages/InstitutionalSetup";
+import Lots from "@/pages/Lots";
 
 
 function RoleGate({ roles, children }: { roles: Array<"admin" | "licitante" | "proveedor">; children: React.ReactNode }) {
@@ -80,6 +81,7 @@ export default function App() {
             <Route path="/licitaciones" element={<Licitaciones />} />
             <Route path="/licitaciones/nueva" element={<RoleGate roles={["admin","licitante"]}><NuevaLicitacion /></RoleGate>} />
             <Route path="/licitaciones/:id" element={<LicitacionDetalle />} />
+            <Route path="/lotes" element={<RoleGate roles={["admin","licitante"]}><Lots /></RoleGate>} />
             <Route path="/proveedores" element={<Proveedores />} />
             <Route path="/entidades" element={<RoleGate roles={["admin","licitante"]}><Entidades /></RoleGate>} />
             <Route path="/alertas" element={<RoleGate roles={["admin","licitante"]}><Alertas /></RoleGate>} />

@@ -362,6 +362,10 @@ SET @exist := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEM
 SET @sqlstmt := IF(@exist=0, 'ALTER TABLE `contratos` ADD COLUMN `award_id` bigint unsigned NULL AFTER `fallo_id`, ADD KEY `contratos_award_idx` (`tenant_id`,`award_id`)', 'SELECT 1');
 PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+SET @exist := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='documentos' AND COLUMN_NAME='lot_id');
+SET @sqlstmt := IF(@exist=0, 'ALTER TABLE `documentos` ADD COLUMN `lot_id` bigint unsigned NULL AFTER `licitacion_id`, ADD KEY `documentos_tenant_lot_idx` (`tenant_id`,`lot_id`)', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 -- Backfill one explicit contracting unit per existing entidad.
 INSERT IGNORE INTO `organizational_units` (`tenant_id`,`entidad_id`,`code`,`name`,`unit_type`,`active`)
 SELECT e.tenant_id,e.id,'UC-GENERAL',CONCAT('Unidad compradora · ',e.razon_social),'UNIDAD_COMPRADORA',1
@@ -453,6 +457,12 @@ JOIN `procedure_lots` l
   ON l.tenant_id=p.tenant_id AND l.licitacion_id=p.licitacion_id AND l.code='GENERAL'
 SET p.lot_id=l.id WHERE p.lot_id IS NULL;
 
+UPDATE `documentos` d
+JOIN `procedure_lots` l
+  ON l.tenant_id=d.tenant_id AND l.licitacion_id=d.licitacion_id AND l.code='GENERAL'
+SET d.lot_id=l.id
+WHERE d.lot_id IS NULL AND d.tipo IN ('OFERTA_TECNICA','OFERTA_ECONOMICA');
+
 -- Contract the legacy provider-per-procedure uniqueness only after every legacy row has a lot.
 ALTER TABLE `participaciones` MODIFY COLUMN `lot_id` bigint unsigned NOT NULL;
 ALTER TABLE `proposiciones` MODIFY COLUMN `lot_id` bigint unsigned NOT NULL;
@@ -510,6 +520,10 @@ PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @fk := (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME='contratos' AND CONSTRAINT_NAME='contratos_award_fk');
 SET @sqlstmt := IF(@fk=0, 'ALTER TABLE `contratos` ADD CONSTRAINT `contratos_award_fk` FOREIGN KEY (`tenant_id`,`award_id`) REFERENCES `awards`(`tenant_id`,`id`) ON DELETE RESTRICT', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @fk := (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME='documentos' AND CONSTRAINT_NAME='documentos_lot_fk');
+SET @sqlstmt := IF(@fk=0, 'ALTER TABLE `documentos` ADD CONSTRAINT `documentos_lot_fk` FOREIGN KEY (`tenant_id`,`lot_id`) REFERENCES `procedure_lots`(`tenant_id`,`id`) ON DELETE RESTRICT', 'SELECT 1');
 PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Foreign keys for new tables are added here so CREATE remains dependency-order tolerant.

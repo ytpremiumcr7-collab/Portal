@@ -4,24 +4,17 @@ import { TRPCError } from "@trpc/server";
 import { createRouter, procedureMutation, authedQuery, ctxForAudit } from "../middleware";
 import { licitacionIdFromContrato, licitacionIdFromGarantia } from "../lib/procedure-resolvers";
 import { getDb } from "../queries/connection";
-import { garantias, contratos, documentos, proveedores } from "@db/schema";
+import { garantias, contratos, documentos } from "@db/schema";
 import { appendExpedienteEvent } from "../lib/expediente";
 import { assertGarantiaTransition } from "../lib/phase2-transitions";
 import { assertGarantiaListaParaVigente } from "../lib/garantia-gates";
 import { assertNonNegativeDecimal, writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
 import { assertDocumentoBoundToContext } from "../lib/documento-binding";
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
-
-async function ensureProviderForUser(tenantId: number, userId: number) {
-  const provider = await getDb().query.proveedores.findFirst({
-    where: and(eq(proveedores.tenantId, tenantId), eq(proveedores.usuarioId, userId), eq(proveedores.activo, true)),
-  });
-  if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "Sin expediente de proveedor activo." });
-  return provider;
-}
 
 export const garantiasRouter = createRouter({
   list: authedQuery.input(z.object({ contratoId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -81,9 +74,9 @@ export const garantiasRouter = createRouter({
     const current = await db.query.garantias.findFirst({ where: and(eq(garantias.id, input.id), eq(garantias.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Garantía no encontrada." });
     if (ctx.user.role === "proveedor") {
-      const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
-      if (Number(current.proveedorId) !== Number(provider.id)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Sólo el proveedor titular puede presentar esta garantía." });
+      const represented = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!represented.includes(Number(current.proveedorId))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No representa a la organización titular de esta garantía." });
       }
     } else if (!["admin", "licitante"].includes(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Sin permiso para intake de garantía." });

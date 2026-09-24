@@ -12,12 +12,13 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementStatuses } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
 import { detectMimeFromMagic, assertMimeAllowed } from "../lib/mime-detect";
-import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed } from "../lib/document-access";
+import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed, isOfferTipo } from "../lib/document-access";
 import { supplierProviderIdsForUser } from "../lib/supplier-authority";
+import { procedureLots } from "@db/schema-eproc";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const allowedTypes = ["CONVOCATORIA","FUNDAMENTO_JURIDICO","PLIEGO_TECNICO","PLIEGO_ADMINISTRATIVO","JUNTA_ACLARACIONES","ACTA_APERTURA","OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA","ACTA_EVALUACION","DICTAMEN","FALLO_ADJUDICACION","CONTRATO","FACTURA","OTRO"] as const;
-const uploadSchema = z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), tipo: z.enum(allowedTypes), nombreArchivo: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(120), contentBase64: z.string().min(10), esPublico: z.boolean().default(false), motivo: z.string().trim().optional(), reemplazaDocumentoId: z.number().int().positive().optional() }).superRefine((v, ctx) => { if (!v.expedienteId && !v.licitacionId && !v.proveedorId) ctx.addIssue({ code: "custom", message: "El documento debe vincularse a un expediente, licitación o proveedor." }); });
+const uploadSchema = z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), lotId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), tipo: z.enum(allowedTypes), nombreArchivo: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(120), contentBase64: z.string().min(10), esPublico: z.boolean().default(false), motivo: z.string().trim().optional(), reemplazaDocumentoId: z.number().int().positive().optional() }).superRefine((v, ctx) => { if (!v.expedienteId && !v.licitacionId && !v.proveedorId) ctx.addIssue({ code: "custom", message: "El documento debe vincularse a un expediente, licitación o proveedor." }); });
 
 async function resolveExpediente(tenantId: number, expedienteId?: number, licitacionId?: number) {
   if (expedienteId) {
@@ -34,11 +35,12 @@ async function resolveExpediente(tenantId: number, expedienteId?: number, licita
 }
 
 export const documentosRouter = createRouter({
-  list: authedQuery.input(z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), estado: z.enum(["PENDIENTE","VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]).optional(), vigentes: z.boolean().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
+  list: authedQuery.input(z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), lotId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), estado: z.enum(["PENDIENTE","VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]).optional(), vigentes: z.boolean().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
     const conditions = [eq(documentos.tenantId, ctx.user.tenantId)];
     const expediente = await resolveExpediente(ctx.user.tenantId, input?.expedienteId, input?.licitacionId);
     if (expediente) conditions.push(eq(documentos.expedienteId, expediente.id));
+    if (input?.lotId) conditions.push(eq(documentos.lotId, input.lotId));
     if (ctx.user.role === "proveedor") {
       const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
       if (!ids.length) return pageResult([], 0, page, pageSize);
@@ -84,10 +86,23 @@ export const documentosRouter = createRouter({
       });
       if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "Organización proveedora inexistente o inactiva." });
       if (!["OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA"].includes(input.tipo)) throw new TRPCError({ code: "FORBIDDEN", message: "El rol proveedor sólo puede cargar oferta técnica, oferta económica o garantía." });
+      if (isOfferTipo(input.tipo)) {
+        if (!input.lotId) throw new TRPCError({ code: "BAD_REQUEST", message: "OFERTA_* requiere lote." });
+        const lot = await db.query.procedureLots.findFirst({
+          where: and(
+            eq(procedureLots.tenantId, ctx.user.tenantId),
+            eq(procedureLots.id, input.lotId),
+            eq(procedureLots.licitacionId, input.licitacionId ?? expediente?.licitacionId ?? 0),
+            eq(procedureLots.status, "ACTIVE"),
+          ),
+        });
+        if (!lot) throw new TRPCError({ code: "BAD_REQUEST", message: "El lote no existe, no está activo o pertenece a otro procedimiento." });
+      }
       await assertOfertaUploadAllowed({
         tenantId: ctx.user.tenantId,
         proveedorId: provider.id,
         licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null,
+        lotId: input.lotId ?? null,
         tipo: input.tipo,
       });
       if (input.esPublico) throw new TRPCError({ code: "FORBIDDEN", message: "Los documentos de proveedor no pueden publicarse directamente." });
@@ -98,6 +113,7 @@ export const documentosRouter = createRouter({
       if (!old) throw new TRPCError({ code: "NOT_FOUND", message: "Versión documental a sustituir no encontrada." });
       if (!old.esVersionVigente) throw new TRPCError({ code: "CONFLICT", message: "Sólo se puede sustituir la versión vigente." });
       if (old.tipo !== input.tipo) throw new TRPCError({ code: "BAD_REQUEST", message: "La nueva versión debe conservar el tipo documental." });
+      if ((old.lotId ?? null) !== (input.lotId ?? null)) throw new TRPCError({ code: "BAD_REQUEST", message: "La nueva versión debe conservar el lote documental." });
       // Any doc sealed into a proposición manifest (incl. ANEXO/GARANTIA) is immutable.
       const sealed = await db.query.proposicionDocumentos.findFirst({
         where: and(eq(proposicionDocumentos.tenantId, ctx.user.tenantId), eq(proposicionDocumentos.documentoId, input.reemplazaDocumentoId)),
@@ -124,7 +140,7 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
     try {
       const createdId = await db.transaction(async tx => {
         if (previous) await tx.update(documentos).set({ esVersionVigente: false, estado: "OBSOLETO" }).where(and(eq(documentos.id, previous.id), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)));
-        const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: detectedMime, mimeDetectado: detectedMime, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
+        const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, lotId: input.lotId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: detectedMime, mimeDetectado: detectedMime, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
         const id = Number(result[0].insertId);
         if (expediente) { await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: previous ? "NUEVA_VERSION_DOCUMENTAL" : "DOCUMENTO_AGREGADO", motivo: input.motivo ?? null, payload: { documentoId: id, tipo: input.tipo, version, sha256, previousVersionId: previous?.id ?? null } }); }
         return id;

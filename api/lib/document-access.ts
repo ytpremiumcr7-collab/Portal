@@ -21,6 +21,7 @@ export type DocAccessRow = {
   esVersionVigente: boolean;
   estado: string;
   licitacionId: number | null;
+  lotId?: number | null;
   proveedorId: number | null;
   proveedor?: unknown;
 };
@@ -169,10 +170,16 @@ export async function assertOfertaUploadAllowed(input: {
   tenantId: number;
   proveedorId: number;
   licitacionId: number | null | undefined;
+  lotId: number | null | undefined;
   tipo: string;
 }) {
-  if (!isOfferTipo(input.tipo) && input.tipo !== "GARANTIA") return;
-  if (!input.licitacionId) return;
+  if (!isOfferTipo(input.tipo)) return;
+  if (!input.licitacionId) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Una oferta debe vincularse a un procedimiento." });
+  }
+  if (!input.lotId) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Una oferta debe vincularse a un lote." });
+  }
 
   const ap = await loadAperturaEstadoForAccess(input.tenantId, input.licitacionId);
   if (ap && ap !== "RECEPCION_ABIERTA") {
@@ -186,6 +193,7 @@ export async function assertOfertaUploadAllowed(input: {
     where: and(
       eq(proposiciones.tenantId, input.tenantId),
       eq(proposiciones.licitacionId, input.licitacionId),
+      eq(proposiciones.lotId, input.lotId),
       eq(proposiciones.proveedorId, input.proveedorId),
     ),
     columns: { id: true },
@@ -193,7 +201,7 @@ export async function assertOfertaUploadAllowed(input: {
   if (existing) {
     throw new TRPCError({
       code: "CONFLICT",
-      message: "Ya existe proposición presentada; no puede cargar/reemplazar OFERTA_* para esta licitación.",
+      message: "Ya existe proposición presentada; no puede cargar/reemplazar OFERTA_* para este lote.",
     });
   }
 }

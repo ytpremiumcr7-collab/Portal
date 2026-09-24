@@ -156,6 +156,13 @@ export default function LicitacionDetalle() {
               Gestionar expediente
             </Button>
           </Link>
+          {lic.estado === "BORRADOR" && (
+            <Link to={`/lotes?licitacionId=${lic.id}`}>
+              <Button variant="outline" className="border-slate-600 text-slate-300">
+                Lotes e ítems
+              </Button>
+            </Link>
+          )}
           <Link to={`/hitos?licitacionId=${lic.id}`}>
             <Button variant="outline" className="border-slate-600 text-slate-300">
               Gestionar hitos

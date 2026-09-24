@@ -457,7 +457,11 @@ export const participacionesRouter = createRouter({
     await db.transaction(async (tx) => {
       await tx.select({ id: participaciones.id })
         .from(participaciones)
-        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id)))
+        .where(and(
+          eq(participaciones.tenantId, ctx.user.tenantId),
+          eq(participaciones.licitacionId, lic.id),
+          eq(participaciones.lotId, offer.lotId),
+        ))
         .for("update");
 
       await tx.update(participaciones).set({
@@ -476,7 +480,12 @@ export const participacionesRouter = createRouter({
         id: participaciones.id, montoOferta: participaciones.montoOferta, puntajeTecnico: participaciones.puntajeTecnico,
         recibidoAt: participaciones.recibidoAt,
       }).from(participaciones)
-        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")));
+        .where(and(
+          eq(participaciones.tenantId, ctx.user.tenantId),
+          eq(participaciones.licitacionId, lic.id),
+          eq(participaciones.lotId, offer.lotId),
+          eq(participaciones.estadoEvaluacion, "ADMISIBLE"),
+        ));
 
       const forRank = admissible.map((c) => ({
         id: c.id,
