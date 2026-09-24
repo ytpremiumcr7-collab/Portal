@@ -21,6 +21,7 @@ import { organizationalUnits, procedureLots, procedureTeamMembers } from "@db/sc
 import { assertUnitAuthority } from "../lib/institutional-authority";
 import { instantiateProcedureWorkflow, assertProcedureTaskApproved } from "../lib/workflow";
 import { recordPublicationRelease } from "../lib/publication-ledger";
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -57,15 +58,17 @@ export const licitacionesRouter = createRouter({
     if (((lic as any).deletedAt || lic.estado === "ELIMINADA") && ctx.user.role !== "admin") {
       throw new TRPCError({ code: "NOT_FOUND", message: "Licitación no encontrada." });
     }
+    let representedProviderIds = new Set<number>();
     if (ctx.user.role === "proveedor") {
-      lic.participaciones = lic.participaciones.filter((p: any) => p.proveedor?.usuarioId === ctx.user.id);
-      lic.documentos = lic.documentos.filter((d: any) => d.esPublico || d.proveedorId === lic.participaciones.find((p: any) => p.proveedor?.usuarioId === ctx.user.id)?.proveedorId);
+      representedProviderIds = new Set(await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id));
+      lic.participaciones = lic.participaciones.filter((p: any) => representedProviderIds.has(Number(p.proveedorId)));
+      lic.documentos = lic.documentos.filter((d: any) => d.esPublico || (d.proveedorId != null && representedProviderIds.has(Number(d.proveedorId))));
     }
     const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, lic.id);
     lic.participaciones = lic.participaciones.map((p: any) =>
       redactParticipacionEconomica(p, {
         role: ctx.user.role,
-        viewerProveedorId: ctx.user.role === "proveedor" ? p.proveedorId : null,
+        viewerProveedorId: ctx.user.role === "proveedor" && representedProviderIds.has(Number(p.proveedorId)) ? p.proveedorId : null,
         itemProveedorId: p.proveedorId,
         aperturaEstado,
       }),

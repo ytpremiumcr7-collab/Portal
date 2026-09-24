@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -13,6 +13,7 @@ import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementSt
 import { writeAudit } from "../lib/security";
 import { detectMimeFromMagic, assertMimeAllowed } from "../lib/mime-detect";
 import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed } from "../lib/document-access";
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const allowedTypes = ["CONVOCATORIA","FUNDAMENTO_JURIDICO","PLIEGO_TECNICO","PLIEGO_ADMINISTRATIVO","JUNTA_ACLARACIONES","ACTA_APERTURA","OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA","ACTA_EVALUACION","DICTAMEN","FALLO_ADJUDICACION","CONTRATO","FACTURA","OTRO"] as const;
@@ -39,9 +40,9 @@ export const documentosRouter = createRouter({
     const expediente = await resolveExpediente(ctx.user.tenantId, input?.expedienteId, input?.licitacionId);
     if (expediente) conditions.push(eq(documentos.expedienteId, expediente.id));
     if (ctx.user.role === "proveedor") {
-      const provider = await getDb().query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.usuarioId, ctx.user.id), eq(proveedores.activo, true)) });
-      if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "Proveedor sin expediente asociado." });
-      conditions.push(eq(documentos.proveedorId, provider.id));
+      const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!ids.length) return pageResult([], 0, page, pageSize);
+      conditions.push(inArray(documentos.proveedorId, ids));
       conditions.push(eq(documentos.esVersionVigente, true));
     } else {
       if (input?.proveedorId) conditions.push(eq(documentos.proveedorId, input.proveedorId));
@@ -74,8 +75,14 @@ export const documentosRouter = createRouter({
     if (expediente && input.licitacionId && expediente.licitacionId !== input.licitacionId) throw new TRPCError({ code: "BAD_REQUEST", message: "El expediente y la licitación indicada no corresponden al mismo aggregate." });
     if (ctx.user.role === "proveedor") {
       if (!input.proveedorId) throw new TRPCError({ code: "BAD_REQUEST", message: "Un proveedor debe vincular cada documento a su expediente de proveedor." });
-      const provider = await db.query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.usuarioId, ctx.user.id), eq(proveedores.activo, true)) });
-      if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "El documento no pertenece a su expediente." });
+      const represented = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!represented.includes(input.proveedorId)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No representa a la organización proveedora indicada." });
+      }
+      const provider = await db.query.proveedores.findFirst({
+        where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.activo, true)),
+      });
+      if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "Organización proveedora inexistente o inactiva." });
       if (!["OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA"].includes(input.tipo)) throw new TRPCError({ code: "FORBIDDEN", message: "El rol proveedor sólo puede cargar oferta técnica, oferta económica o garantía." });
       await assertOfertaUploadAllowed({
         tenantId: ctx.user.tenantId,

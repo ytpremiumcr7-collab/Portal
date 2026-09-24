@@ -13,7 +13,14 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [rfc, setRfc] = useState("");
   const [password, setPassword] = useState("");
-  const [memberships, setMemberships] = useState<Array<{ tenantId: number; tenantNombre: string }>>([]);
+  const [memberships, setMemberships] = useState<Array<{
+    tenantId: number;
+    tenantNombre: string;
+    proveedorId: number;
+    supplierMembershipId: number;
+    supplierRole: string;
+    email: string | null;
+  }>>([]);
   const login = trpc.auth.login.useMutation({
     onSuccess: () => navigate("/"),
   });
@@ -104,8 +111,17 @@ export default function Login() {
               <div className="space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
                 <p className="font-medium text-amber-900">Seleccione organización</p>
                 {memberships.map((m) => (
-                  <Button key={m.tenantId} type="button" variant="outline" className="w-full justify-start" onClick={() => loginByRfc.mutate({ rfc, password, tenantId: m.tenantId })}>
-                    {m.tenantNombre} (#{m.tenantId})
+                  <Button
+                    key={m.supplierMembershipId}
+                    type="button"
+                    variant="outline"
+                    className="h-auto w-full justify-start py-2 text-left"
+                    onClick={() => loginByRfc.mutate({ rfc, password, supplierMembershipId: m.supplierMembershipId })}
+                  >
+                    <span>
+                      <span className="block">{m.tenantNombre} · Proveedor #{m.proveedorId}</span>
+                      <span className="block text-[11px] text-slate-500">{m.supplierRole} · {m.email ?? "sin correo"}</span>
+                    </span>
                   </Button>
                 ))}
               </div>

@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../queries/connection";
 import { aperturas, proposicionDocumentos, proposiciones } from "@db/schema";
+import { supplierProviderIdsForUser } from "./supplier-authority";
 
 /** Offer types sealed until apertura ABIERTA/PUBLICADA (and later revelatory states). */
 export const OFFER_DOC_TIPOS = ["OFERTA_TECNICA", "OFERTA_ECONOMICA"] as const;
@@ -21,7 +22,7 @@ export type DocAccessRow = {
   estado: string;
   licitacionId: number | null;
   proveedorId: number | null;
-  proveedor?: { usuarioId: number | null } | null;
+  proveedor?: unknown;
 };
 
 const POST_APERTURA = new Set(["ABIERTA", "REGISTRADA", "ACTA_EMITIDA", "PUBLICADA"]);
@@ -55,7 +56,7 @@ export function isOfferTipo(tipo: string): boolean {
 export async function authorizeDocumentRead(
   user: DocAccessUser,
   doc: DocAccessRow,
-  opts?: { systemSeal?: boolean; aperturaEstado?: string | null },
+  opts?: { systemSeal?: boolean; aperturaEstado?: string | null; representedProviderIds?: readonly number[] },
 ): Promise<void> {
   if (opts?.systemSeal) return;
 
@@ -63,11 +64,16 @@ export async function authorizeDocumentRead(
     throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
   }
 
-  const ownerUserId = doc.proveedor?.usuarioId ?? null;
-  const isOwner = user.role === "proveedor" && ownerUserId != null && ownerUserId === user.id;
+  const representedProviderIds = user.role === "proveedor"
+    ? (opts?.representedProviderIds ?? await supplierProviderIdsForUser(user.tenantId, user.id))
+    : [];
+  const isRepresentative =
+    user.role === "proveedor" &&
+    doc.proveedorId != null &&
+    representedProviderIds.includes(Number(doc.proveedorId));
 
-  // Owner can always read their own docs (including offers pre-apertura).
-  if (isOwner) return;
+  // An active member of the represented supplier organization can read its own documents.
+  if (isRepresentative) return;
 
   const aperturaEstado =
     opts?.aperturaEstado !== undefined
@@ -137,6 +143,9 @@ export async function filterReadableDocuments<T extends DocAccessRow>(
   docs: T[],
 ): Promise<T[]> {
   const byLic = new Map<number, string | null>();
+  const representedProviderIds = user.role === "proveedor"
+    ? await supplierProviderIdsForUser(user.tenantId, user.id)
+    : [];
   const out: T[] = [];
   for (const doc of docs) {
     try {
@@ -147,7 +156,7 @@ export async function filterReadableDocuments<T extends DocAccessRow>(
         }
         ap = byLic.get(doc.licitacionId);
       }
-      await authorizeDocumentRead(user, doc, { aperturaEstado: ap ?? null });
+      await authorizeDocumentRead(user, doc, { aperturaEstado: ap ?? null, representedProviderIds });
       out.push(doc);
     } catch {
       // omit

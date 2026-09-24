@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createRouter, authedQuery, adminQuery, publicQuery, ctxForAudit } from "./middleware";
 import { getDb } from "./queries/connection";
 import { tenants, users, proveedores } from "@db/schema";
+import { supplierAuthorities, supplierMemberships } from "@db/schema-eproc";
 import { findOrCreateLegalEntity, normalizeRfc, resolveProveedorLoginCandidates } from "./lib/supplier-legal-entity";
 import { createSession, clearSessionCookie, hashPassword, verifyPassword, revokeSession, setSessionCookie, writeAudit } from "./lib/security";
 import { pageInput, pageResult } from "./lib/pagination";
@@ -92,6 +93,7 @@ export const authRouter = createRouter({
     rfc: rfcMx,
     password: z.string().min(1),
     tenantId: z.number().int().positive().optional(),
+    supplierMembershipId: z.number().int().positive().optional(),
   })).mutation(async ({ input, ctx }) => {
     const ip = requestMeta(ctx.req).ipAddress;
     const rfc = normalizeRfc(input.rfc);
@@ -119,13 +121,27 @@ export const authRouter = createRouter({
       tenantNombre: m.tenantNombre,
       proveedorId: m.proveedorId,
       usuarioId: m.usuarioId,
+      supplierMembershipId: m.supplierMembershipId,
+      supplierRole: m.supplierRole,
       email: m.userEmail,
     }));
 
-    if (input.tenantId) {
-      const chosen = matched.find((m: (typeof memberships)[number]) => m.tenantId === input.tenantId);
+    if (input.supplierMembershipId || input.tenantId) {
+      let chosen = input.supplierMembershipId
+        ? matched.find((m: (typeof memberships)[number]) => m.supplierMembershipId === input.supplierMembershipId)
+        : undefined;
+      if (!chosen && input.tenantId) {
+        const tenantMatches = matched.filter((m: (typeof memberships)[number]) => m.tenantId === input.tenantId);
+        if (tenantMatches.length === 1) chosen = tenantMatches[0];
+        else if (tenantMatches.length > 1) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Hay varias representaciones en este tenant; seleccione supplierMembershipId.",
+          });
+        }
+      }
       if (!chosen) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "El tenant indicado no es membresía de este RFC." });
+        throw new TRPCError({ code: "BAD_REQUEST", message: "La membresía indicada no corresponde a este RFC/usuario." });
       }
       const user = await db.query.users.findFirst({ where: and(eq(users.id, chosen.usuarioId!), eq(users.tenantId, chosen.tenantId)) });
       if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Usuario de membresía no encontrado." });
@@ -204,7 +220,7 @@ export const authRouter = createRouter({
           razonSocial: input.proveedor.razonSocial,
           tipoPersona: input.proveedor.tipoProveedor,
         });
-        await tx.insert(proveedores).values({
+        const providerResult = await tx.insert(proveedores).values({
           tenantId: ctx.user.tenantId,
           usuarioId: id,
           legalEntityId: le.id,
@@ -215,6 +231,25 @@ export const authRouter = createRouter({
           email: input.email,
           estadoVerificacion: "PENDIENTE",
           activo: true,
+        });
+        const proveedorId = Number(providerResult[0].insertId);
+        await tx.insert(supplierMemberships).values({
+          tenantId: ctx.user.tenantId,
+          proveedorId,
+          userId: id,
+          role: "OWNER",
+          active: true,
+          createdBy: ctx.user.id,
+        });
+        await tx.insert(supplierAuthorities).values({
+          tenantId: ctx.user.tenantId,
+          proveedorId,
+          userId: id,
+          authorityType: "PROCUREMENT",
+          authoritySource: "ADMIN_GRANTED",
+          scope: { actions: ["SUBMIT", "WITHDRAW"] },
+          active: true,
+          createdBy: ctx.user.id,
         });
       }
     });
