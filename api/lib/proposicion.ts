@@ -19,10 +19,11 @@ export type ProposicionManifestInput = {
   proposicionId: number;
   participacionId: number;
   proveedorId: number;
-  lotId: number;
-  actorUserId: number;
-  supplierMembershipId: number;
-  actingAuthorityId: number;
+  /** Present on institutional manifests (legacy manifests intentionally omit these fields). */
+  lotId?: number;
+  actorUserId?: number;
+  supplierMembershipId?: number;
+  actingAuthorityId?: number;
   /** @deprecated Prefer ciphertextHash — seal must NOT require decrypt. */
   montoOferta?: string | number;
   /** SHA-256 of envelope ciphertext (or document+ciphertext binding). */
@@ -49,13 +50,13 @@ export function buildProposicionManifest(input: ProposicionManifestInput): {
     proposicionId: input.proposicionId,
     participacionId: input.participacionId,
     proveedorId: input.proveedorId,
-    lotId: input.lotId,
-    actorUserId: input.actorUserId,
-    supplierMembershipId: input.supplierMembershipId,
-    actingAuthorityId: input.actingAuthorityId,
     recibidoAt: new Date(input.recibidoAt).toISOString(),
     documentos: docs,
   };
+  if (input.lotId != null) payload.lotId = input.lotId;
+  if (input.actorUserId != null) payload.actorUserId = input.actorUserId;
+  if (input.supplierMembershipId != null) payload.supplierMembershipId = input.supplierMembershipId;
+  if (input.actingAuthorityId != null) payload.actingAuthorityId = input.actingAuthorityId;
   if (input.consorcioId != null) {
     const miembros = [...(input.consorcioMiembros ?? [])]
       .map((m) => ({
