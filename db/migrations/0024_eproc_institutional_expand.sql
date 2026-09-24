@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS `supplier_authorities` (
   `proveedor_id` bigint unsigned NOT NULL,
   `user_id` bigint unsigned NOT NULL,
   `authority_type` enum('LEGAL_REPRESENTATIVE','POWER_OF_ATTORNEY','SIGNATURE','PROCUREMENT') NOT NULL,
+  `supplier_authority_source` enum('MIGRATED_LEGACY','ADMIN_GRANTED','VERIFIED_DOCUMENT') NOT NULL,
   `scope` json NULL,
   `document_id` bigint unsigned NULL,
   `active` tinyint(1) NOT NULL DEFAULT 1,
@@ -280,6 +281,9 @@ CREATE TABLE IF NOT EXISTS `award_items` (
 CREATE TABLE IF NOT EXISTS `submission_receipts` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `tenant_id` bigint unsigned NOT NULL,
+  `receipt_code` varchar(80) NOT NULL,
+  `schema_version` int NOT NULL DEFAULT 1,
+  `algorithm` varchar(32) NOT NULL DEFAULT 'SHA256',
   `licitacion_id` bigint unsigned NOT NULL,
   `lot_id` bigint unsigned NOT NULL,
   `participacion_id` bigint unsigned NOT NULL,
@@ -289,6 +293,9 @@ CREATE TABLE IF NOT EXISTS `submission_receipts` (
   `submitted_by_user_id` bigint unsigned NOT NULL,
   `supplier_membership_id` bigint unsigned NULL,
   `acting_authority_id` bigint unsigned NULL,
+  `authority_snapshot` json NOT NULL,
+  `seal_hash` char(64) NOT NULL,
+  `ciphertext_hash` char(64) NOT NULL,
   `receipt_type` enum('SUBMISSION','WITHDRAWAL','REPLACEMENT') NOT NULL,
   `manifest_hash` char(64) NOT NULL,
   `submission_version` int NOT NULL DEFAULT 1,
@@ -301,6 +308,7 @@ CREATE TABLE IF NOT EXISTS `submission_receipts` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `submission_receipt_tenant_id_uq` (`tenant_id`,`id`),
+  UNIQUE KEY `submission_receipt_code_uq` (`receipt_code`),
   UNIQUE KEY `submission_receipt_hash_uq` (`receipt_hash`),
   KEY `submission_receipt_prop_idx` (`tenant_id`,`proposicion_id`,`receipt_type`)
 ) ENGINE=InnoDB;
@@ -416,6 +424,18 @@ INSERT IGNORE INTO `supplier_memberships`
 (`tenant_id`,`proveedor_id`,`user_id`,`supplier_role`,`active`,`created_by`)
 SELECT tenant_id,id,usuario_id,'OWNER',1,usuario_id
 FROM `proveedores` WHERE usuario_id IS NOT NULL;
+
+INSERT INTO `supplier_authorities`
+(`tenant_id`,`proveedor_id`,`user_id`,`authority_type`,`supplier_authority_source`,`scope`,`active`,`created_by`)
+SELECT p.tenant_id,p.id,p.usuario_id,'PROCUREMENT','MIGRATED_LEGACY',
+  JSON_OBJECT('actions',JSON_ARRAY('SUBMIT','WITHDRAW')),1,p.usuario_id
+FROM `proveedores` p
+WHERE p.usuario_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM `supplier_authorities` a
+    WHERE a.tenant_id=p.tenant_id AND a.proveedor_id=p.id AND a.user_id=p.usuario_id
+      AND a.authority_type='PROCUREMENT'
+  );
 
 -- Explicit GENERAL lot preserves existing one-procedure offers during expand phase.
 INSERT IGNORE INTO `procedure_lots`

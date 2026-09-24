@@ -19,6 +19,10 @@ export type ProposicionManifestInput = {
   proposicionId: number;
   participacionId: number;
   proveedorId: number;
+  lotId: number;
+  actorUserId: number;
+  supplierMembershipId: number;
+  actingAuthorityId: number;
   /** @deprecated Prefer ciphertextHash — seal must NOT require decrypt. */
   montoOferta?: string | number;
   /** SHA-256 of envelope ciphertext (or document+ciphertext binding). */
@@ -45,6 +49,10 @@ export function buildProposicionManifest(input: ProposicionManifestInput): {
     proposicionId: input.proposicionId,
     participacionId: input.participacionId,
     proveedorId: input.proveedorId,
+    lotId: input.lotId,
+    actorUserId: input.actorUserId,
+    supplierMembershipId: input.supplierMembershipId,
+    actingAuthorityId: input.actingAuthorityId,
     recibidoAt: new Date(input.recibidoAt).toISOString(),
     documentos: docs,
   };
