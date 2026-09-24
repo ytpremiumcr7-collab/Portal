@@ -5,7 +5,7 @@ import { authedQuery, createRouter, ctxForAudit, procedureMutation } from "../mi
 import { authorityDelegations, organizationalUnitMemberships, taskApprovals, workTasks, workflowInstances } from "@db/schema-eproc";
 import { getDb } from "../queries/connection";
 import { assertUnitAuthority } from "../lib/institutional-authority";
-import { assertPreviousTasksCompleteInDb, instantiateProcedureWorkflow, nextTaskState } from "../lib/workflow";
+import { assertPreviousTasksCompleteInDb, assertTaskCommandAllowed, instantiateProcedureWorkflow, nextTaskState } from "../lib/workflow";
 import { licitaciones } from "@db/schema";
 import { licitacionIdFromInput } from "../lib/procedure-resolvers";
 import { appendExpedienteEvent, findExpedienteByLicitacion } from "../lib/expediente";
@@ -68,6 +68,7 @@ export const workRouter=createRouter({
     const db=getDb(); const current=await taskById(ctx.user.tenantId,input.id);
     if(!current) throw new TRPCError({code:"NOT_FOUND",message:"Tarea no encontrada."});
     if(current.assignedUserId!==ctx.user.id||current.state!=="EN_PROGRESO") throw new TRPCError({code:"FORBIDDEN",message:"La tarea debe estar EN_PROGRESO y asignada al actor."});
+    assertTaskCommandAllowed(current.completionMode as any, "APPROVE");
     const authority=await assertUnitAuthority(ctx.user,current.assignedUnitId,[current.requiredRole as any],{licitacionId:current.licitacionId,actionCode:current.actionCode});
     const next=nextTaskState(current.state as any,"APPROVE");
     await db.transaction(async tx=>{
@@ -91,6 +92,7 @@ export const workRouter=createRouter({
     const db=getDb(); const current=await taskById(ctx.user.tenantId,input.id);
     if(!current) throw new TRPCError({code:"NOT_FOUND",message:"Tarea no encontrada."});
     if(current.assignedUserId!==ctx.user.id) throw new TRPCError({code:"FORBIDDEN",message:"Sólo el responsable puede enviar a revisión."});
+    assertTaskCommandAllowed(current.completionMode as any, "SUBMIT");
     const next=nextTaskState(current.state as any,"SUBMIT");
     await db.transaction(async tx=>{
       const res=await tx.update(workTasks).set({state:next}).where(and(eq(workTasks.tenantId,ctx.user.tenantId),eq(workTasks.id,current.id),eq(workTasks.state,"EN_PROGRESO")));

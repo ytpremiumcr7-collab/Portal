@@ -453,6 +453,26 @@ JOIN `procedure_lots` l
   ON l.tenant_id=p.tenant_id AND l.licitacion_id=p.licitacion_id AND l.code='GENERAL'
 SET p.lot_id=l.id WHERE p.lot_id IS NULL;
 
+-- Contract the legacy provider-per-procedure uniqueness only after every legacy row has a lot.
+ALTER TABLE `participaciones` MODIFY COLUMN `lot_id` bigint unsigned NOT NULL;
+ALTER TABLE `proposiciones` MODIFY COLUMN `lot_id` bigint unsigned NOT NULL;
+
+SET @idx := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='participaciones' AND INDEX_NAME='participaciones_tenant_licitante_proveedor_uq');
+SET @sqlstmt := IF(@idx>0, 'ALTER TABLE `participaciones` DROP INDEX `participaciones_tenant_licitante_proveedor_uq`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @idx := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='participaciones' AND INDEX_NAME='participaciones_tenant_lot_proveedor_uq');
+SET @sqlstmt := IF(@idx=0, 'ALTER TABLE `participaciones` ADD UNIQUE KEY `participaciones_tenant_lot_proveedor_uq` (`tenant_id`,`lot_id`,`proveedor_id`)', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @idx := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='proposiciones' AND INDEX_NAME='prop_lic_prov_uq');
+SET @sqlstmt := IF(@idx>0, 'ALTER TABLE `proposiciones` DROP INDEX `prop_lic_prov_uq`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @idx := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='proposiciones' AND INDEX_NAME='prop_lot_prov_uq');
+SET @sqlstmt := IF(@idx=0, 'ALTER TABLE `proposiciones` ADD UNIQUE KEY `prop_lot_prov_uq` (`tenant_id`,`lot_id`,`proveedor_id`)', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 -- Backfill current published/approved fallo as a first-class award, without yet removing winner pointers.
 INSERT IGNORE INTO `awards`
 (`tenant_id`,`licitacion_id`,`lot_id`,`proveedor_id`,`fallo_id`,`award_status`,`amount`,`currency`,`reason`,`decided_by`,`approved_by`,`approved_at`,`published_at`)

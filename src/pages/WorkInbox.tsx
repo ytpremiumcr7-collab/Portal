@@ -90,13 +90,15 @@ export default function WorkInbox() {
                     )}
                     {task.state === "EN_PROGRESO" && task.assignedUserId != null && (
                       <>
-                        <Button
-                          size="sm"
-                          disabled={busy || motivo.trim().length < 3}
-                          onClick={() => complete.mutate({ id: task.id, motivo })}
-                        >
-                          Completar acto
-                        </Button>
+                        {task.completionMode !== "REVIEW" && (
+                          <Button
+                            size="sm"
+                            disabled={busy || motivo.trim().length < 3}
+                            onClick={() => complete.mutate({ id: task.id, motivo })}
+                          >
+                            Completar acto
+                          </Button>
+                        )}
                         {task.completionMode === "REVIEW" && (
                           <Button
                             size="sm"

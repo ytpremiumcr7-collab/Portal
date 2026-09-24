@@ -7,6 +7,22 @@ import { getDb } from "../queries/connection";
 import { assertWorkTaskTransition, type WorkTaskState } from "./eproc-core";
 
 export type WorkTaskCommand = "CLAIM" | "SUBMIT" | "APPROVE" | "REJECT" | "RETURN" | "CANCEL" | "EXPIRE";
+export type WorkTaskCompletionMode = "EXECUTE" | "REVIEW" | "APPROVE" | "SIGN";
+
+export function assertTaskCommandAllowed(mode: WorkTaskCompletionMode, command: WorkTaskCommand) {
+  if (command === "APPROVE" && mode === "REVIEW") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Una tarea de revisión debe enviarse a revisión y ser decidida por una segunda persona.",
+    });
+  }
+  if (command === "SUBMIT" && mode !== "REVIEW") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Sólo una tarea REVIEW puede enviarse a revisión.",
+    });
+  }
+}
 
 export function nextTaskState(current: WorkTaskState, command: WorkTaskCommand): WorkTaskState {
   const target: Record<WorkTaskCommand, WorkTaskState> = {

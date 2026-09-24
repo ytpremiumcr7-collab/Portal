@@ -254,8 +254,8 @@ export const participaciones = mysqlTable("participaciones", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
-  /** Expand-first lot binding; legacy writer remains supported during cutover. */
-  lotId: bigint("lot_id", { mode: "number", unsigned: true }),
+  /** Canonical lot binding; migration 0024 backfills legacy rows before NOT NULL contraction. */
+  lotId: bigint("lot_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
   consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }),
   montoOferta: decimal("monto_oferta", { precision: 18, scale: 2 }).notNull(),
@@ -274,7 +274,7 @@ export const participaciones = mysqlTable("participaciones", {
   evaluatedAt: timestamp("evaluated_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
-  uniqueIndex("participaciones_tenant_licitante_proveedor_uq").on(t.tenantId, t.licitacionId, t.proveedorId),
+  uniqueIndex("participaciones_tenant_lot_proveedor_uq").on(t.tenantId, t.lotId, t.proveedorId),
   uniqueIndex("participaciones_tenant_id_uq").on(t.tenantId, t.id),
   index("participaciones_tenant_licitacion_idx").on(t.tenantId, t.licitacionId),
   index("participaciones_lot_idx").on(t.tenantId, t.lotId),
@@ -1391,8 +1391,8 @@ export const proposiciones = mysqlTable("proposiciones", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
-  /** Expand-first lot binding; populated by the new submission writer. */
-  lotId: bigint("lot_id", { mode: "number", unsigned: true }),
+  /** Canonical lot binding; migration 0024 backfills legacy rows before NOT NULL contraction. */
+  lotId: bigint("lot_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
   consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }),
   participacionId: bigint("participacion_id", { mode: "number", unsigned: true }).notNull(),
@@ -1407,7 +1407,7 @@ export const proposiciones = mysqlTable("proposiciones", {
 }, (t) => [
   uniqueIndex("prop_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("prop_part_uq").on(t.tenantId, t.participacionId),
-  uniqueIndex("prop_lic_prov_uq").on(t.tenantId, t.licitacionId, t.proveedorId),
+  uniqueIndex("prop_lot_prov_uq").on(t.tenantId, t.lotId, t.proveedorId),
   index("prop_lic_idx").on(t.tenantId, t.licitacionId),
   index("prop_lot_idx").on(t.tenantId, t.lotId),
   foreignKey({ name: "prop_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
