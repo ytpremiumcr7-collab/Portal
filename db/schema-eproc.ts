@@ -66,6 +66,7 @@ export const authorityDelegations = mysqlTable("authority_delegations", {
     "OPERADOR", "TECNICO", "JURIDICO", "PRESUPUESTO",
     "APROBADOR", "ADMIN_CONTRATO", "AUDITOR",
   ]).notNull(),
+  sourceAuthoritySnapshot: json("source_authority_snapshot").notNull(),
   scope: json("scope"),
   reason: text("reason").notNull(),
   active: boolean("active").default(true).notNull(),

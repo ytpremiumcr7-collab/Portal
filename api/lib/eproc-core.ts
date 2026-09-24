@@ -6,6 +6,7 @@ export type InstitutionalRole =
   | "APROBADOR" | "ADMIN_CONTRATO" | "AUDITOR";
 
 type MembershipSnapshot = {
+  id: number;
   userId: number;
   unitId: number;
   role: string;
@@ -46,7 +47,7 @@ export function evaluateInstitutionalAuthority(input: {
     input.requiredRoles.includes(m.role) &&
     activeAt(m.validFrom, m.validUntil, now),
   );
-  if (membership) return { ok: true, source: "MEMBERSHIP", authorityId: null };
+  if (membership) return { ok: true, source: "MEMBERSHIP", authorityId: membership.id };
 
   const delegation = input.delegations.find((d) =>
     d.delegateeUserId === input.actorUserId &&
@@ -66,15 +67,17 @@ export function evaluateInstitutionalAuthority(input: {
 
 export type WorkTaskState =
   | "PENDIENTE" | "EN_PROGRESO" | "EN_REVISION"
-  | "APROBADA" | "RECHAZADA" | "CANCELADA";
+  | "APROBADA" | "RECHAZADA" | "DEVUELTA" | "CANCELADA" | "VENCIDA";
 
 const WORK_TASK_TRANSITIONS: Record<WorkTaskState, readonly WorkTaskState[]> = {
-  PENDIENTE: ["EN_PROGRESO", "CANCELADA"],
-  EN_PROGRESO: ["EN_REVISION", "CANCELADA"],
-  EN_REVISION: ["APROBADA", "RECHAZADA"],
+  PENDIENTE: ["EN_PROGRESO", "CANCELADA", "VENCIDA"],
+  EN_PROGRESO: ["EN_REVISION", "APROBADA", "CANCELADA", "VENCIDA"],
+  EN_REVISION: ["APROBADA", "RECHAZADA", "DEVUELTA"],
   APROBADA: [],
   RECHAZADA: [],
+  DEVUELTA: ["EN_PROGRESO", "CANCELADA", "VENCIDA"],
   CANCELADA: [],
+  VENCIDA: [],
 };
 
 export function assertWorkTaskTransition(from: WorkTaskState, to: WorkTaskState) {

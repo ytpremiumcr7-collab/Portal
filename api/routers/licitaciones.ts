@@ -17,6 +17,10 @@ import { enqueueOutbox } from "../lib/outbox";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
 import { loadAperturaEstado, redactParticipacionEconomica } from "../lib/sobre-economico";
 import { moneyCmp } from "../lib/money";
+import { organizationalUnits, procedureLots, procedureTeamMembers } from "@db/schema-eproc";
+import { assertUnitAuthority } from "../lib/institutional-authority";
+import { instantiateProcedureWorkflow, assertProcedureTaskApproved } from "../lib/workflow";
+import { recordPublicationRelease } from "../lib/publication-ledger";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
 const dateMx = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida.");
@@ -70,7 +74,7 @@ export const licitacionesRouter = createRouter({
   }),
 
   create: capabilityQuery("crear_procedimiento").input(z.object({
-    titulo: z.string().trim().min(5).max(300), objeto: z.string().trim().min(10), descripcionDetallada: z.string().trim().optional(), entidadId: z.number().int().positive(), categoriaId: z.number().int().positive(), convocanteId: z.number().int().positive().optional(),
+    titulo: z.string().trim().min(5).max(300), objeto: z.string().trim().min(10), descripcionDetallada: z.string().trim().optional(), entidadId: z.number().int().positive(), contractingUnitId: z.number().int().positive(), categoriaId: z.number().int().positive(), convocanteId: z.number().int().positive().optional(),
     tipoLicitacion: z.enum(["LICITACION_PUBLICA","INVITACION_RESTRINGIDA","INVITACION_TRES","ADJUDICACION_DIRECTA","DIALOGO_COMPETITIVO","ADJUDICACION_DIRECTA_NEGOCIACION","ACUERDO_MARCO_ASIGNACION","TIENDA_DIGITAL_ORDEN"]), tipoContratacion: z.enum(["OBRA","SERVICIO","BIENES","CONCESION","ARRENDAMIENTO"]), montoPresupuestado: money, fechaPublicacion: dateMx.optional(), fechaCierre: dateMx.optional(), fechaApertura: dateMx.optional(), criterioEvaluacion: z.enum(["PRECIO_MAS_BAJO","MEJOR_RELACION_CALIDAD_PRECIO","MEJOR_VALOR_TECNICO"]).default("MEJOR_RELACION_CALIDAD_PRECIO"), ponderacionTecnica: money.default("40.00"), ponderacionEconomica: money.default("60.00"), rubricaTecnica: z.string().optional(), modoEvaluacion: z.enum(["MANUAL","HIBRIDA","AUTOMATICA"]).default("HIBRIDA"),
   })).mutation(async ({ input, ctx }) => {
     assertNonNegativeDecimal(input.montoPresupuestado, "montoPresupuestado");
@@ -80,26 +84,48 @@ export const licitacionesRouter = createRouter({
     assertDateOrder(input.fechaPublicacion, input.fechaCierre, input.fechaApertura);
     const db = getDb();
     const convocanteId = input.convocanteId ?? ctx.user.id;
-    const [entidad, categoria, convocante] = await Promise.all([
+    const [entidad, categoria, convocante, contractingUnit] = await Promise.all([
       db.query.entidades.findFirst({ where: and(eq(entidades.id, input.entidadId), eq(entidades.tenantId, ctx.user.tenantId), eq(entidades.activa, true)) }),
       db.query.categorias.findFirst({ where: and(eq(categorias.id, input.categoriaId), eq(categorias.tenantId, ctx.user.tenantId), eq(categorias.activa, true)) }),
       db.query.users.findFirst({ where: and(eq(users.id, convocanteId), eq(users.tenantId, ctx.user.tenantId), eq(users.activo, true)) }),
+      db.query.organizationalUnits.findFirst({ where: and(eq(organizationalUnits.id, input.contractingUnitId), eq(organizationalUnits.tenantId, ctx.user.tenantId), eq(organizationalUnits.entidadId, input.entidadId), eq(organizationalUnits.active, true)) }),
     ]);
     if (!entidad || !categoria) throw new TRPCError({ code: "BAD_REQUEST", message: "Entidad y categoría deben existir, estar activas y pertenecer al tenant." });
+    if (!contractingUnit || contractingUnit.unitType !== "UNIDAD_COMPRADORA") throw new TRPCError({ code: "BAD_REQUEST", message: "Seleccione una unidad compradora activa de la entidad." });
     if (!convocante || !["admin","licitante"].includes(convocante.role)) throw new TRPCError({ code: "BAD_REQUEST", message: "El convocante debe ser administrador o licitante del tenant." });
+    const creatorAuthority = await assertUnitAuthority(ctx.user, input.contractingUnitId, ["OPERADOR"], { actionCode: "CREAR_PROCEDIMIENTO" });
     let createdId = 0; let codigo = "";
     await db.transaction(async tx => {
       codigo = await nextLicitacionCode(ctx.user.tenantId, tx);
-      const result = await tx.insert(licitaciones).values({ tenantId: ctx.user.tenantId, codigo, titulo: input.titulo, objeto: input.objeto, descripcionDetallada: input.descripcionDetallada ?? null, entidadId: input.entidadId, categoriaId: input.categoriaId, convocanteId, tipoLicitacion: input.tipoLicitacion, tipoContratacion: input.tipoContratacion, montoPresupuestado: input.montoPresupuestado, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION", fechaPublicacion: input.fechaPublicacion ? new Date(input.fechaPublicacion) : null, fechaCierre: input.fechaCierre ? new Date(input.fechaCierre) : null, fechaApertura: input.fechaApertura ? new Date(input.fechaApertura) : null, criterioEvaluacion: input.criterioEvaluacion, ponderacionTecnica: input.ponderacionTecnica, ponderacionEconomica: input.ponderacionEconomica, rubricaTecnica: input.rubricaTecnica ?? null, modoEvaluacion: input.modoEvaluacion });
+      const result = await tx.insert(licitaciones).values({ tenantId: ctx.user.tenantId, codigo, titulo: input.titulo, objeto: input.objeto, descripcionDetallada: input.descripcionDetallada ?? null, entidadId: input.entidadId, contractingUnitId: input.contractingUnitId, categoriaId: input.categoriaId, convocanteId, tipoLicitacion: input.tipoLicitacion, tipoContratacion: input.tipoContratacion, montoPresupuestado: input.montoPresupuestado, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION", fechaPublicacion: input.fechaPublicacion ? new Date(input.fechaPublicacion) : null, fechaCierre: input.fechaCierre ? new Date(input.fechaCierre) : null, fechaApertura: input.fechaApertura ? new Date(input.fechaApertura) : null, criterioEvaluacion: input.criterioEvaluacion, ponderacionTecnica: input.ponderacionTecnica, ponderacionEconomica: input.ponderacionEconomica, rubricaTecnica: input.rubricaTecnica ?? null, modoEvaluacion: input.modoEvaluacion });
       createdId = Number(result[0].insertId);
       await createExpedienteForLicitacion(tx, ctx, { ...input, id: createdId, convocanteId, codigo, moneda: "MXN", estado: "BORRADOR", etapa: "PREPARACION" } as any);
       await tx.insert(procedimientoAsignaciones).values({
         tenantId: ctx.user.tenantId, licitacionId: createdId, userId: ctx.user.id,
         rol: "creador", overrideSod: false, justificacionOverride: null, asignadoPor: ctx.user.id,
       } as any);
+      await tx.insert(procedureTeamMembers).values({
+        tenantId: ctx.user.tenantId, licitacionId: createdId, unitId: input.contractingUnitId,
+        userId: ctx.user.id, institutionalRole: "OPERADOR", procedureRole: "creador",
+        authoritySource: creatorAuthority.source, authorityRefId: creatorAuthority.authorityId,
+        authoritySnapshot: creatorAuthority,
+      } as any);
+      await tx.insert(procedureLots).values({
+        tenantId: ctx.user.tenantId, licitacionId: createdId, code: "GENERAL",
+        title: "Lote general", status: "ACTIVE", estimatedAmount: input.montoPresupuestado,
+        currency: "MXN", createdBy: ctx.user.id,
+      } as any);
+      await instantiateProcedureWorkflow(tx, {
+        tenantId: ctx.user.tenantId, licitacionId: createdId,
+        unitId: input.contractingUnitId, actorUserId: ctx.user.id,
+      });
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "licitaciones", entidadId: createdId,
+        valorNuevo: { id: createdId, codigo, contractingUnitId: input.contractingUnitId, authority: creatorAuthority },
+        tx,
+      });
     });
     const created = await getByTenant(createdId, ctx.user.tenantId);
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "licitaciones", entidadId: createdId, valorNuevo: created });
     return { id: createdId, codigo, item: created };
   }),
 
@@ -134,6 +160,7 @@ export const licitacionesRouter = createRouter({
 
   publicar: procedureMutation({ capability: "publicar", role: "creador", resolveLicitacionId: (i) => licitacionIdFromInput(i) }).input(z.object({ id: z.number().int().positive(), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
     const current = await assertLicitacionReadyForPublish(ctx.user.tenantId, input.id);
+    await assertProcedureTaskApproved(ctx.user.tenantId, input.id, "AUTORIZAR_PUBLICACION");
     const db = getDb();
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, input.id);
     if (!expediente) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Sin expediente electrónico." });
@@ -190,6 +217,21 @@ export const licitacionesRouter = createRouter({
         payload: { reglasHash, criterioEvaluacion: frozen.criterioEvaluacion, version: 1, policyId: policy.id, policyHash: policy.hash },
       });
       const updatedInTx = await tx.query.licitaciones.findFirst({ where: and(eq(licitaciones.id, input.id), eq(licitaciones.tenantId, ctx.user.tenantId)) });
+      await recordPublicationRelease(tx, {
+        tenantId: ctx.user.tenantId, licitacionId: input.id, eventType: "TENDER_PUBLISHED",
+        sourceType: "licitaciones", sourceId: input.id, publishedBy: ctx.user.id,
+        payload: {
+          codigo: current.codigo, titulo: current.titulo, objeto: current.objeto,
+          tipoLicitacion: current.tipoLicitacion, tipoContratacion: current.tipoContratacion,
+          fechaPublicacion: current.fechaPublicacion ?? new Date(), fechaCierre: current.fechaCierre,
+          fechaApertura: current.fechaApertura, policyId: policy.id, policyHash: policy.hash, reglasHash,
+        },
+      });
+      await enqueueOutbox(tx, {
+        tenantId: ctx.user.tenantId, aggregateType: "licitaciones", aggregateId: input.id,
+        eventType: "PROCEDIMIENTO_PUBLICADO",
+        payload: { licitacionId: input.id, codigo: current.codigo, actorUserId: ctx.user.id, entidadRef: "licitaciones", entidadId: input.id },
+      });
       await writeAudit({ ctx: ctxForAudit(ctx), accion: "PUBLICAR", entidad: "licitaciones", entidadId: input.id, valorAnterior: current, valorNuevo: updatedInTx, motivo: input.motivo, tx });
     });
     return getByTenant(input.id, ctx.user.tenantId);

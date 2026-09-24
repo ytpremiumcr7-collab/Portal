@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS `authority_delegations` (
   `delegator_user_id` bigint unsigned NOT NULL,
   `delegatee_user_id` bigint unsigned NOT NULL,
   `delegated_role` enum('OPERADOR','TECNICO','JURIDICO','PRESUPUESTO','APROBADOR','ADMIN_CONTRATO','AUDITOR') NOT NULL,
+  `source_authority_snapshot` json NOT NULL,
   `scope` json NULL,
   `reason` text NOT NULL,
   `active` tinyint(1) NOT NULL DEFAULT 1,

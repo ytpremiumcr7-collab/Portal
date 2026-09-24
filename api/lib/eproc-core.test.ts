@@ -16,6 +16,7 @@ describe("institutional authority", () => {
       requiredRoles: ["OPERADOR"],
       now,
       memberships: [{
+        id: 91,
         userId: 10,
         unitId: 7,
         role: "OPERADOR",
@@ -26,7 +27,7 @@ describe("institutional authority", () => {
       delegations: [],
     });
 
-    expect(result).toEqual({ ok: true, source: "MEMBERSHIP", authorityId: null });
+    expect(result).toEqual({ ok: true, source: "MEMBERSHIP", authorityId: 91 });
   });
 
   it("rejects expired membership and accepts a valid scoped delegation", () => {
@@ -36,6 +37,7 @@ describe("institutional authority", () => {
       requiredRoles: ["APROBADOR"],
       now,
       memberships: [{
+        id: 92,
         userId: 10,
         unitId: 7,
         role: "APROBADOR",
@@ -74,6 +76,7 @@ describe("institutional authority", () => {
       requiredRoles: ["OPERADOR"],
       now,
       memberships: [{
+        id: 93,
         userId: 10,
         unitId: 7,
         role: "OPERADOR",
