@@ -60,21 +60,15 @@ export async function supplierProviderIdsForUser(tenantId:number,userId:number){
   return [...new Set(rows.filter(m=>activeAt(m,now)).map(m=>Number(m.proveedorId)))];
 }
 
-export async function resolveSupplierActor(input:{
+function resolvedSupplierActor(input:{
   tenantId:number;actorUserId:number;proveedorId:number;procedureId:number;lotId:number;action:SupplierAction;
-}){
-  const db=getDb();
-  const provider=await db.query.proveedores.findFirst({
-    where:and(eq(proveedores.tenantId,input.tenantId),eq(proveedores.id,input.proveedorId),eq(proveedores.activo,true)),
-  });
-  if(!provider) throw new TRPCError({code:"NOT_FOUND",message:"Organización proveedora no encontrada o inactiva."});
-  const [memberships,authorities]=await Promise.all([
-    db.query.supplierMemberships.findMany({where:and(eq(supplierMemberships.tenantId,input.tenantId),eq(supplierMemberships.proveedorId,input.proveedorId),eq(supplierMemberships.userId,input.actorUserId))}),
-    db.query.supplierAuthorities.findMany({where:and(eq(supplierAuthorities.tenantId,input.tenantId),eq(supplierAuthorities.proveedorId,input.proveedorId),eq(supplierAuthorities.userId,input.actorUserId))}),
-  ]);
-  const evaluated=evaluateSupplierActionAuthority({...input,memberships:memberships as any,authorities:authorities as any});
+}, provider:any, memberships:any[], authorities:any[]){
+  const evaluated=evaluateSupplierActionAuthority({...input,memberships,authorities});
   if(!evaluated.ok||evaluated.membershipId==null||evaluated.authorityId==null){
     throw new TRPCError({code:"FORBIDDEN",message:evaluated.reason??"Autoridad de proveedor insuficiente."});
+  }
+  if(provider.legalEntityId==null){
+    throw new TRPCError({code:"PRECONDITION_FAILED",message:"La organización proveedora no tiene identidad legal vinculada."});
   }
   const membership=memberships.find(m=>m.id===evaluated.membershipId)!;
   const authority=authorities.find(a=>a.id===evaluated.authorityId)!;
@@ -87,4 +81,36 @@ export async function resolveSupplierActor(input:{
     capturedAt:new Date().toISOString(),
   };
   return {provider,membership,authority,authoritySnapshot};
+}
+
+export async function resolveSupplierActor(input:{
+  tenantId:number;actorUserId:number;proveedorId:number;procedureId:number;lotId:number;action:SupplierAction;
+}){
+  const db=getDb();
+  const provider=await db.query.proveedores.findFirst({
+    where:and(eq(proveedores.tenantId,input.tenantId),eq(proveedores.id,input.proveedorId),eq(proveedores.activo,true)),
+  });
+  if(!provider) throw new TRPCError({code:"NOT_FOUND",message:"Organización proveedora no encontrada o inactiva."});
+  const [memberships,authorities]=await Promise.all([
+    db.query.supplierMemberships.findMany({where:and(eq(supplierMemberships.tenantId,input.tenantId),eq(supplierMemberships.proveedorId,input.proveedorId),eq(supplierMemberships.userId,input.actorUserId))}),
+    db.query.supplierAuthorities.findMany({where:and(eq(supplierAuthorities.tenantId,input.tenantId),eq(supplierAuthorities.proveedorId,input.proveedorId),eq(supplierAuthorities.userId,input.actorUserId))}),
+  ]);
+  return resolvedSupplierActor(input,provider,memberships as any[],authorities as any[]);
+}
+
+export async function resolveSupplierActorInTx(tx:any,input:{
+  tenantId:number;actorUserId:number;proveedorId:number;procedureId:number;lotId:number;action:SupplierAction;
+}){
+  const providerRows=await tx.select().from(proveedores)
+    .where(and(eq(proveedores.tenantId,input.tenantId),eq(proveedores.id,input.proveedorId),eq(proveedores.activo,true)))
+    .for("update").limit(1);
+  const provider=providerRows[0];
+  if(!provider) throw new TRPCError({code:"NOT_FOUND",message:"Organización proveedora no encontrada o inactiva."});
+  const memberships=await tx.select().from(supplierMemberships)
+    .where(and(eq(supplierMemberships.tenantId,input.tenantId),eq(supplierMemberships.proveedorId,input.proveedorId),eq(supplierMemberships.userId,input.actorUserId)))
+    .for("update");
+  const authorities=await tx.select().from(supplierAuthorities)
+    .where(and(eq(supplierAuthorities.tenantId,input.tenantId),eq(supplierAuthorities.proveedorId,input.proveedorId),eq(supplierAuthorities.userId,input.actorUserId)))
+    .for("update");
+  return resolvedSupplierActor(input,provider,memberships as any[],authorities as any[]);
 }

@@ -11,9 +11,13 @@ export async function createSubmissionReceipt(tx:any,input:{
 }){
   const receiptCode=`RCP-${randomUUID()}`;
   const receiptHash=hashSubmissionReceipt({
-    tenantId:input.tenantId,procedureId:input.licitacionId,submissionId:input.proposicionId,
+    schemaVersion:1,algorithm:"SHA256",receiptCode,
+    tenantId:input.tenantId,procedureId:input.licitacionId,lotId:input.lotId,
+    submissionId:input.proposicionId,representedProviderId:input.proveedorId,
     supplierOrganizationId:input.supplierOrganizationId,submittedByUserId:input.submittedByUserId,
-    actingAuthorityId:input.actingAuthorityId,manifestHash:input.manifestHash,
+    supplierMembershipId:input.supplierMembershipId,actingAuthorityId:input.actingAuthorityId,
+    authoritySnapshot:input.authoritySnapshot,manifestHash:input.manifestHash,
+    sealHash:input.sealHash,ciphertextHash:input.ciphertextHash,
     serverReceivedAt:input.serverReceivedAt.toISOString(),submissionVersion:input.submissionVersion,
     supersedesSubmissionId:input.supersedesProposicionId??null,receiptType:input.receiptType,
   });

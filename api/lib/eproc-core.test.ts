@@ -103,13 +103,22 @@ describe("work task lifecycle", () => {
 describe("submission receipts", () => {
   it("hashes the immutable receipt envelope including version and supersession", () => {
     const base = {
+      schemaVersion: 1,
+      algorithm: "SHA256" as const,
+      receiptCode: "RCP-test",
       tenantId: 1,
       procedureId: 20,
+      lotId: 2,
       submissionId: 30,
+      representedProviderId: 35,
       supplierOrganizationId: 40,
       submittedByUserId: 50,
+      supplierMembershipId: 55,
       actingAuthorityId: 60,
+      authoritySnapshot: { authorityId: 60, membershipId: 55, lotId: 2 },
       manifestHash: "a".repeat(64),
+      sealHash: "b".repeat(64),
+      ciphertextHash: "c".repeat(64),
       serverReceivedAt: "2026-09-24T18:00:00.000Z",
       submissionVersion: 1,
       supersedesSubmissionId: null as number | null,
@@ -118,10 +127,14 @@ describe("submission receipts", () => {
     const hash1 = hashSubmissionReceipt(base);
     const hash2 = hashSubmissionReceipt({ ...base });
     const replaced = hashSubmissionReceipt({ ...base, submissionVersion: 2, supersedesSubmissionId: 30 });
+    const otherLot = hashSubmissionReceipt({ ...base, lotId: 3 });
+    const otherAuthority = hashSubmissionReceipt({ ...base, actingAuthorityId: 61 });
 
     expect(hash1).toMatch(/^[a-f0-9]{64}$/);
     expect(hash1).toBe(hash2);
     expect(replaced).not.toBe(hash1);
+    expect(otherLot).not.toBe(hash1);
+    expect(otherAuthority).not.toBe(hash1);
   });
 });
 

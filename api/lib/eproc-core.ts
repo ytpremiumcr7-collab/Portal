@@ -102,13 +102,22 @@ function canonical(value: unknown): unknown {
 }
 
 export type SubmissionReceiptEnvelope = {
+  schemaVersion: number;
+  algorithm: "SHA256";
+  receiptCode: string;
   tenantId: number;
   procedureId: number;
+  lotId: number;
   submissionId: number;
+  representedProviderId: number;
   supplierOrganizationId: number;
   submittedByUserId: number;
-  actingAuthorityId: number | null;
+  supplierMembershipId: number;
+  actingAuthorityId: number;
+  authoritySnapshot: unknown;
   manifestHash: string;
+  sealHash: string;
+  ciphertextHash: string;
   serverReceivedAt: string;
   submissionVersion: number;
   supersedesSubmissionId: number | null;
