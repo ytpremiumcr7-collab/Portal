@@ -14,6 +14,7 @@ import { hashPassword } from "../api/lib/security";
 import { ensureSystemActor, ensureSystemActorsForAllTenants } from "../api/lib/system-actor";
 import { ENVELOPE_PLACEHOLDER_MONTO } from "../api/lib/envelope-crypto";
 import { insertSobreEconomico } from "../api/lib/sobre-economico";
+import { procedureLots } from "./schema-eproc";
 import {
   tenants,
   users,
@@ -277,19 +278,50 @@ async function ensureHito(expedienteId: number, licitacionId: number, tipo: any,
   });
 }
 
+async function ensureGeneralLot(licitacionId: number) {
+  let lot = await db.query.procedureLots.findFirst({
+    where: and(
+      eq(procedureLots.tenantId, tenantId),
+      eq(procedureLots.licitacionId, licitacionId),
+      eq(procedureLots.code, "GENERAL"),
+    ),
+  });
+  if (lot) return lot.id;
+  const lic = await db.query.licitaciones.findFirst({
+    where: and(eq(licitaciones.tenantId, tenantId), eq(licitaciones.id, licitacionId)),
+  });
+  if (!lic) throw new Error(`Licitación ${licitacionId} inexistente para seed multi-lote.`);
+  const id = insertId(await db.insert(procedureLots).values({
+    tenantId,
+    licitacionId,
+    code: "GENERAL",
+    title: "Lote general",
+    status: "ACTIVE",
+    estimatedAmount: lic.montoPresupuestado,
+    currency: "MXN",
+    createdBy: adminId,
+  }));
+  return id;
+}
+
 async function presentOffer(licitacionId: number, proveedorId: number, monto: string, plazo: number) {
+  const lotId = await ensureGeneralLot(licitacionId);
   const existing = await db.query.participaciones.findFirst({
-    where: and(eq(participaciones.tenantId, tenantId), eq(participaciones.licitacionId, licitacionId), eq(participaciones.proveedorId, proveedorId)),
+    where: and(
+      eq(participaciones.tenantId, tenantId),
+      eq(participaciones.lotId, lotId),
+      eq(participaciones.proveedorId, proveedorId),
+    ),
   });
   if (existing) return existing.id;
   const recibidoAt = new Date();
   const partId = insertId(await db.insert(participaciones).values({
-    tenantId, licitacionId, proveedorId,
+    tenantId, licitacionId, lotId, proveedorId,
     montoOferta: ENVELOPE_PLACEHOLDER_MONTO, monedaOferta: "MXN", plazoEjecucion: plazo,
     estadoEvaluacion: "PENDIENTE", recibidoAt,
   }));
   const propId = insertId(await db.insert(proposiciones).values({
-    tenantId, licitacionId, proveedorId, participacionId: partId, recibidoAt,
+    tenantId, licitacionId, lotId, proveedorId, participacionId: partId, recibidoAt,
     estado: "SELLADA", montoOferta: ENVELOPE_PLACEHOLDER_MONTO, sealedAt: recibidoAt,
     manifestHash: createHash("sha256").update(`manifest:${licitacionId}:${proveedorId}:${monto}`).digest("hex"),
     sealHash: createHash("sha256").update(`seal:${licitacionId}:${proveedorId}:${monto}`).digest("hex"),
