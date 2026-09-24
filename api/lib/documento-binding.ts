@@ -4,6 +4,7 @@ export type DocBindingContext = {
   tenantId: number;
   expedienteId?: number | null;
   licitacionId?: number | null;
+  lotId?: number | null;
   proveedorId?: number | null;
   expectedTipo: string;
 };
@@ -20,6 +21,7 @@ export function assertDocumentoBoundToContext(
     esVersionVigente: boolean;
     expedienteId?: number | null;
     licitacionId?: number | null;
+    lotId?: number | null;
     proveedorId?: number | null;
   } | null | undefined,
   ctx: DocBindingContext,
@@ -52,6 +54,12 @@ export function assertDocumentoBoundToContext(
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "El documento no corresponde al expediente del contexto.",
+    });
+  }
+  if (ctx.lotId != null && Number(doc.lotId) !== Number(ctx.lotId)) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "El documento no corresponde al lote adjudicado del contrato.",
     });
   }
   if (ctx.proveedorId != null && doc.proveedorId != null && Number(doc.proveedorId) !== Number(ctx.proveedorId)) {

@@ -29,7 +29,6 @@ import { notificacionesRouter } from "./routers/notificaciones";
 import { consultaPublicaRouter } from "./routers/consultaPublica";
 import { capabilitiesRouter } from "./routers/capabilities";
 import { sodRouter } from "./routers/sod";
-import { actoAdjudicacionRouter } from "./routers/actoAdjudicacion";
 import { comisionRouter } from "./routers/comision";
 import { terminacionRouter } from "./routers/terminacion";
 import { calendarioRouter } from "./routers/calendario";
@@ -76,7 +75,6 @@ export const appRouter = createRouter({
   consultaPublica: consultaPublicaRouter,
   capabilities: capabilitiesRouter,
   sod: sodRouter,
-  actoAdjudicacion: actoAdjudicacionRouter,
   comision: comisionRouter,
   terminacion: terminacionRouter,
   calendario: calendarioRouter,

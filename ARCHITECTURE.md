@@ -120,14 +120,14 @@ Drizzle (MySQL/MariaDB) + tRPC + React. Spanish domain terms. ARES-only codebase
 
 | # | Fix |
 |---|-----|
-| P0-1 | `sorteo_documentado`: never silent `id` fallback; `actos_desempate` emit/register; ranking/adjudicar consume resultado |
+| P0-1 | `sorteo_documentado`: never silent `id` fallback; `actos_desempate` emit/register; ranking/fallo por lote consume resultado |
 | P0-2 | Sobre económico sellado: `montoOferta` redacted in participaciones list/get until apertura ABIERTA/PUBLICADA |
 | P0-3 | Admin no longer auto-all capabilities / adminBypass; `break_glass` time-bound grant + expediente + audit |
 | P0-4 | Recepción: calendario `ventana_fin` ms; deadline+1ms REJECT; require RECEPCION window when published |
 | P1-5 | `audit_chain_heads` FOR UPDATE serializes audit hash chain |
 | P1-6 | Hot paths: create participación / evaluar writeAudit in same TX |
 | P1-7 | Outbox: claimedAt/claimedBy/lease reclaim; idempotencyKey; system actor sentinel (never invent user id=1) |
-| P1-8 | capabilityQuery + assertProcedimientoAsignacion: publicar, apertura, actoAdjudicacion, formalizar/rescindir, comision.designar |
+| P1-8 | capabilityQuery + assertProcedimientoAsignacion: publicar, apertura, fallos, formalizar/rescindir, comision.designar |
 | P1-9 | Consorcios: proveedor owns create/add/activate; convocante validates/links only |
 | P1-10 | `participaciones.delete` → RETIRADA/INVALIDADA (no hard delete) |
 
@@ -209,7 +209,7 @@ procedureMutation({ capability, role|roles[], resolveLicitacionId })
 
 | Domain | Guard |
 |--------|-------|
-| licitaciones.publicar / iniciarEvaluacion / adjudicar | procedureMutation + creador / evaluador_* / autorizador_fallo |
+| licitaciones.publicar / iniciarEvaluacion; fallos emitir/aprobar/publicar | procedureMutation + creador / evaluador_* / autorizador_fallo |
 | participaciones.evaluar | procedureMutation + evaluar_tecnico\|evaluar_economico + evaluador_tecnico\|evaluador_economico |
 | aperturas.* | procedureMutation + creador |
 | contratos.crear / ponerVigente / terminar / configurarBesa / formalizar / rescindir | procedureMutation + creador |
@@ -218,7 +218,7 @@ procedureMutation({ capability, role|roles[], resolveLicitacionId })
 | calendario.configurar | administrar_calendario **or** crear_procedimiento+creador; freeze after PUBLICADA except break_glass |
 | ejecucion.* | procedureMutation + administrar_ejecucion\|creador |
 | inconformidades.transicionar | procedureMutation + resolver_inconformidad |
-| dictamenes / fallos / actoAdjudicacion / comision / pagos / desempate | procedureMutation (universal) |
+| dictamenes / fallos / comision / pagos / desempate | procedureMutation (universal) |
 
 ### Break-glass & grants — second person
 - `requestBreakGlass` → `approveBreakGlass` (preferred); `grantBreakGlass` only with `approvedBy` ≠ requester ≠ beneficiary
@@ -314,3 +314,14 @@ Migration: **`0018_audit_p2_invariants.sql`**.
 ## Oleada 2 residuals (closed / deferred)
 - **Closed:** `auth.loginByRfc` + `supplier_legal_entities` membership; SatEFirma CRYPTO path when CAs present; `assertModalidadPublishable` / `assertTransitionAllowed` for modalities 4–7; `useCapability` UI gating; migration `0020_oleada2_residuals.sql`.
 - **Deferred:** Live FIEL E2E without fixtures; full diálogo competitivo UI/rondas table UX polish; diálogo_rondas dedicated table (MVP reuses aclaraciones-like / policy JSON); richer Pagos button gating edge cases.
+
+## Cutover fallo → awards → contratos (0025)
+
+- `fallo_lot_decisions` is the canonical, immutable decision set: exactly one decision for every active lot.
+- `ADJUDICAR` derives supplier and amount from the admissible offer and revalidates first place with the frozen evaluation rules and registered tie-break.
+- The same transaction persists fallo, lot decisions, draft awards, expediente evidence, and audit. Publishing moves awards/lots/offers, writes a publication release, audit, expediente event, and outbox atomically.
+- Contracts are created only from a `PUBLISHED` award and are unique by `award_id`, allowing multiple contracts per procedure.
+- Contract transitions keep domain mutation, expediente, audit, and legal-effect outbox in one transaction.
+- `acto_adjudicacion` remains as a legacy archive table only; its API/UI writer was removed.
+
+Migration: **`0025_lot_award_contract_cutover.sql`**.

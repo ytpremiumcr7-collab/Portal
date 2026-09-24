@@ -1,7 +1,8 @@
 import {
   mysqlTable, mysqlEnum, serial, varchar, text, timestamp, bigint, int,
-  boolean, index, uniqueIndex, foreignKey, json, decimal,
+  boolean, index, uniqueIndex, foreignKey, json, decimal, check,
 } from "drizzle-orm/mysql-core";
+import { sql } from "drizzle-orm";
 import {
   tenants, users, entidades, proveedores, supplierLegalEntities, licitaciones,
   participaciones, proposiciones, documentos, fallos,
@@ -253,7 +254,7 @@ export const procedureLots = mysqlTable("procedure_lots", {
   description: text("description"),
   status: mysqlEnum("lot_status", ["DRAFT", "ACTIVE", "CANCELLED", "AWARDED", "CLOSED"]).default("DRAFT").notNull(),
   estimatedAmount: decimal("estimated_amount", { precision: 18, scale: 2 }),
-  currency: mysqlEnum("lot_currency", ["MXN"]).default("MXN").notNull(),
+  currency: mysqlEnum("currency", ["MXN"]).default("MXN").notNull(),
   createdBy: bigint("created_by", { mode: "number", unsigned: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
@@ -283,6 +284,37 @@ export const procedureItems = mysqlTable("procedure_items", {
   foreignKey({ name: "procedure_item_lot_fk", columns: [t.tenantId, t.lotId], foreignColumns: [procedureLots.tenantId, procedureLots.id] }).onDelete("restrict"),
 ]);
 
+export const falloLotDecisions = mysqlTable("fallo_lot_decisions", {
+  id: serial("id").primaryKey(),
+  ...tenantColumns,
+  falloId: bigint("fallo_id", { mode: "number", unsigned: true }).notNull(),
+  licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  lotId: bigint("lot_id", { mode: "number", unsigned: true }).notNull(),
+  outcome: mysqlEnum("outcome", ["ADJUDICAR", "DESIERTO", "CANCELAR"]).notNull(),
+  participacionId: bigint("participacion_id", { mode: "number", unsigned: true }),
+  proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }),
+  amount: decimal("amount", { precision: 18, scale: 2 }),
+  currency: mysqlEnum("decision_currency", ["MXN"]).default("MXN").notNull(),
+  reason: text("reason").notNull(),
+  decidedBy: bigint("decided_by", { mode: "number", unsigned: true }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("fallo_lot_decision_tenant_id_uq").on(t.tenantId, t.id),
+  uniqueIndex("fallo_lot_decision_uq").on(t.tenantId, t.falloId, t.lotId),
+  index("fallo_lot_decision_lic_idx").on(t.tenantId, t.licitacionId, t.outcome),
+  foreignKey({ name: "fallo_lot_decision_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "fallo_lot_decision_fallo_fk", columns: [t.tenantId, t.falloId], foreignColumns: [fallos.tenantId, fallos.id] }).onDelete("restrict"),
+  foreignKey({ name: "fallo_lot_decision_lot_fk", columns: [t.tenantId, t.lotId], foreignColumns: [procedureLots.tenantId, procedureLots.id] }).onDelete("restrict"),
+  foreignKey({ name: "fallo_lot_decision_part_fk", columns: [t.tenantId, t.participacionId], foreignColumns: [participaciones.tenantId, participaciones.id] }).onDelete("restrict"),
+  foreignKey({ name: "fallo_lot_decision_provider_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
+  foreignKey({ name: "fallo_lot_decision_actor_fk", columns: [t.tenantId, t.decidedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
+  check("fallo_lot_decision_shape_ck", sql`(
+    (${t.outcome} = 'ADJUDICAR' AND ${t.participacionId} IS NOT NULL AND ${t.proveedorId} IS NOT NULL AND ${t.amount} IS NOT NULL AND ${t.amount} >= 0)
+    OR
+    (${t.outcome} IN ('DESIERTO','CANCELAR') AND ${t.participacionId} IS NULL AND ${t.proveedorId} IS NULL AND ${t.amount} IS NULL)
+  )`),
+]);
+
 export const awards = mysqlTable("awards", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
@@ -290,9 +322,10 @@ export const awards = mysqlTable("awards", {
   lotId: bigint("lot_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
   falloId: bigint("fallo_id", { mode: "number", unsigned: true }),
+  falloDecisionId: bigint("fallo_decision_id", { mode: "number", unsigned: true }),
   status: mysqlEnum("award_status", ["DRAFT", "APPROVED", "PUBLISHED", "CANCELLED"]).default("DRAFT").notNull(),
   amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
-  currency: mysqlEnum("award_currency", ["MXN"]).default("MXN").notNull(),
+  currency: mysqlEnum("currency", ["MXN"]).default("MXN").notNull(),
   reason: text("reason").notNull(),
   decidedBy: bigint("decided_by", { mode: "number", unsigned: true }).notNull(),
   approvedBy: bigint("approved_by", { mode: "number", unsigned: true }),
@@ -302,11 +335,13 @@ export const awards = mysqlTable("awards", {
 }, (t) => [
   uniqueIndex("award_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("award_lot_provider_uq").on(t.tenantId, t.lotId, t.proveedorId),
+  uniqueIndex("award_fallo_decision_uq").on(t.tenantId, t.falloDecisionId),
   index("award_lic_idx").on(t.tenantId, t.licitacionId, t.status),
   index("award_lot_idx").on(t.tenantId, t.lotId, t.status),
   foreignKey({ name: "award_lot_fk", columns: [t.tenantId, t.lotId], foreignColumns: [procedureLots.tenantId, procedureLots.id] }).onDelete("restrict"),
   foreignKey({ name: "award_provider_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
   foreignKey({ name: "award_fallo_fk", columns: [t.tenantId, t.falloId], foreignColumns: [fallos.tenantId, fallos.id] }).onDelete("restrict"),
+  foreignKey({ name: "award_fallo_decision_fk", columns: [t.tenantId, t.falloDecisionId], foreignColumns: [falloLotDecisions.tenantId, falloLotDecisions.id] }).onDelete("restrict"),
   foreignKey({ name: "award_decider_fk", columns: [t.tenantId, t.decidedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
   foreignKey({ name: "award_approver_fk", columns: [t.tenantId, t.approvedBy], foreignColumns: [users.tenantId, users.id] }).onDelete("restrict"),
 ]);

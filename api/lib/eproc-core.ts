@@ -152,3 +152,117 @@ export function validateAwardAllocation(input: {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Proveedor inválido." });
   }
 }
+
+export type FalloLotOutcome = "ADJUDICAR" | "DESIERTO" | "CANCELAR";
+
+type FalloLot = {
+  id: number;
+  procedureId: number;
+  status: string;
+};
+
+type FalloOffer = {
+  id: number;
+  procedureId: number;
+  lotId: number;
+  supplierId: number;
+  status: string;
+  amount: string | number;
+};
+
+type FalloLotDecisionInput = {
+  lotId: number;
+  outcome: FalloLotOutcome;
+  participationId?: number | null;
+  reason: string;
+};
+
+export type ResolvedFalloLotDecision = {
+  lotId: number;
+  outcome: FalloLotOutcome;
+  participationId: number | null;
+  supplierId: number | null;
+  amount: string | null;
+  reason: string;
+};
+
+/**
+ * Resolves the complete set of lot decisions without trusting supplier or amount
+ * supplied by the caller. Award facts always come from the evaluated offer.
+ */
+export function resolveFalloLotDecisions(input: {
+  procedureId: number;
+  lots: FalloLot[];
+  offers: FalloOffer[];
+  decisions: FalloLotDecisionInput[];
+}): ResolvedFalloLotDecision[] {
+  const activeLots = input.lots.filter((lot) => lot.status === "ACTIVE");
+  if (!activeLots.length) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El procedimiento no tiene lotes activos por resolver." });
+  }
+  if (activeLots.some((lot) => lot.procedureId !== input.procedureId)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Un lote pertenece a otro procedimiento." });
+  }
+
+  const decisionLotIds = input.decisions.map((decision) => decision.lotId);
+  if (new Set(decisionLotIds).size !== decisionLotIds.length) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Existe una decisión duplicada para el mismo lote." });
+  }
+  const activeLotIds = new Set(activeLots.map((lot) => lot.id));
+  if (
+    input.decisions.length !== activeLots.length ||
+    decisionLotIds.some((lotId) => !activeLotIds.has(lotId)) ||
+    activeLots.some((lot) => !decisionLotIds.includes(lot.id))
+  ) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "El fallo debe resolver todos los lotes activos exactamente una vez." });
+  }
+
+  return input.decisions.map((decision) => {
+    const reason = decision.reason.trim();
+    if (reason.length < 20) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `El fundamento del lote ${decision.lotId} es insuficiente.` });
+    }
+    if (decision.outcome !== "ADJUDICAR") {
+      if (decision.participationId != null) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `El lote ${decision.lotId} no adjudicado no puede señalar una oferta ganadora.` });
+      }
+      return {
+        lotId: decision.lotId,
+        outcome: decision.outcome,
+        participationId: null,
+        supplierId: null,
+        amount: null,
+        reason,
+      };
+    }
+
+    if (decision.participationId == null) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `La adjudicación del lote ${decision.lotId} requiere una oferta.` });
+    }
+    const offer = input.offers.find((candidate) => candidate.id === decision.participationId);
+    if (!offer) {
+      throw new TRPCError({ code: "NOT_FOUND", message: `La oferta ${decision.participationId} no existe.` });
+    }
+    if (offer.procedureId !== input.procedureId || offer.lotId !== decision.lotId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `La oferta ${offer.id} no pertenece al procedimiento y lote decididos.` });
+    }
+    if (offer.status !== "ADMISIBLE") {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: `La oferta ${offer.id} no es admisible.` });
+    }
+    validateAwardAllocation({
+      procedureId: input.procedureId,
+      lotId: decision.lotId,
+      supplierId: offer.supplierId,
+      amount: offer.amount,
+      lot: activeLots.find((lot) => lot.id === decision.lotId),
+    });
+    return {
+      lotId: decision.lotId,
+      outcome: decision.outcome,
+      participationId: offer.id,
+      supplierId: offer.supplierId,
+      amount: String(offer.amount),
+      reason,
+    };
+  });
+}

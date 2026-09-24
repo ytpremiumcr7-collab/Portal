@@ -55,7 +55,7 @@ export const documentosRouter = createRouter({
     const [items, totalRows] = await Promise.all([db.query.documentos.findMany({ where, orderBy: [desc(documentos.fechaSubida)], limit: pageSize, offset, with: { expediente: true, licitacion: true, proveedor: true, usuario: true } }), db.select({ total: count() }).from(documentos).where(where)]);
     const readable = await filterReadableDocuments(
       { id: ctx.user.id, tenantId: ctx.user.tenantId, role: ctx.user.role },
-      items as any[],
+      items,
     );
     // Preserve pagination total as pre-filter count for UX stability; items are authz-filtered.
     return pageResult(readable, Number(totalRows[0]?.total ?? 0), page, pageSize);
@@ -66,7 +66,7 @@ export const documentosRouter = createRouter({
     if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
     await authorizeDocumentRead(
       { id: ctx.user.id, tenantId: ctx.user.tenantId, role: ctx.user.role },
-      doc as any,
+      doc,
     );
     return doc;
   }),
@@ -75,6 +75,29 @@ export const documentosRouter = createRouter({
     const db = getDb();
     const expediente = await resolveExpediente(ctx.user.tenantId, input.expedienteId, input.licitacionId);
     if (expediente && input.licitacionId && expediente.licitacionId !== input.licitacionId) throw new TRPCError({ code: "BAD_REQUEST", message: "El expediente y la licitación indicada no corresponden al mismo aggregate." });
+    const licitacionId = input.licitacionId ?? expediente?.licitacionId ?? null;
+    if (input.tipo === "CONTRATO" && !input.lotId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "El documento contractual debe vincularse al lote adjudicado." });
+    }
+    if (input.lotId) {
+      if (!licitacionId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Un documento de lote requiere procedimiento." });
+      }
+      const lot = await db.query.procedureLots.findFirst({
+        where: and(
+          eq(procedureLots.tenantId, ctx.user.tenantId),
+          eq(procedureLots.id, input.lotId),
+          eq(procedureLots.licitacionId, licitacionId),
+        ),
+      });
+      if (!lot) throw new TRPCError({ code: "BAD_REQUEST", message: "El lote no existe o pertenece a otro procedimiento." });
+      if (isOfferTipo(input.tipo) && lot.status !== "ACTIVE") {
+        throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden vincularse a lotes activos." });
+      }
+      if (input.tipo === "CONTRATO" && lot.status !== "AWARDED") {
+        throw new TRPCError({ code: "CONFLICT", message: "El documento contractual requiere un lote adjudicado." });
+      }
+    }
     if (ctx.user.role === "proveedor") {
       if (!input.proveedorId) throw new TRPCError({ code: "BAD_REQUEST", message: "Un proveedor debe vincular cada documento a su expediente de proveedor." });
       const represented = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
@@ -88,20 +111,11 @@ export const documentosRouter = createRouter({
       if (!["OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA"].includes(input.tipo)) throw new TRPCError({ code: "FORBIDDEN", message: "El rol proveedor sólo puede cargar oferta técnica, oferta económica o garantía." });
       if (isOfferTipo(input.tipo)) {
         if (!input.lotId) throw new TRPCError({ code: "BAD_REQUEST", message: "OFERTA_* requiere lote." });
-        const lot = await db.query.procedureLots.findFirst({
-          where: and(
-            eq(procedureLots.tenantId, ctx.user.tenantId),
-            eq(procedureLots.id, input.lotId),
-            eq(procedureLots.licitacionId, input.licitacionId ?? expediente?.licitacionId ?? 0),
-            eq(procedureLots.status, "ACTIVE"),
-          ),
-        });
-        if (!lot) throw new TRPCError({ code: "BAD_REQUEST", message: "El lote no existe, no está activo o pertenece a otro procedimiento." });
       }
       await assertOfertaUploadAllowed({
         tenantId: ctx.user.tenantId,
         proveedorId: provider.id,
-        licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null,
+        licitacionId,
         lotId: input.lotId ?? null,
         tipo: input.tipo,
       });
@@ -143,13 +157,21 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
         const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, lotId: input.lotId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: detectedMime, mimeDetectado: detectedMime, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
         const id = Number(result[0].insertId);
         if (expediente) { await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: previous ? "NUEVA_VERSION_DOCUMENTAL" : "DOCUMENTO_AGREGADO", motivo: input.motivo ?? null, payload: { documentoId: id, tipo: input.tipo, version, sha256, previousVersionId: previous?.id ?? null } }); }
+        await writeAudit({
+          ctx: ctxForAudit(ctx),
+          accion: previous ? "NUEVA_VERSION" : "SUBIR",
+          entidad: "documentos",
+          entidadId: id,
+          valorNuevo: { documentoId: id, tipo: input.tipo, version, sha256, lotId: input.lotId ?? null, previousVersionId: previous?.id ?? null },
+          motivo: input.motivo,
+          tx,
+        });
         return id;
       });
       const created = await db.query.documentos.findFirst({ where: and(eq(documentos.id, createdId), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true, licitacion: true, proveedor: true, usuario: true } });
       if (expediente) await refreshRequirementStatuses(db, ctx.user.tenantId, expediente.id);
-      await writeAudit({ ctx: ctxForAudit(ctx), accion: previous ? "NUEVA_VERSION" : "SUBIR", entidad: "documentos", entidadId: created?.id, valorNuevo: created, motivo: input.motivo });
       return created;
-    } catch (error) { try { await unlink(fullPath); } catch {} throw error; }
+    } catch (error) { try { await unlink(fullPath); } catch { /* storage file was already absent */ } throw error; }
   }),
 
   cambiarEstado: capabilityQuery("aprobar_juridico").input(z.object({ id: z.number().int().positive(), estado: z.enum(["VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
@@ -164,10 +186,10 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
       if (current.expedienteId) {
         await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId!, tipo: "ESTADO_DOCUMENTAL", motivo: input.motivo, payload: { documentoId: current.id, from: current.estado, to: input.estado, version: current.version } });
       }
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "CAMBIAR_ESTADO", entidad: "documentos", entidadId: input.id, valorAnterior: current, valorNuevo: { ...current, ...data }, motivo: input.motivo, tx });
     });
     const updated = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true } });
     if (current.expedienteId) await refreshRequirementStatuses(db, ctx.user.tenantId, current.expedienteId);
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CAMBIAR_ESTADO", entidad: "documentos", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
     return updated;
   }),
 
@@ -175,9 +197,11 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
     const db = getDb(); const current = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
     if (current.expedienteId || current.estado === "APROBADO" || current.estado === "OBSOLETO") throw new TRPCError({ code: "CONFLICT", message: "Un documento de expediente no se elimina físicamente; debe sustituirse o quedar obsoleto para conservar evidencia." });
-    await db.delete(documentos).where(and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)));
-    try { await unlink(path.resolve(process.env.ARES_STORAGE_PATH || "./storage", current.storageKey)); } catch {}
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "documentos", entidadId: input.id, valorAnterior: current, motivo: input.motivo });
+    await db.transaction(async (tx) => {
+      await tx.delete(documentos).where(and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)));
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "documentos", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });
+    });
+    try { await unlink(path.resolve(process.env.ARES_STORAGE_PATH || "./storage", current.storageKey)); } catch { /* storage file was already absent */ }
     return { success: true };
   }),
 });

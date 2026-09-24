@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@/hooks/useAuth";
 import { trpc } from "@/providers/trpc";
@@ -21,8 +21,11 @@ export default function Documentos(){
   const [proveedorId,setProveedorId]=useState(params.get("proveedorId")??"");
   const [lotId,setLotId]=useState(params.get("lotId")??"");
   const types=useMemo(()=>user?.role==="proveedor"?providerTypes:allTypes,[user?.role]);
-  const [tipo,setTipo]=useState<typeof allTypes[number]>("CONVOCATORIA");
-  useEffect(()=>{if(user?.role==="proveedor")setTipo("OFERTA_TECNICA")},[user?.role]);
+  const requestedType=params.get("tipo");
+  const [tipo,setTipo]=useState<typeof allTypes[number]>(
+    allTypes.includes(requestedType as typeof allTypes[number]) ? requestedType as typeof allTypes[number] : "CONVOCATORIA",
+  );
+  const selectedType=user?.role==="proveedor"&&!providerTypes.includes(tipo as typeof providerTypes[number])?"OFERTA_TECNICA":tipo;
 
   const licIdNum=Number(licitacionId)||0;
   const docs=trpc.documentos.list.useQuery({
@@ -35,11 +38,16 @@ export default function Documentos(){
     {licitacionId:licIdNum},
     {enabled:user?.role==="proveedor"&&licIdNum>0},
   );
+  const procedureLots=trpc.lots.list.useQuery(
+    {licitacionId:licIdNum},
+    {enabled:user?.role!=="proveedor"&&licIdNum>0},
+  );
   const upload=trpc.documentos.upload.useMutation({onSuccess:()=>{setFile(null);docs.refetch();}});
   const aprobar=trpc.documentos.cambiarEstado.useMutation({onSuccess:()=>docs.refetch()});
   const remove=trpc.documentos.delete.useMutation({onSuccess:()=>docs.refetch()});
 
-  const needsLot=user?.role==="proveedor"&&offerTypes.has(tipo);
+  const needsLot=offerTypes.has(selectedType)||selectedType==="CONTRATO";
+  const availableLots=user?.role==="proveedor"?(context.data?.lots??[]):(procedureLots.data??[]);
   const submit=async()=>{
     if(!file||!licitacionId)return;
     if(user?.role==="proveedor"&&!proveedorId)return;
@@ -51,7 +59,7 @@ export default function Documentos(){
       licitacionId:Number(licitacionId),
       lotId:lotId?Number(lotId):undefined,
       proveedorId:user?.role==="proveedor"?Number(proveedorId):undefined,
-      tipo,nombreArchivo:file.name,mimeType:file.type||"application/octet-stream",
+      tipo:selectedType,nombreArchivo:file.name,mimeType:file.type||"application/octet-stream",
       contentBase64:base64,esPublico:user?.role!=="proveedor",
     });
   };
@@ -64,20 +72,20 @@ export default function Documentos(){
         {user?.role==="proveedor"&&<div>
           <Label className="text-xs">Organización representada</Label>
           <Select value={proveedorId} onValueChange={setProveedorId}><SelectTrigger><SelectValue placeholder="Organización" /></SelectTrigger><SelectContent>
-            {(reps.data??[]).map((p:any)=><SelectItem key={p.id} value={String(p.id)}>{p.razonSocial}</SelectItem>)}
+            {(reps.data??[]).map((p)=><SelectItem key={p.id} value={String(p.id)}>{p.razonSocial}</SelectItem>)}
           </SelectContent></Select>
         </div>}
-        <div><Label className="text-xs">Tipo</Label><Select value={tipo} onValueChange={v=>setTipo(v as any)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{types.map(t=><SelectItem key={t} value={t}>{t.replaceAll("_"," ")}</SelectItem>)}</SelectContent></Select></div>
-        {user?.role==="proveedor"&&needsLot&&<div>
+        <div><Label className="text-xs">Tipo</Label><Select value={selectedType} onValueChange={v=>setTipo(v as typeof allTypes[number])}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{types.map(t=><SelectItem key={t} value={t}>{t.replaceAll("_"," ")}</SelectItem>)}</SelectContent></Select></div>
+        {needsLot&&<div>
           <Label className="text-xs">Lote</Label>
           <Select value={lotId} onValueChange={setLotId}><SelectTrigger><SelectValue placeholder="Lote" /></SelectTrigger><SelectContent>
-            {(context.data?.lots??[]).map((l:any)=><SelectItem key={l.id} value={String(l.id)}>{l.code} · {l.title}</SelectItem>)}
+            {availableLots.map((l)=><SelectItem key={l.id} value={String(l.id)}>{l.code} · {l.title}</SelectItem>)}
           </SelectContent></Select>
         </div>}
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <Input type="file" onChange={e=>setFile(e.target.files?.[0]??null)} className="max-w-md" />
-        <Button onClick={submit} disabled={!file||!licitacionId||upload.isPending||(user?.role==="proveedor"&&(!proveedorId||(needsLot&&!lotId)))}>
+        <Button onClick={submit} disabled={!file||!licitacionId||upload.isPending||(needsLot&&!lotId)||(user?.role==="proveedor"&&!proveedorId)}>
           {upload.isPending?"Subiendo…":"Subir documento"}
         </Button>
       </div>
@@ -86,7 +94,7 @@ export default function Documentos(){
 
     <section className="ares-panel overflow-x-auto">
       <table className="ares-table"><thead><tr><th>Archivo</th><th>Tipo</th><th>Lote</th><th>Estado</th><th className="text-right">Acciones</th></tr></thead>
-        <tbody>{(docs.data?.items??[]).map((d:any)=><tr key={d.id}>
+        <tbody>{(docs.data?.items??[]).map((d)=><tr key={d.id}>
           <td>{d.nombreArchivo}</td><td>{d.tipo}</td><td>{d.lotId??"—"}</td><td>{d.estado}</td>
           <td className="space-x-2 text-right">
             <a className="text-sm underline" href={`/api/documents/${d.id}/download`}>Descargar</a>

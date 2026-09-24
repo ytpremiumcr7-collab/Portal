@@ -705,8 +705,8 @@ export const contratos = mysqlTable("contratos", {
 }, (t) => [
   uniqueIndex("contratos_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("contratos_tenant_folio_uq").on(t.tenantId, t.folio),
-  uniqueIndex("contratos_tenant_lic_uq").on(t.tenantId, t.licitacionId),
-  index("contratos_award_idx").on(t.tenantId, t.awardId),
+  uniqueIndex("contratos_tenant_award_uq").on(t.tenantId, t.awardId),
+  index("contratos_licitacion_idx").on(t.tenantId, t.licitacionId),
   index("contratos_tenant_estado_idx").on(t.tenantId, t.estado),
   foreignKey({ name: "contratos_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
   foreignKey({ name: "contratos_exp_fk", columns: [t.tenantId, t.expedienteId, t.licitacionId], foreignColumns: [expedientes.tenantId, expedientes.id, expedientes.licitacionId] }).onDelete("restrict"),
@@ -1488,6 +1488,7 @@ export const catalogoCucop = mysqlTable("catalogo_cucop", {
   uniqueIndex("cucop_codigo_uq").on(t.codigo),
 ]);
 
+/** Legacy archive only. Active adjudication is fallo_lot_decisions -> awards; no router writes this table. */
 export const actoAdjudicacion = mysqlTable("acto_adjudicacion", {
   id: serial("id").primaryKey(),
   ...tenantColumns,

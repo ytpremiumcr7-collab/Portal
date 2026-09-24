@@ -33,4 +33,30 @@ describe("0017 P1 close-out gates", () => {
       ),
     ).toThrow(/licitación/i);
   });
+
+  it("documento binding requires the exact awarded lot when the context is lot-scoped", () => {
+    const contractDocument = {
+      tenantId: 1,
+      tipo: "CONTRATO",
+      estado: "APROBADO",
+      esVersionVigente: true,
+      licitacionId: 9,
+      expedienteId: 1,
+      lotId: 20,
+    };
+    expect(() => assertDocumentoBoundToContext(contractDocument, {
+      tenantId: 1,
+      expectedTipo: "CONTRATO",
+      licitacionId: 9,
+      expedienteId: 1,
+      lotId: 21,
+    })).toThrow(/lote adjudicado/i);
+    expect(() => assertDocumentoBoundToContext(contractDocument, {
+      tenantId: 1,
+      expectedTipo: "CONTRATO",
+      licitacionId: 9,
+      expedienteId: 1,
+      lotId: 20,
+    })).not.toThrow();
+  });
 });

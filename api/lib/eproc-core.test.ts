@@ -4,6 +4,7 @@ import {
   assertWorkTaskTransition,
   hashSubmissionReceipt,
   validateAwardAllocation,
+  resolveFalloLotDecisions,
 } from "./eproc-core";
 
 describe("institutional authority", () => {
@@ -163,5 +164,71 @@ describe("lot and award allocation", () => {
       amount: "-1.00",
       lot: { id: 2, procedureId: 100, status: "ACTIVE" },
     })).toThrow(/monto/i);
+  });
+
+  it("resolves every active lot exactly once and derives award data from the admissible offer", () => {
+    const resolved = resolveFalloLotDecisions({
+      procedureId: 100,
+      lots: [
+        { id: 2, procedureId: 100, status: "ACTIVE" },
+        { id: 3, procedureId: 100, status: "ACTIVE" },
+      ],
+      offers: [{
+        id: 20,
+        procedureId: 100,
+        lotId: 2,
+        supplierId: 9,
+        status: "ADMISIBLE",
+        amount: "125000.00",
+      }],
+      decisions: [
+        { lotId: 2, outcome: "ADJUDICAR", participationId: 20, reason: "Oferta solvente con mejor resultado por lote." },
+        { lotId: 3, outcome: "DESIERTO", reason: "No se recibieron ofertas solventes para este lote." },
+      ],
+    });
+
+    expect(resolved).toEqual([
+      expect.objectContaining({ lotId: 2, supplierId: 9, participationId: 20, amount: "125000.00" }),
+      expect.objectContaining({ lotId: 3, supplierId: null, participationId: null, amount: null }),
+    ]);
+  });
+
+  it("rejects missing/duplicate lot decisions and cross-lot offers", () => {
+    const base = {
+      procedureId: 100,
+      lots: [
+        { id: 2, procedureId: 100, status: "ACTIVE" },
+        { id: 3, procedureId: 100, status: "ACTIVE" },
+      ],
+      offers: [{
+        id: 20,
+        procedureId: 100,
+        lotId: 2,
+        supplierId: 9,
+        status: "ADMISIBLE",
+        amount: "125000.00",
+      }],
+    };
+
+    expect(() => resolveFalloLotDecisions({
+      ...base,
+      decisions: [{ lotId: 2, outcome: "DESIERTO" as const, reason: "Sin oferta solvente para el lote." }],
+    })).toThrow(/todos los lotes activos/i);
+
+    expect(() => resolveFalloLotDecisions({
+      ...base,
+      decisions: [
+        { lotId: 2, outcome: "DESIERTO" as const, reason: "Sin oferta solvente para el lote." },
+        { lotId: 2, outcome: "CANCELAR" as const, reason: "Cancelación debidamente fundada del lote." },
+      ],
+    })).toThrow(/duplicada/i);
+
+    expect(() => resolveFalloLotDecisions({
+      ...base,
+      decisions: [
+        { lotId: 3, outcome: "ADJUDICAR" as const, participationId: 20, reason: "Decisión deliberadamente inválida entre lotes." },
+        { lotId: 2, outcome: "DESIERTO" as const, reason: "Sin oferta solvente para el lote." },
+      ],
+    })).toThrow(/lote/i);
   });
 });

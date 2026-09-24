@@ -21,9 +21,6 @@ export default function LicitacionDetalle() {
     onSuccess: () => utils.licitaciones.getById.invalidate({ id: licId }),
   });
   const detect = trpc.alertas.detectar.useMutation();
-  const adjudicate = trpc.licitaciones.adjudicar.useMutation({
-    onSuccess: () => utils.licitaciones.getById.invalidate({ id: licId }),
-  });
 
   const formatCurrency = (value: string | null) => {
     if (!value) return "$0";
@@ -239,7 +236,7 @@ export default function LicitacionDetalle() {
         </Card>
       </div>
 
-      {lic.proveedorGanador && (
+      {lic.awards.length > 0 && (
         <Card className="border-slate-700/80 border-l-2 border-l-violet-600 bg-slate-900/70 shadow-none">
           <CardHeader className="border-b border-slate-800 px-4 py-3 sm:px-5">
             <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-100">
@@ -247,23 +244,15 @@ export default function LicitacionDetalle() {
               Adjudicación
             </CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-3 sm:px-5">
-            <div>
-              <p className="text-xs text-slate-500">Ganador</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-50">
-                {lic.proveedorGanador.razonSocial}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Monto adjudicado</p>
-              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-50">
-                {formatCurrency(lic.montoAdjudicado)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Fecha</p>
-              <p className="mt-0.5 text-sm text-slate-100">{formatDate(lic.fechaAdjudicacion)}</p>
-            </div>
+          <CardContent className="divide-y divide-slate-800 p-0">
+            {lic.awards.map((award) => (
+              <div key={award.id} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-4 sm:px-5">
+                <div><p className="text-xs text-slate-500">Lote</p><p className="text-sm text-slate-100">{award.lotCode} · {award.lotTitle}</p></div>
+                <div><p className="text-xs text-slate-500">Proveedor</p><p className="text-sm font-semibold text-slate-50">{award.proveedor}</p></div>
+                <div><p className="text-xs text-slate-500">Monto</p><p className="text-sm font-semibold tabular-nums text-slate-50">{formatCurrency(award.amount)}</p></div>
+                <div><p className="text-xs text-slate-500">Estado</p><p className="text-sm text-slate-100">{award.status}</p></div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}
@@ -358,52 +347,6 @@ export default function LicitacionDetalle() {
         </CardContent>
       </Card>
 
-      {lic.estado === "EN_EVALUACION" &&
-        (() => {
-          const winner = (lic.participaciones || [])
-            .filter((p: any) => p.estadoEvaluacion === "ADMISIBLE")
-            .sort(
-              (a: any, b: any) => Number(b.puntajeTotal || 0) - Number(a.puntajeTotal || 0),
-            )[0];
-          return winner ? (
-            <Card className="border-slate-700/80 bg-slate-900/70 shadow-none">
-              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4 sm:px-5">
-                <div>
-                  <p className="text-xs text-slate-500">Primer lugar por puntaje total</p>
-                  <p className="text-sm font-semibold text-slate-50">
-                    {winner.proveedor?.razonSocial} · {winner.puntajeTotal}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Monto ofertado: {formatCurrency(winner.montoOferta)}
-                  </p>
-                </div>
-                <Button
-                  className="ares-cta"
-                  onClick={() => {
-                    const motivo = window.prompt("Motivo de adjudicación (obligatorio)");
-                    if (!motivo) return;
-                    if (
-                      !window.confirm(
-                        `¿Confirma adjudicar a ${winner.proveedor?.razonSocial}? Esta acción es irreversible en el flujo normal.`,
-                      )
-                    ) {
-                      return;
-                    }
-                    adjudicate.mutate({
-                      id: lic.id,
-                      proveedorGanadorId: winner.proveedorId,
-                      montoAdjudicado: String(winner.montoOferta),
-                      motivo,
-                    });
-                  }}
-                  disabled={adjudicate.isPending}
-                >
-                  Adjudicar
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null;
-        })()}
     </div>
   );
 }

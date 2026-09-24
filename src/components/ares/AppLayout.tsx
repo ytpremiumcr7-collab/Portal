@@ -94,7 +94,6 @@ const navGroups: NavGroup[] = [
       { path: "/dictamenes", label: "Evaluación / dictamen", icon: Scale, roles: ["admin", "licitante"] },
       { path: "/fallos", label: "Fallo", icon: Gavel, roles: ["admin", "licitante"] },
       { path: "/desempate", label: "Desempate", icon: Dices, roles: ["admin", "licitante"] },
-      { path: "/acto-adjudicacion", label: "Acto de adjudicación", icon: Gavel, roles: ["admin", "licitante"] },
       { path: "/comision", label: "Comisión / COI", icon: Users, roles: ["admin", "licitante"] },
       { path: "/terminacion", label: "Cancelación / desierto", icon: Ban, roles: ["admin", "licitante"] },
       { path: "/calendario", label: "Calendario jurídico", icon: ClipboardList, roles: ["admin", "licitante"] },

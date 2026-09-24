@@ -42,7 +42,6 @@ import BuscadorPublico from "@/pages/BuscadorPublico";
 import Oportunidades from "@/pages/Oportunidades";
 import MisProposiciones from "@/pages/MisProposiciones";
 import PresentarPropuesta from "@/pages/PresentarPropuesta";
-import ActoAdjudicacion from "@/pages/ActoAdjudicacion";
 import Comision from "@/pages/Comision";
 import Terminacion from "@/pages/Terminacion";
 import Calendario from "@/pages/Calendario";
@@ -94,7 +93,6 @@ export default function App() {
             <Route path="/aperturas" element={<RoleGate roles={["admin","licitante"]}><Aperturas /></RoleGate>} />
             <Route path="/dictamenes" element={<RoleGate roles={["admin","licitante"]}><Dictamenes /></RoleGate>} />
             <Route path="/fallos" element={<RoleGate roles={["admin","licitante"]}><Fallos /></RoleGate>} />
-            <Route path="/acto-adjudicacion" element={<RoleGate roles={["admin","licitante"]}><ActoAdjudicacion /></RoleGate>} />
             <Route path="/comision" element={<RoleGate roles={["admin","licitante"]}><Comision /></RoleGate>} />
             <Route path="/terminacion" element={<RoleGate roles={["admin","licitante"]}><Terminacion /></RoleGate>} />
             <Route path="/calendario" element={<RoleGate roles={["admin","licitante"]}><Calendario /></RoleGate>} />
