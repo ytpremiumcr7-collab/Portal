@@ -27,7 +27,7 @@ import { ciphertextHash } from "../lib/envelope-crypto";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { licitacionIdFromParticipacion } from "../lib/procedure-resolvers";
 import { moneyGt } from "../lib/money";
-import { procedureLots, submissionReceipts } from "@db/schema-eproc";
+import { procedureLots } from "@db/schema-eproc";
 import { resolveSupplierActor, resolveSupplierActorInTx, supplierProviderIdsForUser } from "../lib/supplier-authority";
 import { createSubmissionReceipt } from "../lib/submission-receipt";
 
