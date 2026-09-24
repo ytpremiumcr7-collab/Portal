@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq, like } from "drizzle-orm";
+import { and, count, desc, eq, inArray, like } from "drizzle-orm";
 import { createRouter, adminQuery, authedQuery, ctxForAudit } from "../middleware";
 import { getDb } from "../queries/connection";
 import { proveedores, users, supplierLegalEntities } from "@db/schema";
@@ -7,6 +7,8 @@ import { TRPCError } from "@trpc/server";
 import { pageInput, pageResult } from "../lib/pagination";
 import { writeAudit } from "../lib/security";
 import { findOrCreateLegalEntity, normalizeRfc } from "../lib/supplier-legal-entity";
+import { supplierAuthorities, supplierMemberships } from "@db/schema-eproc";
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
 
 const rfcMx = z.string().trim().toUpperCase().regex(/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3}$/i, "RFC mexicano inválido.");
 
@@ -21,7 +23,11 @@ export const proveedoresRouter = createRouter({
   }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
     const c = [eq(proveedores.tenantId, ctx.user.tenantId)];
-    if (ctx.user.role === "proveedor") c.push(eq(proveedores.usuarioId, ctx.user.id));
+    if (ctx.user.role === "proveedor") {
+      const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!ids.length) return pageResult([], 0, page, pageSize);
+      c.push(inArray(proveedores.id, ids));
+    }
     if (input?.search) c.push(like(proveedores.razonSocial, `%${input.search}%`));
     if (input?.tipo) c.push(eq(proveedores.tipoProveedor, input.tipo));
     if (input?.rubro) c.push(like(proveedores.rubroPrincipal, `%${input.rubro}%`));
@@ -41,8 +47,11 @@ export const proveedoresRouter = createRouter({
       where: and(eq(proveedores.id, input.id), eq(proveedores.tenantId, ctx.user.tenantId)),
     });
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Proveedor no encontrado." });
-    if (ctx.user.role === "proveedor" && item.usuarioId !== ctx.user.id) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "No puede consultar otro proveedor." });
+    if (ctx.user.role === "proveedor") {
+      const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!ids.includes(item.id)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No representa a esta organización proveedora." });
+      }
     }
     let legalEntity = null;
     if (item.legalEntityId) {
@@ -101,6 +110,26 @@ export const proveedoresRouter = createRouter({
         activo: true,
       });
       id = Number(result[0].insertId);
+      if (input.usuarioId) {
+        await tx.insert(supplierMemberships).values({
+          tenantId: ctx.user.tenantId,
+          proveedorId: id,
+          userId: input.usuarioId,
+          role: "OWNER",
+          active: true,
+          createdBy: ctx.user.id,
+        });
+        await tx.insert(supplierAuthorities).values({
+          tenantId: ctx.user.tenantId,
+          proveedorId: id,
+          userId: input.usuarioId,
+          authorityType: "PROCUREMENT",
+          authoritySource: "ADMIN_GRANTED",
+          scope: { actions: ["SUBMIT", "WITHDRAW"] },
+          active: true,
+          createdBy: ctx.user.id,
+        });
+      }
     });
 
     const created = await db.query.proveedores.findFirst({
@@ -108,6 +137,103 @@ export const proveedoresRouter = createRouter({
     });
     await writeAudit({ ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "proveedores", entidadId: id, valorNuevo: created });
     return created;
+  }),
+
+  myRepresentations: authedQuery.query(async ({ ctx }) => {
+    const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+    if (!ids.length) return [];
+    return getDb().query.proveedores.findMany({
+      where: and(
+        eq(proveedores.tenantId, ctx.user.tenantId),
+        inArray(proveedores.id, ids),
+        eq(proveedores.activo, true),
+      ),
+      orderBy: [desc(proveedores.razonSocial)],
+    });
+  }),
+
+  addMember: adminQuery.input(z.object({
+    proveedorId: z.number().int().positive(),
+    userId: z.number().int().positive(),
+    role: z.enum(["OWNER","REPRESENTATIVE","PREPARER","SIGNER","ADMIN"]),
+    motivo: z.string().trim().min(3),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const [provider, user] = await Promise.all([
+      db.query.proveedores.findFirst({
+        where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.activo, true)),
+      }),
+      db.query.users.findFirst({
+        where: and(eq(users.tenantId, ctx.user.tenantId), eq(users.id, input.userId), eq(users.activo, true), eq(users.role, "proveedor")),
+      }),
+    ]);
+    if (!provider || !user) throw new TRPCError({ code: "BAD_REQUEST", message: "Proveedor o usuario inválido." });
+    let id = 0;
+    await db.transaction(async (tx) => {
+      const result = await tx.insert(supplierMemberships).values({
+        tenantId: ctx.user.tenantId, proveedorId: input.proveedorId, userId: input.userId,
+        role: input.role, active: true, createdBy: ctx.user.id,
+      });
+      id = Number(result[0].insertId);
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "ASIGNAR_MIEMBRO_PROVEEDOR",
+        entidad: "supplier_memberships", entidadId: id, valorNuevo: input, motivo: input.motivo, tx,
+      });
+    });
+    return { id };
+  }),
+
+  grantAuthority: adminQuery.input(z.object({
+    proveedorId: z.number().int().positive(),
+    userId: z.number().int().positive(),
+    authorityType: z.enum(["LEGAL_REPRESENTATIVE","POWER_OF_ATTORNEY","SIGNATURE","PROCUREMENT"]),
+    documentId: z.number().int().positive().optional(),
+    procedureIds: z.array(z.number().int().positive()).optional(),
+    lotIds: z.array(z.number().int().positive()).optional(),
+    actions: z.array(z.enum(["SUBMIT","WITHDRAW"])).min(1),
+    validUntil: z.string().datetime().optional(),
+    motivo: z.string().trim().min(10),
+  })).mutation(async ({ input, ctx }) => {
+    const db = getDb();
+    const membership = await db.query.supplierMemberships.findFirst({
+      where: and(
+        eq(supplierMemberships.tenantId, ctx.user.tenantId),
+        eq(supplierMemberships.proveedorId, input.proveedorId),
+        eq(supplierMemberships.userId, input.userId),
+        eq(supplierMemberships.active, true),
+      ),
+    });
+    if (!membership) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "El usuario debe tener membresía activa en la organización proveedora." });
+    }
+    if (["POWER_OF_ATTORNEY","SIGNATURE"].includes(input.authorityType) && !input.documentId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "El poder/firma requiere documento probatorio." });
+    }
+    let id = 0;
+    await db.transaction(async (tx) => {
+      const result = await tx.insert(supplierAuthorities).values({
+        tenantId: ctx.user.tenantId,
+        proveedorId: input.proveedorId,
+        userId: input.userId,
+        authorityType: input.authorityType,
+        authoritySource: input.documentId ? "VERIFIED_DOCUMENT" : "ADMIN_GRANTED",
+        scope: {
+          procedureIds: input.procedureIds ?? null,
+          lotIds: input.lotIds ?? null,
+          actions: input.actions,
+        },
+        documentId: input.documentId ?? null,
+        active: true,
+        validUntil: input.validUntil ? new Date(input.validUntil) : null,
+        createdBy: ctx.user.id,
+      });
+      id = Number(result[0].insertId);
+      await writeAudit({
+        ctx: ctxForAudit(ctx), accion: "OTORGAR_AUTORIDAD_PROVEEDOR",
+        entidad: "supplier_authorities", entidadId: id, valorNuevo: input, motivo: input.motivo, tx,
+      });
+    });
+    return { id };
   }),
 
   update: adminQuery.input(z.object({

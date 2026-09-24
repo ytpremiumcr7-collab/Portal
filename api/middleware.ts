@@ -7,6 +7,7 @@ import {
   assertProcedimientoAsignacion,
   type ProcedimientoRole,
 } from "./lib/sod";
+import { assertInstitutionalProcedureAuthority } from "./lib/institutional-authority";
 
 const t = initTRPC.context<TrpcContext>().create({ transformer: superjson });
 export const createRouter = t.router;
@@ -116,6 +117,7 @@ export function procedureMutation(opts: ProcedureMutationOpts) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "No se pudo resolver licitacionId para autoridad de procedimiento." });
       }
       await assertProcedimientoAsignacion(ctx.user, licitacionId, roles);
+      await assertInstitutionalProcedureAuthority(ctx.user, licitacionId, roles);
     }
 
     if (opts.checkCompatibility) {

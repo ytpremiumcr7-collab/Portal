@@ -21,6 +21,7 @@ export default function NuevaLicitacion() {
     objeto: "",
     descripcionDetallada: "",
     entidadId: "",
+    contractingUnitId: "",
     categoriaId: "",
     tipoLicitacion: "LICITACION_PUBLICA" as const,
     tipoContratacion: "OBRA" as const,
@@ -36,6 +37,12 @@ export default function NuevaLicitacion() {
     rubricaTecnica: "",
   });
 
+  const entidadIdNum = Number(form.entidadId) || 0;
+  const { data: contractingUnits = [], isLoading: unitsLoading } = trpc.institutional.units.useQuery(
+    { entidadId: entidadIdNum },
+    { enabled: entidadIdNum > 0 },
+  );
+
   const createMutation = trpc.licitaciones.create.useMutation({
     onSuccess: () => {
       utils.licitaciones.list.invalidate();
@@ -50,6 +57,7 @@ export default function NuevaLicitacion() {
       objeto: form.objeto,
       descripcionDetallada: form.descripcionDetallada || undefined,
       entidadId: parseInt(form.entidadId),
+      contractingUnitId: parseInt(form.contractingUnitId),
       categoriaId: parseInt(form.categoriaId),
       tipoLicitacion: form.tipoLicitacion,
       tipoContratacion: form.tipoContratacion,
@@ -112,7 +120,10 @@ export default function NuevaLicitacion() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label className="text-slate-300">Entidad *</Label>
-                <Select value={form.entidadId} onValueChange={(v) => setForm({ ...form, entidadId: v })}>
+                <Select
+                  value={form.entidadId}
+                  onValueChange={(v) => setForm({ ...form, entidadId: v, contractingUnitId: "" })}
+                >
                   <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
                     <SelectValue placeholder="Seleccionar entidad" />
                   </SelectTrigger>
@@ -122,6 +133,34 @@ export default function NuevaLicitacion() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div>
+                <Label className="text-slate-300">Unidad compradora *</Label>
+                <Select
+                  value={form.contractingUnitId}
+                  onValueChange={(v) => setForm({ ...form, contractingUnitId: v })}
+                  disabled={!entidadIdNum || unitsLoading}
+                >
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                    <SelectValue placeholder={unitsLoading ? "Cargando unidades…" : "Seleccionar unidad"} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-700 border-slate-600">
+                    {contractingUnits
+                      .filter((u: any) => u.unitType === "UNIDAD_COMPRADORA")
+                      .map((u: any) => (
+                        <SelectItem key={u.id} value={String(u.id)} className="text-white">
+                          {u.code} · {u.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {entidadIdNum > 0 && !unitsLoading && !contractingUnits.some((u: any) => u.unitType === "UNIDAD_COMPRADORA") && (
+                  <p className="mt-1 text-xs text-amber-300">
+                    Esta entidad no tiene unidad compradora activa.{" "}
+                    <Link className="underline" to="/organizacion">Configurar organización</Link>
+                  </p>
+                )}
               </div>
 
               <div>
@@ -220,7 +259,7 @@ export default function NuevaLicitacion() {
               <Button
                 type="submit"
                 className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                disabled={createMutation.isPending}
+                disabled={createMutation.isPending || !form.entidadId || !form.contractingUnitId || !form.categoriaId}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 {createMutation.isPending ? "Creando..." : "Crear Licitacion"}

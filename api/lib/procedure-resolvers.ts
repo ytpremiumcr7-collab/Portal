@@ -14,10 +14,10 @@ import {
   finiquitos,
   dictamenes,
   fallos,
-  actoAdjudicacion,
   participaciones,
   expedientes,
 } from "@db/schema";
+import { awards } from "@db/schema-eproc";
 
 type IdInput = { id?: number; licitacionId?: number; contratoId?: number; dictamenId?: number };
 
@@ -56,6 +56,16 @@ export async function licitacionIdFromContrato(input: unknown, tenantId: number)
     columns: { licitacionId: true },
   });
   if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Contrato no encontrado." });
+  return row.licitacionId;
+}
+
+export async function licitacionIdFromAward(input: unknown, tenantId: number): Promise<number> {
+  const awardId = Number((input as { awardId?: number }).awardId);
+  const row = await getDb().query.awards.findFirst({
+    where: and(eq(awards.id, awardId), eq(awards.tenantId, tenantId)),
+    columns: { licitacionId: true },
+  });
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Adjudicación no encontrada." });
   return row.licitacionId;
 }
 
@@ -117,18 +127,6 @@ export async function licitacionIdFromFallo(input: unknown, tenantId: number): P
     columns: { licitacionId: true },
   });
   if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Fallo no encontrado." });
-  return row.licitacionId;
-}
-
-export async function licitacionIdFromActoAdjudicacion(input: unknown, tenantId: number): Promise<number> {
-  const i = input as IdInput;
-  if (i.licitacionId) return Number(i.licitacionId);
-  const id = Number(i.id);
-  const row = await getDb().query.actoAdjudicacion.findFirst({
-    where: and(eq(actoAdjudicacion.id, id), eq(actoAdjudicacion.tenantId, tenantId)),
-    columns: { licitacionId: true },
-  });
-  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Acto de adjudicación no encontrado." });
   return row.licitacionId;
 }
 
@@ -223,4 +221,3 @@ export async function licitacionIdFromDialogoRonda(input: unknown, tenantId: num
   if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Ronda de diálogo no encontrada." });
   return row.licitacionId;
 }
-

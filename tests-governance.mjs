@@ -35,7 +35,10 @@ if (!schema.includes('deletedAt') && !schema.includes('deleted_at')) throw new E
 if (!schema.includes('"DICTAMEN"') && !schema.includes("'DICTAMEN'")) throw new Error('Licitacion etapa DICTAMEN missing');
 if (!schema.includes('"FALLO"') && !schema.includes("'FALLO'")) throw new Error('Licitacion etapa FALLO missing');
 const licRouter = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
-if (!licRouter.includes("assertAdjudicacionRequiresFallo")) throw new Error("Adjudicación no exige dictamen+fallo");
+const falloSource = fs.readFileSync("api/routers/fallos.ts", "utf8");
+if (!falloSource.includes('eq(dictamenes.estado, "APROBADO")') || !falloSource.includes("tx.insert(awards)")) {
+  throw new Error("Las adjudicaciones por lote deben exigir dictamen aprobado y nacer dentro del fallo");
+}
 if (!licRouter.includes("assertEvaluacionRequiresApertura")) throw new Error("Evaluación no exige apertura gobernada");
 const mig = fs.readFileSync("db/migrations/0003_phase2_dominios_transaccionales.sql", "utf8");
 if (!mig.includes("ON DELETE RESTRICT")) throw new Error("Phase 2 migration missing RESTRICT on evidence FKs");
@@ -82,8 +85,8 @@ const mw = fs.readFileSync("api/middleware.ts", "utf8");
 if (!mw.includes("capabilityQuery") && !mw.includes("requireCaps")) throw new Error("Capability middleware missing");
 const part = fs.readFileSync("api/routers/participaciones.ts", "utf8");
 if (!part.includes("assertProveedorPuedeParticipar")) throw new Error("Participación no bloquea impedidos");
-const lic3 = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
-if (!lic3.includes("assertProveedorPuedeAdjudicarse")) throw new Error("Adjudicación no bloquea impedidos");
+const fallo3 = fs.readFileSync("api/routers/fallos.ts", "utf8");
+if (!fallo3.includes("assertProveedorPuedeAdjudicarse")) throw new Error("Fallo por lote no bloquea proveedores impedidos");
 const pub = fs.readFileSync("api/routers/consultaPublica.ts", "utf8");
 if (!pub.includes("publicQuery")) throw new Error("Consulta pública must use publicQuery");
 if (/publicQuery[\s\S]*\.mutation/.test(pub)) throw new Error("Consulta pública must not expose mutations");
@@ -159,8 +162,8 @@ if (part2.includes("capabilityQuery(\"evaluar_tecnico\)") || part2.includes("cap
   throw new Error("participaciones.evaluar must not use bare capabilityQuery");
 }
 const licPub = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
-if (!licPub.includes("licitacionReglasVersion") || !licPub.includes("assertIsPrimerLugar")) {
-  throw new Error("publish/adjudicar must freeze rules and use criterion engine");
+if (!licPub.includes("licitacionReglasVersion") || !fallo3.includes("assertIsPrimerLugar")) {
+  throw new Error("publish/fallo must freeze rules and use criterion engine");
 }
 const sodR = fs.readFileSync("api/routers/sod.ts", "utf8");
 if (!sodR.includes('for("update")')) throw new Error("sod.asignar must lock with FOR UPDATE");
@@ -193,7 +196,7 @@ if (!archDef.includes("Deferred") || !archDef.includes("OCDS") || !archDef.inclu
 }
 
 // Governmental portal harden
-for (const name of ["actoAdjudicacion", "comision", "terminacion", "calendario", "cucop"]) {
+for (const name of ["comision", "terminacion", "calendario", "cucop"]) {
   if (!routerIndex.includes(`from "./routers/${name}"`) && !routerIndex.includes(`${name}Router`)) {
     throw new Error(`Gov router not registered: ${name}`);
   }
@@ -208,7 +211,10 @@ if (!outbox.includes("affected === 0") && !outbox.includes("affectedRows === 0")
 if (!outbox.includes("CONTRATO_RESCINDIDO")) throw new Error("outbox must know CONTRATO_RESCINDIDO");
 const pubPolicy = fs.readFileSync("api/routers/licitaciones.ts", "utf8");
 if (!pubPolicy.includes("resolvePolicyForPublish")) throw new Error("publish must resolve policy by regime+modalidad");
-if (!pubPolicy.includes("actoAdjudicacion") && !pubPolicy.includes("actoAdj")) throw new Error("adjudicar must require acto_adjudicacion");
+if (/\n\s*adjudicar:\s*procedureMutation/.test(pubPolicy)) throw new Error("legacy single-winner adjudication writer must be retired");
+if (!falloSource.includes("falloLotDecisions") || !falloSource.includes("AWARD_PUBLISHED")) {
+  throw new Error("fallo publication must resolve lots and publish canonical awards");
+}
 const css = fs.readFileSync("src/index.css", "utf8");
 if (css.includes("institutional procurement portal (dark")) throw new Error("UX must not remain dark institutional theme");
 if (!css.includes("light formal governmental") && !css.includes("light formal")) {

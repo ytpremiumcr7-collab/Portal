@@ -11,6 +11,7 @@ import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expedi
 import { assertLicitacionExists } from "../lib/domain";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
 
 /** Server-authoritative response deadline (calendar days). Client plazoRespuesta is ignored. */
 const PLAZO_RESPUESTA_DIAS = 15;
@@ -47,14 +48,18 @@ export const inconformidadesRouter = createRouter({
     // Authz: promoventeProveedorId must belong to the authenticated proveedor (admin may act for a verified provider).
     let promoventeProveedorId: number;
     if (ctx.user.role === "proveedor") {
-      const own = await db.query.proveedores.findFirst({
-        where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.usuarioId, ctx.user.id), eq(proveedores.activo, true)),
-      });
-      if (!own) throw new TRPCError({ code: "FORBIDDEN", message: "Usuario proveedor sin expediente activo." });
-      if (input.promoventeProveedorId != null && input.promoventeProveedorId !== own.id) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "No puede presentar inconformidad en nombre de otro proveedor." });
+      const represented = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!represented.length) throw new TRPCError({ code: "FORBIDDEN", message: "No representa a una organización proveedora activa." });
+      if (input.promoventeProveedorId != null) {
+        if (!represented.includes(input.promoventeProveedorId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "No puede presentar inconformidad en nombre de otra organización." });
+        }
+        promoventeProveedorId = input.promoventeProveedorId;
+      } else if (represented.length === 1) {
+        promoventeProveedorId = represented[0];
+      } else {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Seleccione promoventeProveedorId: su cuenta representa varias organizaciones." });
       }
-      promoventeProveedorId = own.id;
     } else if (ctx.user.role === "admin") {
       if (!input.promoventeProveedorId) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "promoventeProveedorId requerido para admin." });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,11 +12,13 @@ import { pageInput, pageResult } from "../lib/pagination";
 import { appendExpedienteEvent, findExpedienteByLicitacion, refreshRequirementStatuses } from "../lib/expediente";
 import { writeAudit } from "../lib/security";
 import { detectMimeFromMagic, assertMimeAllowed } from "../lib/mime-detect";
-import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed } from "../lib/document-access";
+import { authorizeDocumentRead, filterReadableDocuments, assertOfertaUploadAllowed, isOfferTipo } from "../lib/document-access";
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
+import { procedureLots } from "@db/schema-eproc";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const allowedTypes = ["CONVOCATORIA","FUNDAMENTO_JURIDICO","PLIEGO_TECNICO","PLIEGO_ADMINISTRATIVO","JUNTA_ACLARACIONES","ACTA_APERTURA","OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA","ACTA_EVALUACION","DICTAMEN","FALLO_ADJUDICACION","CONTRATO","FACTURA","OTRO"] as const;
-const uploadSchema = z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), tipo: z.enum(allowedTypes), nombreArchivo: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(120), contentBase64: z.string().min(10), esPublico: z.boolean().default(false), motivo: z.string().trim().optional(), reemplazaDocumentoId: z.number().int().positive().optional() }).superRefine((v, ctx) => { if (!v.expedienteId && !v.licitacionId && !v.proveedorId) ctx.addIssue({ code: "custom", message: "El documento debe vincularse a un expediente, licitación o proveedor." }); });
+const uploadSchema = z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), lotId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), tipo: z.enum(allowedTypes), nombreArchivo: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(120), contentBase64: z.string().min(10), esPublico: z.boolean().default(false), motivo: z.string().trim().optional(), reemplazaDocumentoId: z.number().int().positive().optional() }).superRefine((v, ctx) => { if (!v.expedienteId && !v.licitacionId && !v.proveedorId) ctx.addIssue({ code: "custom", message: "El documento debe vincularse a un expediente, licitación o proveedor." }); });
 
 async function resolveExpediente(tenantId: number, expedienteId?: number, licitacionId?: number) {
   if (expedienteId) {
@@ -33,15 +35,16 @@ async function resolveExpediente(tenantId: number, expedienteId?: number, licita
 }
 
 export const documentosRouter = createRouter({
-  list: authedQuery.input(z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), estado: z.enum(["PENDIENTE","VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]).optional(), vigentes: z.boolean().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
+  list: authedQuery.input(z.object({ expedienteId: z.number().int().positive().optional(), licitacionId: z.number().int().positive().optional(), lotId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), estado: z.enum(["PENDIENTE","VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]).optional(), vigentes: z.boolean().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
     const conditions = [eq(documentos.tenantId, ctx.user.tenantId)];
     const expediente = await resolveExpediente(ctx.user.tenantId, input?.expedienteId, input?.licitacionId);
     if (expediente) conditions.push(eq(documentos.expedienteId, expediente.id));
+    if (input?.lotId) conditions.push(eq(documentos.lotId, input.lotId));
     if (ctx.user.role === "proveedor") {
-      const provider = await getDb().query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.usuarioId, ctx.user.id), eq(proveedores.activo, true)) });
-      if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "Proveedor sin expediente asociado." });
-      conditions.push(eq(documentos.proveedorId, provider.id));
+      const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!ids.length) return pageResult([], 0, page, pageSize);
+      conditions.push(inArray(documentos.proveedorId, ids));
       conditions.push(eq(documentos.esVersionVigente, true));
     } else {
       if (input?.proveedorId) conditions.push(eq(documentos.proveedorId, input.proveedorId));
@@ -52,7 +55,7 @@ export const documentosRouter = createRouter({
     const [items, totalRows] = await Promise.all([db.query.documentos.findMany({ where, orderBy: [desc(documentos.fechaSubida)], limit: pageSize, offset, with: { expediente: true, licitacion: true, proveedor: true, usuario: true } }), db.select({ total: count() }).from(documentos).where(where)]);
     const readable = await filterReadableDocuments(
       { id: ctx.user.id, tenantId: ctx.user.tenantId, role: ctx.user.role },
-      items as any[],
+      items,
     );
     // Preserve pagination total as pre-filter count for UX stability; items are authz-filtered.
     return pageResult(readable, Number(totalRows[0]?.total ?? 0), page, pageSize);
@@ -63,7 +66,7 @@ export const documentosRouter = createRouter({
     if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
     await authorizeDocumentRead(
       { id: ctx.user.id, tenantId: ctx.user.tenantId, role: ctx.user.role },
-      doc as any,
+      doc,
     );
     return doc;
   }),
@@ -72,15 +75,48 @@ export const documentosRouter = createRouter({
     const db = getDb();
     const expediente = await resolveExpediente(ctx.user.tenantId, input.expedienteId, input.licitacionId);
     if (expediente && input.licitacionId && expediente.licitacionId !== input.licitacionId) throw new TRPCError({ code: "BAD_REQUEST", message: "El expediente y la licitación indicada no corresponden al mismo aggregate." });
+    const licitacionId = input.licitacionId ?? expediente?.licitacionId ?? null;
+    if (input.tipo === "CONTRATO" && !input.lotId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "El documento contractual debe vincularse al lote adjudicado." });
+    }
+    if (input.lotId) {
+      if (!licitacionId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Un documento de lote requiere procedimiento." });
+      }
+      const lot = await db.query.procedureLots.findFirst({
+        where: and(
+          eq(procedureLots.tenantId, ctx.user.tenantId),
+          eq(procedureLots.id, input.lotId),
+          eq(procedureLots.licitacionId, licitacionId),
+        ),
+      });
+      if (!lot) throw new TRPCError({ code: "BAD_REQUEST", message: "El lote no existe o pertenece a otro procedimiento." });
+      if (isOfferTipo(input.tipo) && lot.status !== "ACTIVE") {
+        throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden vincularse a lotes activos." });
+      }
+      if (input.tipo === "CONTRATO" && lot.status !== "AWARDED") {
+        throw new TRPCError({ code: "CONFLICT", message: "El documento contractual requiere un lote adjudicado." });
+      }
+    }
     if (ctx.user.role === "proveedor") {
       if (!input.proveedorId) throw new TRPCError({ code: "BAD_REQUEST", message: "Un proveedor debe vincular cada documento a su expediente de proveedor." });
-      const provider = await db.query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.usuarioId, ctx.user.id), eq(proveedores.activo, true)) });
-      if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "El documento no pertenece a su expediente." });
+      const represented = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!represented.includes(input.proveedorId)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No representa a la organización proveedora indicada." });
+      }
+      const provider = await db.query.proveedores.findFirst({
+        where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.activo, true)),
+      });
+      if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "Organización proveedora inexistente o inactiva." });
       if (!["OFERTA_TECNICA","OFERTA_ECONOMICA","GARANTIA"].includes(input.tipo)) throw new TRPCError({ code: "FORBIDDEN", message: "El rol proveedor sólo puede cargar oferta técnica, oferta económica o garantía." });
+      if (isOfferTipo(input.tipo)) {
+        if (!input.lotId) throw new TRPCError({ code: "BAD_REQUEST", message: "OFERTA_* requiere lote." });
+      }
       await assertOfertaUploadAllowed({
         tenantId: ctx.user.tenantId,
         proveedorId: provider.id,
-        licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null,
+        licitacionId,
+        lotId: input.lotId ?? null,
         tipo: input.tipo,
       });
       if (input.esPublico) throw new TRPCError({ code: "FORBIDDEN", message: "Los documentos de proveedor no pueden publicarse directamente." });
@@ -91,6 +127,7 @@ export const documentosRouter = createRouter({
       if (!old) throw new TRPCError({ code: "NOT_FOUND", message: "Versión documental a sustituir no encontrada." });
       if (!old.esVersionVigente) throw new TRPCError({ code: "CONFLICT", message: "Sólo se puede sustituir la versión vigente." });
       if (old.tipo !== input.tipo) throw new TRPCError({ code: "BAD_REQUEST", message: "La nueva versión debe conservar el tipo documental." });
+      if ((old.lotId ?? null) !== (input.lotId ?? null)) throw new TRPCError({ code: "BAD_REQUEST", message: "La nueva versión debe conservar el lote documental." });
       // Any doc sealed into a proposición manifest (incl. ANEXO/GARANTIA) is immutable.
       const sealed = await db.query.proposicionDocumentos.findFirst({
         where: and(eq(proposicionDocumentos.tenantId, ctx.user.tenantId), eq(proposicionDocumentos.documentoId, input.reemplazaDocumentoId)),
@@ -117,16 +154,24 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
     try {
       const createdId = await db.transaction(async tx => {
         if (previous) await tx.update(documentos).set({ esVersionVigente: false, estado: "OBSOLETO" }).where(and(eq(documentos.id, previous.id), eq(documentos.tenantId, ctx.user.tenantId), eq(documentos.esVersionVigente, true)));
-        const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: detectedMime, mimeDetectado: detectedMime, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
+        const result = await tx.insert(documentos).values({ tenantId: ctx.user.tenantId, expedienteId: expediente?.id ?? null, licitacionId: input.licitacionId ?? expediente?.licitacionId ?? null, lotId: input.lotId ?? null, proveedorId: input.proveedorId ?? null, tipo: input.tipo, version, versionGroup, previousVersionId: previous?.id ?? null, esVersionVigente: true, nombreArchivo: input.nombreArchivo, mimeType: detectedMime, mimeDetectado: detectedMime, tamanoBytes: buffer.byteLength, sha256, storageKey, esPublico: input.esPublico, estado: "PENDIENTE", subidoPor: ctx.user.id });
         const id = Number(result[0].insertId);
         if (expediente) { await appendExpedienteEvent(tx, ctx, { expedienteId: expediente.id, tipo: previous ? "NUEVA_VERSION_DOCUMENTAL" : "DOCUMENTO_AGREGADO", motivo: input.motivo ?? null, payload: { documentoId: id, tipo: input.tipo, version, sha256, previousVersionId: previous?.id ?? null } }); }
+        await writeAudit({
+          ctx: ctxForAudit(ctx),
+          accion: previous ? "NUEVA_VERSION" : "SUBIR",
+          entidad: "documentos",
+          entidadId: id,
+          valorNuevo: { documentoId: id, tipo: input.tipo, version, sha256, lotId: input.lotId ?? null, previousVersionId: previous?.id ?? null },
+          motivo: input.motivo,
+          tx,
+        });
         return id;
       });
       const created = await db.query.documentos.findFirst({ where: and(eq(documentos.id, createdId), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true, licitacion: true, proveedor: true, usuario: true } });
       if (expediente) await refreshRequirementStatuses(db, ctx.user.tenantId, expediente.id);
-      await writeAudit({ ctx: ctxForAudit(ctx), accion: previous ? "NUEVA_VERSION" : "SUBIR", entidad: "documentos", entidadId: created?.id, valorNuevo: created, motivo: input.motivo });
       return created;
-    } catch (error) { try { await unlink(fullPath); } catch {} throw error; }
+    } catch (error) { try { await unlink(fullPath); } catch { /* storage file was already absent */ } throw error; }
   }),
 
   cambiarEstado: capabilityQuery("aprobar_juridico").input(z.object({ id: z.number().int().positive(), estado: z.enum(["VALIDANDO","APROBADO","RECHAZADO","OBSOLETO"]), motivo: z.string().trim().min(3) })).mutation(async ({ input, ctx }) => {
@@ -141,10 +186,10 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
       if (current.expedienteId) {
         await appendExpedienteEvent(tx, ctx, { expedienteId: current.expedienteId!, tipo: "ESTADO_DOCUMENTAL", motivo: input.motivo, payload: { documentoId: current.id, from: current.estado, to: input.estado, version: current.version } });
       }
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "CAMBIAR_ESTADO", entidad: "documentos", entidadId: input.id, valorAnterior: current, valorNuevo: { ...current, ...data }, motivo: input.motivo, tx });
     });
     const updated = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)), with: { expediente: true } });
     if (current.expedienteId) await refreshRequirementStatuses(db, ctx.user.tenantId, current.expedienteId);
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "CAMBIAR_ESTADO", entidad: "documentos", entidadId: input.id, valorAnterior: current, valorNuevo: updated, motivo: input.motivo });
     return updated;
   }),
 
@@ -152,9 +197,11 @@ const sha256 = createHash("sha256").update(buffer).digest("hex");
     const db = getDb(); const current = await db.query.documentos.findFirst({ where: and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)) });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Documento no encontrado." });
     if (current.expedienteId || current.estado === "APROBADO" || current.estado === "OBSOLETO") throw new TRPCError({ code: "CONFLICT", message: "Un documento de expediente no se elimina físicamente; debe sustituirse o quedar obsoleto para conservar evidencia." });
-    await db.delete(documentos).where(and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)));
-    try { await unlink(path.resolve(process.env.ARES_STORAGE_PATH || "./storage", current.storageKey)); } catch {}
-    await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "documentos", entidadId: input.id, valorAnterior: current, motivo: input.motivo });
+    await db.transaction(async (tx) => {
+      await tx.delete(documentos).where(and(eq(documentos.id, input.id), eq(documentos.tenantId, ctx.user.tenantId)));
+      await writeAudit({ ctx: ctxForAudit(ctx), accion: "ELIMINAR", entidad: "documentos", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });
+    });
+    try { await unlink(path.resolve(process.env.ARES_STORAGE_PATH || "./storage", current.storageKey)); } catch { /* storage file was already absent */ }
     return { success: true };
   }),
 });

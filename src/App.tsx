@@ -42,12 +42,14 @@ import BuscadorPublico from "@/pages/BuscadorPublico";
 import Oportunidades from "@/pages/Oportunidades";
 import MisProposiciones from "@/pages/MisProposiciones";
 import PresentarPropuesta from "@/pages/PresentarPropuesta";
-import ActoAdjudicacion from "@/pages/ActoAdjudicacion";
 import Comision from "@/pages/Comision";
 import Terminacion from "@/pages/Terminacion";
 import Calendario from "@/pages/Calendario";
 import Consorcios from "@/pages/Consorcios";
 import DialogoCompetitivo from "@/pages/DialogoCompetitivo";
+import WorkInbox from "@/pages/WorkInbox";
+import InstitutionalSetup from "@/pages/InstitutionalSetup";
+import Lots from "@/pages/Lots";
 
 
 function RoleGate({ roles, children }: { roles: Array<"admin" | "licitante" | "proveedor">; children: React.ReactNode }) {
@@ -71,12 +73,14 @@ export default function App() {
         <AppLayout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/mi-trabajo" element={<RoleGate roles={["admin","licitante"]}><WorkInbox /></RoleGate>} />
             <Route path="/oportunidades" element={<RoleGate roles={["proveedor"]}><Oportunidades /></RoleGate>} />
             <Route path="/mis-proposiciones" element={<RoleGate roles={["proveedor"]}><MisProposiciones /></RoleGate>} />
             <Route path="/presentar-propuesta" element={<RoleGate roles={["proveedor"]}><PresentarPropuesta /></RoleGate>} />
             <Route path="/licitaciones" element={<Licitaciones />} />
             <Route path="/licitaciones/nueva" element={<RoleGate roles={["admin","licitante"]}><NuevaLicitacion /></RoleGate>} />
             <Route path="/licitaciones/:id" element={<LicitacionDetalle />} />
+            <Route path="/lotes" element={<RoleGate roles={["admin","licitante"]}><Lots /></RoleGate>} />
             <Route path="/proveedores" element={<Proveedores />} />
             <Route path="/entidades" element={<RoleGate roles={["admin","licitante"]}><Entidades /></RoleGate>} />
             <Route path="/alertas" element={<RoleGate roles={["admin","licitante"]}><Alertas /></RoleGate>} />
@@ -89,7 +93,6 @@ export default function App() {
             <Route path="/aperturas" element={<RoleGate roles={["admin","licitante"]}><Aperturas /></RoleGate>} />
             <Route path="/dictamenes" element={<RoleGate roles={["admin","licitante"]}><Dictamenes /></RoleGate>} />
             <Route path="/fallos" element={<RoleGate roles={["admin","licitante"]}><Fallos /></RoleGate>} />
-            <Route path="/acto-adjudicacion" element={<RoleGate roles={["admin","licitante"]}><ActoAdjudicacion /></RoleGate>} />
             <Route path="/comision" element={<RoleGate roles={["admin","licitante"]}><Comision /></RoleGate>} />
             <Route path="/terminacion" element={<RoleGate roles={["admin","licitante"]}><Terminacion /></RoleGate>} />
             <Route path="/calendario" element={<RoleGate roles={["admin","licitante"]}><Calendario /></RoleGate>} />
@@ -111,6 +114,7 @@ export default function App() {
             <Route path="/desempate" element={<RoleGate roles={["admin","licitante"]}><Desempate /></RoleGate>} />
             <Route path="/smtp" element={<RoleGate roles={["admin"]}><SmtpSettings /></RoleGate>} />
             <Route path="/usuarios" element={<RoleGate roles={["admin"]}><Usuarios /></RoleGate>} />
+            <Route path="/organizacion" element={<RoleGate roles={["admin"]}><InstitutionalSetup /></RoleGate>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AppLayout>

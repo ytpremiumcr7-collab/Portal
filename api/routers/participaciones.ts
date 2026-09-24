@@ -27,20 +27,16 @@ import { ciphertextHash } from "../lib/envelope-crypto";
 import { findExpedienteByLicitacion, appendExpedienteEvent } from "../lib/expediente";
 import { licitacionIdFromParticipacion } from "../lib/procedure-resolvers";
 import { moneyGt } from "../lib/money";
+import { procedureLots } from "@db/schema-eproc";
+import { resolveSupplierActor, resolveSupplierActorInTx, supplierProviderIdsForUser } from "../lib/supplier-authority";
+import { createSubmissionReceipt } from "../lib/submission-receipt";
 
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Importe inválido.");
-
-async function ensureProviderForUser(tenantId: number, userId: number) {
-  const db = getDb();
-  const provider = await db.query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, tenantId), eq(proveedores.usuarioId, userId), eq(proveedores.activo, true)) });
-  if (!provider) throw new TRPCError({ code: "FORBIDDEN", message: "El usuario proveedor no tiene un expediente de proveedor activo asociado." });
-  return provider;
-}
 
 async function redactList(
   items: any[],
   ctx: { user: { tenantId: number; role: string; id: number } },
-  viewerProveedorId: number | null,
+  viewerProveedorIds: ReadonlySet<number>,
 ) {
   const byLic = new Map<number, string | null>();
   const db = getDb();
@@ -51,8 +47,7 @@ async function redactList(
     const aperturaEstado = byLic.get(licId);
     const isOwner =
       ctx.user.role === "proveedor" &&
-      viewerProveedorId != null &&
-      Number(viewerProveedorId) === Number(item.proveedorId);
+      viewerProveedorIds.has(Number(item.proveedorId));
     const sobre = await loadSobreForParticipacion(db, ctx.user.tenantId, Number(item.id));
     const legacyPlaintext = isLegacyPlaintextCandidate({
       montoOferta: item.montoOferta,
@@ -66,7 +61,7 @@ async function redactList(
     out.push(
       redactParticipacionEconomica(hydrated, {
         role: ctx.user.role,
-        viewerProveedorId,
+        viewerProveedorId: isOwner ? Number(item.proveedorId) : null,
         itemProveedorId: item.proveedorId,
         aperturaEstado,
         legacyPlaintext,
@@ -80,11 +75,12 @@ export const participacionesRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), proveedorId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
     const { page, pageSize, offset } = pageInput(input?.page, input?.pageSize);
     const conditions = [eq(participaciones.tenantId, ctx.user.tenantId)];
-    let viewerProveedorId: number | null = null;
+    let viewerProveedorIds = new Set<number>();
     if (ctx.user.role === "proveedor") {
-      const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
-      viewerProveedorId = provider.id;
-      conditions.push(eq(participaciones.proveedorId, provider.id));
+      const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      viewerProveedorIds = new Set(ids);
+      if (!ids.length) return pageResult([], 0, page, pageSize);
+      conditions.push(inArray(participaciones.proveedorId, ids));
     } else if (input?.proveedorId) conditions.push(eq(participaciones.proveedorId, input.proveedorId));
     if (input?.licitacionId) conditions.push(eq(participaciones.licitacionId, input.licitacionId));
     const where = and(...conditions); const db = getDb();
@@ -92,7 +88,7 @@ export const participacionesRouter = createRouter({
       db.query.participaciones.findMany({ where, orderBy: [desc(participaciones.createdAt)], limit: pageSize, offset, with: { proveedor: true, licitacion: true, evaluator: true } }),
       db.select({ total: count() }).from(participaciones).where(where),
     ]);
-    const redacted = await redactList(items as any[], ctx, viewerProveedorId);
+    const redacted = await redactList(items as any[], ctx, viewerProveedorIds);
     return pageResult(redacted, Number(totalRows[0]?.total ?? 0), page, pageSize);
   }),
 
@@ -102,7 +98,8 @@ export const participacionesRouter = createRouter({
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
     let viewerProveedorId: number | null = null;
     if (ctx.user.role === "proveedor") {
-      if (item.proveedor?.usuarioId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "No puede consultar una oferta de otro proveedor." });
+      const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+      if (!ids.includes(item.proveedorId)) throw new TRPCError({ code: "FORBIDDEN", message: "No representa a la organización que presentó esta oferta." });
       viewerProveedorId = item.proveedorId;
     }
     const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, item.licitacionId);
@@ -126,8 +123,33 @@ export const participacionesRouter = createRouter({
     });
   }),
 
+  submissionContext: proveedorQuery.input(z.object({
+    licitacionId: z.number().int().positive(),
+  })).query(async ({ input, ctx }) => {
+    const db = getDb();
+    const ids = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+    const [representations, lots] = await Promise.all([
+      ids.length
+        ? db.query.proveedores.findMany({
+            where: and(eq(proveedores.tenantId, ctx.user.tenantId), inArray(proveedores.id, ids), eq(proveedores.activo, true)),
+          })
+        : Promise.resolve([]),
+      db.query.procedureLots.findMany({
+        where: and(
+          eq(procedureLots.tenantId, ctx.user.tenantId),
+          eq(procedureLots.licitacionId, input.licitacionId),
+          eq(procedureLots.status, "ACTIVE"),
+        ),
+        orderBy: [procedureLots.id],
+      }),
+    ]);
+    return { representations, lots };
+  }),
+
   create: proveedorQuery.input(z.object({
     licitacionId: z.number().int().positive(),
+    proveedorId: z.number().int().positive(),
+    lotId: z.number().int().positive(),
     montoOferta: money,
     plazoEjecucion: z.number().int().positive(),
     observaciones: z.string().trim().optional(),
@@ -135,9 +157,23 @@ export const participacionesRouter = createRouter({
     /** Optional: ACTIVO consorcio must be linked BEFORE present; frozen into proposición + manifest. */
     consorcioId: z.number().int().positive().optional(),
   })).mutation(async ({ input, ctx }) => {
-    const provider = await ensureProviderForUser(ctx.user.tenantId, ctx.user.id);
+    const db = getDb();
+    const lot = await db.query.procedureLots.findFirst({
+      where: and(
+        eq(procedureLots.tenantId, ctx.user.tenantId),
+        eq(procedureLots.id, input.lotId),
+        eq(procedureLots.licitacionId, input.licitacionId),
+        eq(procedureLots.status, "ACTIVE"),
+      ),
+    });
+    if (!lot) throw new TRPCError({ code: "BAD_REQUEST", message: "El lote no existe, no está activo o pertenece a otro procedimiento." });
+    const actorPreview = await resolveSupplierActor({
+      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, proveedorId: input.proveedorId,
+      procedureId: input.licitacionId, lotId: input.lotId, action: "SUBMIT",
+    });
+    const provider = actorPreview.provider;
     await assertProveedorPuedeParticipar(ctx.user.tenantId, provider.id);
-    const db = getDb(); const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
+    const lic = await assertLicitacionExists(ctx.user.tenantId, input.licitacionId);
     if (ctx.user.role === "proveedor" && lic.estado !== "PUBLICADA") throw new TRPCError({ code: "CONFLICT", message: "Las ofertas sólo pueden presentarse en licitaciones publicadas." });
     const frozenPresent = await db.query.licitacionReglasVersion.findFirst({
       where: and(eq(licitacionReglasVersion.tenantId, ctx.user.tenantId), eq(licitacionReglasVersion.licitacionId, input.licitacionId)),
@@ -151,8 +187,15 @@ export const participacionesRouter = createRouter({
     // Money gate before TX (format already zod-validated); reception window asserted INSIDE TX at commit instant.
     if (!moneyGt(input.montoOferta, 0)) throw new TRPCError({ code: "BAD_REQUEST", message: "La oferta debe ser mayor que cero." });
     assertPositiveDays(input.plazoEjecucion, "plazoEjecucion");
-    const dup = await db.query.participaciones.findFirst({ where: and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, input.licitacionId), eq(participaciones.proveedorId, provider.id)) });
-    if (dup) throw new TRPCError({ code: "CONFLICT", message: "El proveedor ya presentó una oferta en esta licitación." });
+    const dup = await db.query.participaciones.findFirst({
+      where: and(
+        eq(participaciones.tenantId, ctx.user.tenantId),
+        eq(participaciones.licitacionId, input.licitacionId),
+        eq(participaciones.lotId, input.lotId),
+        eq(participaciones.proveedorId, provider.id),
+      ),
+    });
+    if (dup) throw new TRPCError({ code: "CONFLICT", message: "La organización ya presentó una proposición en este lote." });
 
     const uniqueDocIds = [...new Set(input.documentoIds)];
     const docs = await db.query.documentos.findMany({
@@ -186,6 +229,7 @@ export const participacionesRouter = createRouter({
     let id = 0;
     let created: any = null;
     let manifestHashOut = "";
+    let receiptOut: any = null;
     let recibidoAt = new Date();
     await db.transaction(async (tx) => {
       // Same-instant reception: lock calendar, stamp recibidoAt, assert ventana with THAT instant.
@@ -194,6 +238,10 @@ export const participacionesRouter = createRouter({
         at: recibidoAt,
         tx,
         lock: true,
+      });
+      const actor = await resolveSupplierActorInTx(tx, {
+        tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, proveedorId: input.proveedorId,
+        procedureId: input.licitacionId, lotId: input.lotId, action: "SUBMIT",
       });
 
       let consorcioId: number | null = input.consorcioId ?? null;
@@ -222,14 +270,14 @@ export const participacionesRouter = createRouter({
       }
 
       const result = await tx.insert(participaciones).values({
-        tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
+        tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, lotId: input.lotId, proveedorId: provider.id,
         montoOferta: ENVELOPE_PLACEHOLDER_MONTO, monedaOferta: "MXN", plazoEjecucion: input.plazoEjecucion,
         estadoEvaluacion: "PENDIENTE", observaciones: input.observaciones ?? null, recibidoAt,
         consorcioId,
       } as any);
       id = Number(result[0].insertId);
       const propIns = await tx.insert(proposiciones).values({
-        tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, proveedorId: provider.id,
+        tenantId: ctx.user.tenantId, licitacionId: input.licitacionId, lotId: input.lotId, proveedorId: provider.id,
         participacionId: id, estado: "RECIBIDA", montoOferta: ENVELOPE_PLACEHOLDER_MONTO, recibidoAt,
         consorcioId,
       } as any);
@@ -255,6 +303,10 @@ export const participacionesRouter = createRouter({
         proposicionId,
         participacionId: id,
         proveedorId: provider.id,
+        lotId: input.lotId,
+        actorUserId: ctx.user.id,
+        supplierMembershipId: actor.membership.id,
+        actingAuthorityId: actor.authority.id,
         ciphertextHash: ctHash,
         recibidoAt,
         documentos: propDocs,
@@ -265,6 +317,25 @@ export const participacionesRouter = createRouter({
       await tx.update(proposiciones).set({
         manifestHash, sealHash: manifestHash, sealedAt: recibidoAt, estado: "RECIBIDA",
       } as any).where(and(eq(proposiciones.id, proposicionId), eq(proposiciones.tenantId, ctx.user.tenantId)));
+      receiptOut = await createSubmissionReceipt(tx, {
+        tenantId: ctx.user.tenantId,
+        licitacionId: input.licitacionId,
+        lotId: input.lotId,
+        participacionId: id,
+        proposicionId,
+        proveedorId: provider.id,
+        supplierOrganizationId: actor.provider.legalEntityId,
+        submittedByUserId: ctx.user.id,
+        supplierMembershipId: actor.membership.id,
+        actingAuthorityId: actor.authority.id,
+        authoritySnapshot: actor.authoritySnapshot,
+        receiptType: "SUBMISSION",
+        manifestHash,
+        sealHash: manifestHash,
+        ciphertextHash: ctHash,
+        submissionVersion: 1,
+        serverReceivedAt: recibidoAt,
+      });
       await tx.update(proveedores).set({
         licitacionesParticipadas: sql`${proveedores.licitacionesParticipadas} + 1`,
       } as any).where(and(eq(proveedores.id, provider.id), eq(proveedores.tenantId, ctx.user.tenantId)));
@@ -275,16 +346,31 @@ export const participacionesRouter = createRouter({
         estadoAnterior: null,
         estadoNuevo: "RECIBIDA",
         motivo: "Presentación atómica de proposición con manifiesto documental",
-        payload: { participacionId: id, proposicionId, manifestHash, documentoIds: uniqueDocIds },
+        payload: {
+          participacionId: id, proposicionId, proveedorId: provider.id, lotId: input.lotId,
+          manifestHash, receiptCode: receiptOut.receiptCode, receiptHash: receiptOut.receiptHash,
+          timestampStatus: receiptOut.timestampStatus, authority: actor.authoritySnapshot,
+          documentoIds: uniqueDocIds,
+        },
       });
       await writeAudit({
         ctx: ctxForAudit(ctx), accion: "CREAR", entidad: "participaciones", entidadId: id,
-        valorNuevo: { ...created, montoOferta: "[SELLADO]", manifestHash, proposicionId },
+        valorNuevo: {
+          ...created, montoOferta: "[SELLADO]", manifestHash, proposicionId,
+          receiptCode: receiptOut.receiptCode, receiptHash: receiptOut.receiptHash,
+          authority: actor.authoritySnapshot,
+        },
         tx,
       });
     });
     await detectLicitacionRisks(ctx.user.tenantId, input.licitacionId);
-    return { ...created, montoOferta: input.montoOferta, sobreEconomicoSellado: true, manifestHash: manifestHashOut };
+    return {
+      ...created,
+      montoOferta: input.montoOferta,
+      sobreEconomicoSellado: true,
+      manifestHash: manifestHashOut,
+      receipt: receiptOut,
+    };
   }),
 
   evaluar: procedureMutation({
@@ -371,7 +457,11 @@ export const participacionesRouter = createRouter({
     await db.transaction(async (tx) => {
       await tx.select({ id: participaciones.id })
         .from(participaciones)
-        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id)))
+        .where(and(
+          eq(participaciones.tenantId, ctx.user.tenantId),
+          eq(participaciones.licitacionId, lic.id),
+          eq(participaciones.lotId, offer.lotId),
+        ))
         .for("update");
 
       await tx.update(participaciones).set({
@@ -390,7 +480,12 @@ export const participacionesRouter = createRouter({
         id: participaciones.id, montoOferta: participaciones.montoOferta, puntajeTecnico: participaciones.puntajeTecnico,
         recibidoAt: participaciones.recibidoAt,
       }).from(participaciones)
-        .where(and(eq(participaciones.tenantId, ctx.user.tenantId), eq(participaciones.licitacionId, lic.id), eq(participaciones.estadoEvaluacion, "ADMISIBLE")));
+        .where(and(
+          eq(participaciones.tenantId, ctx.user.tenantId),
+          eq(participaciones.licitacionId, lic.id),
+          eq(participaciones.lotId, offer.lotId),
+          eq(participaciones.estadoEvaluacion, "ADMISIBLE"),
+        ));
 
       const forRank = admissible.map((c) => ({
         id: c.id,
@@ -443,16 +538,21 @@ export const participacionesRouter = createRouter({
       with: { proveedor: true },
     });
     if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Oferta no encontrada." });
-    if ((current as any).proveedor?.usuarioId !== ctx.user.id) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Sólo el proveedor titular puede retirar su proposición." });
+    if (current.lotId == null) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La proposición no tiene lote institucional vinculado." });
     }
+    await resolveSupplierActor({
+      tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, proveedorId: current.proveedorId,
+      procedureId: current.licitacionId, lotId: current.lotId, action: "WITHDRAW",
+    });
     if (["GANADORA", "ADMISIBLE", "RETIRADA", "INVALIDADA"].includes(current.estadoEvaluacion)) {
       throw new TRPCError({ code: "CONFLICT", message: `No se puede retirar en estado ${current.estadoEvaluacion}.` });
     }
     const expediente = await findExpedienteByLicitacion(ctx.user.tenantId, current.licitacionId);
     const aperturaEstado = await loadAperturaEstado(ctx.user.tenantId, current.licitacionId);
+    let withdrawalReceipt: any = null;
     await db.transaction(async (tx) => {
-      // TOCTOU: lock participación + RECEPCION calendar, re-check ventana, THEN mutate.
+      // TOCTOU: lock participation + calendar + supplier authority in the same transaction.
       const locked = await tx.select().from(participaciones)
         .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)))
         .for("update")
@@ -462,6 +562,10 @@ export const participacionesRouter = createRouter({
       if (["GANADORA", "ADMISIBLE", "RETIRADA", "INVALIDADA"].includes(row.estadoEvaluacion)) {
         throw new TRPCError({ code: "CONFLICT", message: `No se puede retirar en estado ${row.estadoEvaluacion}.` });
       }
+      const actor = await resolveSupplierActorInTx(tx, {
+        tenantId: ctx.user.tenantId, actorUserId: ctx.user.id, proveedorId: row.proveedorId,
+        procedureId: row.licitacionId, lotId: row.lotId!, action: "WITHDRAW",
+      });
       const now = new Date();
       await assertRetiroProposicionPermitido(ctx.user.tenantId, current.licitacionId, {
         at: now,
@@ -471,18 +575,53 @@ export const participacionesRouter = createRouter({
       });
       await tx.update(participaciones).set({ estadoEvaluacion: "RETIRADA" } as any)
         .where(and(eq(participaciones.id, input.id), eq(participaciones.tenantId, ctx.user.tenantId)));
+      const prop = await tx.query.proposiciones.findFirst({
+        where: and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)),
+      });
+      if (!prop?.manifestHash || !prop.sealHash) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La proposición no tiene manifiesto/sello verificable." });
+      }
+      const sobre = await loadSobreForParticipacion(tx, ctx.user.tenantId, row.id);
+      if (!sobre?.ciphertext) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "La proposición no tiene sobre económico sellado." });
+      }
+      const ctHash = ciphertextHash(sobre.ciphertext);
       await tx.update(proposiciones).set({ estado: "DESECHADA" } as any)
         .where(and(eq(proposiciones.tenantId, ctx.user.tenantId), eq(proposiciones.participacionId, input.id)));
+      withdrawalReceipt = await createSubmissionReceipt(tx, {
+        tenantId: ctx.user.tenantId,
+        licitacionId: row.licitacionId,
+        lotId: row.lotId!,
+        participacionId: row.id,
+        proposicionId: prop.id,
+        proveedorId: row.proveedorId,
+        supplierOrganizationId: actor.provider.legalEntityId,
+        submittedByUserId: ctx.user.id,
+        supplierMembershipId: actor.membership.id,
+        actingAuthorityId: actor.authority.id,
+        authoritySnapshot: actor.authoritySnapshot,
+        receiptType: "WITHDRAWAL",
+        manifestHash: prop.manifestHash,
+        sealHash: prop.sealHash,
+        ciphertextHash: ctHash,
+        submissionVersion: 1,
+        serverReceivedAt: now,
+      });
       if (expediente) {
         await appendExpedienteEvent(tx, ctx, {
           expedienteId: expediente.id, tipo: "PARTICIPACION_RETIRADA",
           estadoAnterior: row.estadoEvaluacion, estadoNuevo: "RETIRADA", motivo: input.motivo,
-          payload: { participacionId: input.id, actor: "proveedor", retiroAt: now.toISOString() },
+          payload: {
+            participacionId: input.id, proveedorId: row.proveedorId, lotId: row.lotId,
+            actorUserId: ctx.user.id, authority: actor.authoritySnapshot,
+            receiptCode: withdrawalReceipt.receiptCode, receiptHash: withdrawalReceipt.receiptHash,
+            timestampStatus: withdrawalReceipt.timestampStatus, retiroAt: now.toISOString(),
+          },
         });
       }
       await writeAudit({ ctx: ctxForAudit(ctx), accion: "RETIRAR", entidad: "participaciones", entidadId: input.id, valorAnterior: current, motivo: input.motivo, tx });
     });
-    return { success: true, estado: "RETIRADA" as const };
+    return { success: true, estado: "RETIRADA" as const, receipt: withdrawalReceipt };
   }),
 
   /** Autoridad de procedimiento invalida proposición (INVALIDADA) — distinto de retiro del proveedor. */

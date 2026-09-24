@@ -14,6 +14,8 @@ export default function PresentarPropuesta() {
   const [params] = useSearchParams();
   const licitacionIdParam = Number(params.get("licitacionId") || 0) || undefined;
   const [licitacionId, setLicitacionId] = useState(licitacionIdParam ? String(licitacionIdParam) : "");
+  const [proveedorId, setProveedorId] = useState("");
+  const [lotId, setLotId] = useState("");
   const [monto, setMonto] = useState("");
   const [plazo, setPlazo] = useState("30");
   const [obs, setObs] = useState("");
@@ -23,6 +25,10 @@ export default function PresentarPropuesta() {
   const licIdNum = Number(licitacionId) || 0;
   const detalle = trpc.licitaciones.getById.useQuery(
     { id: licIdNum },
+    { enabled: licIdNum > 0 },
+  );
+  const submissionContext = trpc.participaciones.submissionContext.useQuery(
+    { licitacionId: licIdNum },
     { enabled: licIdNum > 0 },
   );
   const docs = trpc.documentos.list.useQuery(
@@ -35,14 +41,16 @@ export default function PresentarPropuesta() {
 
   const offerDocs = useMemo(
     () => (docs.data?.items ?? []).filter((d: any) =>
-      ["OFERTA_TECNICA", "OFERTA_ECONOMICA", "GARANTIA", "OTRO"].includes(d.tipo)),
-    [docs.data],
+      ["OFERTA_TECNICA", "OFERTA_ECONOMICA", "GARANTIA", "OTRO"].includes(d.tipo) &&
+      (!proveedorId || Number(d.proveedorId) === Number(proveedorId)) &&
+      (!["OFERTA_TECNICA","OFERTA_ECONOMICA"].includes(d.tipo) || (!!lotId && Number(d.lotId) === Number(lotId)))),
+    [docs.data, proveedorId, lotId],
   );
 
   const toggle = (id: number) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  const canSubmit = licIdNum > 0 && !!monto && selected.length >= 2 && !crear.isPending;
+  const canSubmit = licIdNum > 0 && !!proveedorId && !!lotId && !!monto && selected.length >= 2 && !crear.isPending;
 
   return (
     <div className="space-y-4">
@@ -56,7 +64,13 @@ export default function PresentarPropuesta() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs">ID del procedimiento</Label>
-            <Input value={licitacionId} onChange={(e) => { setLicitacionId(e.target.value); setSelected([]); }} placeholder="Ej. 12" />
+            <Input value={licitacionId} onChange={(e) => {
+              setLicitacionId(e.target.value);
+              setProveedorId("");
+              setLotId("");
+              setSelected([]);
+              setAcuse(null);
+            }} placeholder="Ej. 12" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Estado del procedimiento</Label>
@@ -71,6 +85,35 @@ export default function PresentarPropuesta() {
           </p>
         )}
 
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Organización representada</Label>
+            <select
+              className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              value={proveedorId}
+              onChange={(e) => { setProveedorId(e.target.value); setSelected([]); setAcuse(null); }}
+            >
+              <option value="">Seleccione organización</option>
+              {(submissionContext.data?.representations ?? []).map((p: any) => (
+                <option key={p.id} value={p.id}>{p.razonSocial} · {p.rfc}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Lote</Label>
+            <select
+              className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              value={lotId}
+              onChange={(e) => { setLotId(e.target.value); setAcuse(null); }}
+            >
+              <option value="">Seleccione lote</option>
+              {(submissionContext.data?.lots ?? []).map((l: any) => (
+                <option key={l.id} value={l.id}>{l.code} · {l.title}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className="space-y-2">
           <Label className="text-xs">Documentos del manifiesto (OFERTA_TECNICA + OFERTA_ECONOMICA requeridas)</Label>
           {licIdNum <= 0 ? (
@@ -78,7 +121,7 @@ export default function PresentarPropuesta() {
           ) : offerDocs.length === 0 ? (
             <p className="text-xs text-amber-700">
               No hay documentos vigentes.{" "}
-              <Link className="underline" to={`/documentos?licitacionId=${licIdNum}`}>Cargar ofertas</Link>
+              <Link className="underline" to={`/documentos?licitacionId=${licIdNum}&proveedorId=${proveedorId}&lotId=${lotId}`}>Cargar ofertas</Link>
             </p>
           ) : (
             <ul className="divide-y rounded-md border border-slate-200">
@@ -120,6 +163,8 @@ export default function PresentarPropuesta() {
             onClick={() =>
               crear.mutate({
                 licitacionId: licIdNum,
+                proveedorId: Number(proveedorId),
+                lotId: Number(lotId),
                 montoOferta: monto,
                 plazoEjecucion: Number(plazo),
                 observaciones: obs || undefined,
@@ -133,7 +178,7 @@ export default function PresentarPropuesta() {
             <Link to="/oportunidades">Volver a oportunidades</Link>
           </Button>
           <Button variant="outline" asChild>
-            <Link to={licIdNum ? `/documentos?licitacionId=${licIdNum}` : "/documentos"}>Adjuntar documentos</Link>
+            <Link to={licIdNum ? `/documentos?licitacionId=${licIdNum}&proveedorId=${proveedorId}&lotId=${lotId}` : "/documentos"}>Adjuntar documentos</Link>
           </Button>
         </div>
         {crear.error && (
@@ -146,6 +191,15 @@ export default function PresentarPropuesta() {
             <p className="text-xs">Recibido: {acuse.recibidoAt ? new Date(acuse.recibidoAt).toLocaleString("es-MX") : "—"}</p>
             {acuse.manifestHash && (
               <p className="mt-1 break-all font-mono text-[10px] text-emerald-800">manifestHash: {acuse.manifestHash}</p>
+            )}
+            {acuse.receipt && (
+              <div className="mt-2 rounded border border-emerald-200 bg-white/60 p-2">
+                <p className="font-mono text-[10px]">Acuse: {acuse.receipt.receiptCode}</p>
+                <p className="break-all font-mono text-[10px] text-emerald-800">receiptHash: {acuse.receipt.receiptHash}</p>
+                <p className="mt-1 text-[10px] text-amber-800">
+                  Sello de tiempo externo: {acuse.receipt.timestampStatus}
+                </p>
+              </div>
             )}
             <p className="mt-2 text-xs text-emerald-800">
               Conserve este acuse. El sobre económico y el manifiesto documental quedan sellados hasta la apertura.

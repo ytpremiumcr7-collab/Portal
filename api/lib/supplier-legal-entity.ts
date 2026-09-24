@@ -5,6 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { proveedores, supplierLegalEntities, tenants, users } from "@db/schema";
+import { supplierMemberships } from "@db/schema-eproc";
 
 export function normalizeRfc(rfc: string): string {
   return rfc.trim().toUpperCase().replace(/\s+/g, "");
@@ -59,7 +60,7 @@ export async function listMembershipsByLegalEntityId(db: any, legalEntityId: num
   return rows;
 }
 
-/** Resolve login candidates: legal entity by RFC → proveedores with users. */
+/** Resolve RFC login candidates through explicit supplier memberships. */
 export async function resolveProveedorLoginCandidates(db: any, rfcRaw: string) {
   const rfc = assertRfcShape(rfcRaw);
   const entity = await db.query.supplierLegalEntities.findFirst({
@@ -67,28 +68,53 @@ export async function resolveProveedorLoginCandidates(db: any, rfcRaw: string) {
   });
   if (!entity) return { entity: null, memberships: [] as any[] };
 
-  const memberships = await db
+  const rows = await db
     .select({
       proveedorId: proveedores.id,
       tenantId: proveedores.tenantId,
       tenantNombre: tenants.nombre,
-      usuarioId: proveedores.usuarioId,
+      usuarioId: supplierMemberships.userId,
+      supplierMembershipId: supplierMemberships.id,
+      supplierRole: supplierMemberships.role,
       userEmail: users.email,
       userName: users.name,
       passwordHash: users.passwordHash,
       userActivo: users.activo,
       role: users.role,
+      membershipActive: supplierMemberships.active,
+      validFrom: supplierMemberships.validFrom,
+      validUntil: supplierMemberships.validUntil,
     })
-    .from(proveedores)
+    .from(supplierMemberships)
+    .innerJoin(
+      proveedores,
+      and(
+        eq(proveedores.id, supplierMemberships.proveedorId),
+        eq(proveedores.tenantId, supplierMemberships.tenantId),
+      ),
+    )
     .innerJoin(tenants, eq(tenants.id, proveedores.tenantId))
-    .innerJoin(users, and(eq(users.id, proveedores.usuarioId), eq(users.tenantId, proveedores.tenantId)))
+    .innerJoin(
+      users,
+      and(
+        eq(users.id, supplierMemberships.userId),
+        eq(users.tenantId, supplierMemberships.tenantId),
+      ),
+    )
     .where(
       and(
         eq(proveedores.legalEntityId, entity.id),
         eq(proveedores.activo, true),
+        eq(supplierMemberships.active, true),
         eq(tenants.activa, true),
       ),
     );
 
-  return { entity, memberships };
+  const now = new Date();
+  return {
+    entity,
+    memberships: rows.filter((m: (typeof rows)[number]) =>
+      m.validFrom <= now && (m.validUntil == null || m.validUntil >= now),
+    ),
+  };
 }

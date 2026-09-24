@@ -15,6 +15,7 @@ import { parseRequisitos } from "../lib/procedure-policy";
 import { assertCalendarioPermite } from "../lib/calendario-gates";
 import { loadSobreForParticipacion, revelarSobresEconomicos } from "../lib/sobre-economico";
 import { ciphertextHash } from "../lib/envelope-crypto";
+import { submissionReceipts } from "@db/schema-eproc";
 
 export const aperturasRouter = createRouter({
   list: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -110,10 +111,39 @@ export const aperturasRouter = createRouter({
           porcentajeParticipacion: m.porcentajeParticipacion != null ? String(m.porcentajeParticipacion) : null,
         }));
       }
+      const submissionReceipt = await db.query.submissionReceipts.findFirst({
+        where: and(
+          eq(submissionReceipts.tenantId, ctx.user.tenantId),
+          eq(submissionReceipts.proposicionId, prop.id),
+          eq(submissionReceipts.receiptType, "SUBMISSION"),
+        ),
+        orderBy: [desc(submissionReceipts.createdAt)],
+      });
+      if (submissionReceipt) {
+        if (
+          submissionReceipt.manifestHash !== prop.manifestHash ||
+          submissionReceipt.ciphertextHash !== ctHash ||
+          submissionReceipt.proveedorId !== o.proveedorId ||
+          submissionReceipt.lotId !== prop.lotId ||
+          submissionReceipt.supplierMembershipId == null ||
+          submissionReceipt.actingAuthorityId == null
+        ) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: `Proposición #${prop.id}: el acuse institucional no coincide con el manifiesto/sobre/lote.`,
+          });
+        }
+      }
       const { manifestHash } = buildProposicionManifest({
         proposicionId: prop.id,
         participacionId: o.id,
         proveedorId: o.proveedorId,
+        ...(submissionReceipt ? {
+          lotId: submissionReceipt.lotId,
+          actorUserId: submissionReceipt.submittedByUserId,
+          supplierMembershipId: submissionReceipt.supplierMembershipId!,
+          actingAuthorityId: submissionReceipt.actingAuthorityId!,
+        } : {}),
         ciphertextHash: ctHash,
         recibidoAt: prop.recibidoAt,
         documentos: propDocs,

@@ -10,12 +10,7 @@ import { licitacionIdFromInput, licitacionIdFromJunta } from "../lib/procedure-r
 import { assertAclaracionJuntaTransition } from "../lib/phase2-transitions";
 import { writeAudit } from "../lib/security";
 import { pageInput, pageResult } from "../lib/pagination";
-
-async function providerFor(tenantId: number, userId: number) {
-  const p = await getDb().query.proveedores.findFirst({ where: and(eq(proveedores.tenantId, tenantId), eq(proveedores.usuarioId, userId), eq(proveedores.activo, true)) });
-  if (!p) throw new TRPCError({ code: "FORBIDDEN", message: "Sin expediente de proveedor activo." });
-  return p;
-}
+import { supplierProviderIdsForUser } from "../lib/supplier-authority";
 
 export const aclaracionesRouter = createRouter({
   listJuntas: authedQuery.input(z.object({ licitacionId: z.number().int().positive().optional(), page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() }).optional()).query(async ({ input, ctx }) => {
@@ -98,8 +93,17 @@ export const aclaracionesRouter = createRouter({
     return updated;
   }),
 
-  formularPregunta: proveedorQuery.input(z.object({ juntaId: z.number().int().positive(), pregunta: z.string().trim().min(10).max(4000) })).mutation(async ({ input, ctx }) => {
-    const provider = await providerFor(ctx.user.tenantId, ctx.user.id);
+  formularPregunta: proveedorQuery.input(z.object({
+    juntaId: z.number().int().positive(),
+    proveedorId: z.number().int().positive(),
+    pregunta: z.string().trim().min(10).max(4000),
+  })).mutation(async ({ input, ctx }) => {
+    const represented = await supplierProviderIdsForUser(ctx.user.tenantId, ctx.user.id);
+    if (!represented.includes(input.proveedorId)) throw new TRPCError({ code: "FORBIDDEN", message: "No representa a la organización proveedora indicada." });
+    const provider = await getDb().query.proveedores.findFirst({
+      where: and(eq(proveedores.tenantId, ctx.user.tenantId), eq(proveedores.id, input.proveedorId), eq(proveedores.activo, true)),
+    });
+    if (!provider) throw new TRPCError({ code: "NOT_FOUND", message: "Organización proveedora inexistente o inactiva." });
     const db = getDb();
     const junta = await db.query.aclaracionesJuntas.findFirst({ where: and(eq(aclaracionesJuntas.id, input.juntaId), eq(aclaracionesJuntas.tenantId, ctx.user.tenantId)) });
     if (!junta) throw new TRPCError({ code: "NOT_FOUND", message: "Junta no encontrada." });

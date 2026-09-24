@@ -184,6 +184,8 @@ export const licitaciones = mysqlTable("licitaciones", {
   estado: mysqlEnum("estado", ["BORRADOR", "CONSULTAS", "PUBLICADA", "EN_EVALUACION", "ADJUDICADA", "DESIERTA", "CANCELADA", "FINALIZADA", "ARCHIVADA", "ELIMINADA"]).default("BORRADOR").notNull(),
   etapa: mysqlEnum("etapa", ["PREPARACION", "JUNTA_ACLARACIONES", "CONVOCATORIA", "PRESENTACION", "EVALUACION", "DICTAMEN", "FALLO", "ADJUDICACION", "CONTRATACION", "EJECUCION", "FINALIZACION"]).default("PREPARACION").notNull(),
   entidadId: bigint("entidad_id", { mode: "number", unsigned: true }).notNull(),
+  /** Expand-first institutional boundary; backfilled by migration 0024. */
+  contractingUnitId: bigint("contracting_unit_id", { mode: "number", unsigned: true }),
   categoriaId: bigint("categoria_id", { mode: "number", unsigned: true }).notNull(),
   convocanteId: bigint("convocante_id", { mode: "number", unsigned: true }).notNull(),
   tipoLicitacion: mysqlEnum("tipo_licitacion", ["LICITACION_PUBLICA", "INVITACION_RESTRINGIDA", "INVITACION_TRES", "ADJUDICACION_DIRECTA", "DIALOGO_COMPETITIVO", "ADJUDICACION_DIRECTA_NEGOCIACION", "ACUERDO_MARCO_ASIGNACION", "TIENDA_DIGITAL_ORDEN"]).notNull(),
@@ -252,6 +254,8 @@ export const participaciones = mysqlTable("participaciones", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  /** Canonical lot binding; migration 0024 backfills legacy rows before NOT NULL contraction. */
+  lotId: bigint("lot_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
   consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }),
   montoOferta: decimal("monto_oferta", { precision: 18, scale: 2 }).notNull(),
@@ -270,9 +274,10 @@ export const participaciones = mysqlTable("participaciones", {
   evaluatedAt: timestamp("evaluated_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
-  uniqueIndex("participaciones_tenant_licitante_proveedor_uq").on(t.tenantId, t.licitacionId, t.proveedorId),
+  uniqueIndex("participaciones_tenant_lot_proveedor_uq").on(t.tenantId, t.lotId, t.proveedorId),
   uniqueIndex("participaciones_tenant_id_uq").on(t.tenantId, t.id),
   index("participaciones_tenant_licitacion_idx").on(t.tenantId, t.licitacionId),
+  index("participaciones_lot_idx").on(t.tenantId, t.lotId),
   foreignKey({ name: "participaciones_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("cascade"),
   foreignKey({ name: "participaciones_tenant_licitacion_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("cascade"),
   foreignKey({ name: "participaciones_tenant_proveedor_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
@@ -314,6 +319,7 @@ export const documentos = mysqlTable("documentos", {
   ...tenantColumns,
   expedienteId: bigint("expediente_id", { mode: "number", unsigned: true }),
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }),
+  lotId: bigint("lot_id", { mode: "number", unsigned: true }),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }),
   tipo: mysqlEnum("tipo", ["CONVOCATORIA", "FUNDAMENTO_JURIDICO", "PLIEGO_TECNICO", "PLIEGO_ADMINISTRATIVO", "JUNTA_ACLARACIONES", "ACTA_APERTURA", "OFERTA_TECNICA", "OFERTA_ECONOMICA", "GARANTIA", "ACTA_EVALUACION", "DICTAMEN", "FALLO_ADJUDICACION", "CONTRATO", "FACTURA", "OTRO"]).notNull(),
   version: int("version").default(1).notNull(),
@@ -335,6 +341,7 @@ export const documentos = mysqlTable("documentos", {
   uniqueIndex("documentos_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("documentos_tenant_version_uq").on(t.tenantId, t.versionGroup, t.version),
   index("documentos_tenant_licitacion_idx").on(t.tenantId, t.licitacionId),
+  index("documentos_tenant_lot_idx").on(t.tenantId, t.lotId),
   index("documentos_tenant_expediente_idx").on(t.tenantId, t.expedienteId),
   index("documentos_tenant_proveedor_idx").on(t.tenantId, t.proveedorId),
   uniqueIndex("documentos_tenant_storage_uq").on(t.tenantId, t.storageKey),
@@ -675,6 +682,8 @@ export const contratos = mysqlTable("contratos", {
   expedienteId: bigint("expediente_id", { mode: "number", unsigned: true }).notNull(),
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
   falloId: bigint("fallo_id", { mode: "number", unsigned: true }).notNull(),
+  /** Canonical award source after writer cutover; nullable only for legacy compatibility. */
+  awardId: bigint("award_id", { mode: "number", unsigned: true }),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
   folio: varchar("folio", { length: 80 }).notNull(),
   estado: mysqlEnum("estado", ["BORRADOR", "FORMALIZADO", "VIGENTE", "TERMINADO", "RESCINDIDO"]).default("BORRADOR").notNull(),
@@ -696,7 +705,8 @@ export const contratos = mysqlTable("contratos", {
 }, (t) => [
   uniqueIndex("contratos_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("contratos_tenant_folio_uq").on(t.tenantId, t.folio),
-  uniqueIndex("contratos_tenant_lic_uq").on(t.tenantId, t.licitacionId),
+  uniqueIndex("contratos_tenant_award_uq").on(t.tenantId, t.awardId),
+  index("contratos_licitacion_idx").on(t.tenantId, t.licitacionId),
   index("contratos_tenant_estado_idx").on(t.tenantId, t.estado),
   foreignKey({ name: "contratos_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
   foreignKey({ name: "contratos_exp_fk", columns: [t.tenantId, t.expedienteId, t.licitacionId], foreignColumns: [expedientes.tenantId, expedientes.id, expedientes.licitacionId] }).onDelete("restrict"),
@@ -1383,6 +1393,8 @@ export const proposiciones = mysqlTable("proposiciones", {
   id: serial("id").primaryKey(),
   ...tenantColumns,
   licitacionId: bigint("licitacion_id", { mode: "number", unsigned: true }).notNull(),
+  /** Canonical lot binding; migration 0024 backfills legacy rows before NOT NULL contraction. */
+  lotId: bigint("lot_id", { mode: "number", unsigned: true }).notNull(),
   proveedorId: bigint("proveedor_id", { mode: "number", unsigned: true }).notNull(),
   consorcioId: bigint("consorcio_id", { mode: "number", unsigned: true }),
   participacionId: bigint("participacion_id", { mode: "number", unsigned: true }).notNull(),
@@ -1397,8 +1409,9 @@ export const proposiciones = mysqlTable("proposiciones", {
 }, (t) => [
   uniqueIndex("prop_tenant_id_uq").on(t.tenantId, t.id),
   uniqueIndex("prop_part_uq").on(t.tenantId, t.participacionId),
-  uniqueIndex("prop_lic_prov_uq").on(t.tenantId, t.licitacionId, t.proveedorId),
+  uniqueIndex("prop_lot_prov_uq").on(t.tenantId, t.lotId, t.proveedorId),
   index("prop_lic_idx").on(t.tenantId, t.licitacionId),
+  index("prop_lot_idx").on(t.tenantId, t.lotId),
   foreignKey({ name: "prop_tenant_fk", columns: [t.tenantId], foreignColumns: [tenants.id] }).onDelete("restrict"),
   foreignKey({ name: "prop_lic_fk", columns: [t.tenantId, t.licitacionId], foreignColumns: [licitaciones.tenantId, licitaciones.id] }).onDelete("restrict"),
   foreignKey({ name: "prop_prov_fk", columns: [t.tenantId, t.proveedorId], foreignColumns: [proveedores.tenantId, proveedores.id] }).onDelete("restrict"),
@@ -1475,6 +1488,7 @@ export const catalogoCucop = mysqlTable("catalogo_cucop", {
   uniqueIndex("cucop_codigo_uq").on(t.codigo),
 ]);
 
+/** Legacy archive only. Active adjudication is fallo_lot_decisions -> awards; no router writes this table. */
 export const actoAdjudicacion = mysqlTable("acto_adjudicacion", {
   id: serial("id").primaryKey(),
   ...tenantColumns,

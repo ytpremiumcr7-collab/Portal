@@ -29,7 +29,6 @@ import { notificacionesRouter } from "./routers/notificaciones";
 import { consultaPublicaRouter } from "./routers/consultaPublica";
 import { capabilitiesRouter } from "./routers/capabilities";
 import { sodRouter } from "./routers/sod";
-import { actoAdjudicacionRouter } from "./routers/actoAdjudicacion";
 import { comisionRouter } from "./routers/comision";
 import { terminacionRouter } from "./routers/terminacion";
 import { calendarioRouter } from "./routers/calendario";
@@ -40,6 +39,9 @@ import { smtpRouter } from "./routers/smtp";
 import { firmasRouter } from "./routers/firmas";
 import { dialogoRouter } from "./routers/dialogo";
 import { continuidadRouter, legalHoldRouter } from "./routers/continuidad";
+import { institutionalRouter } from "./routers/institutional";
+import { workRouter } from "./routers/work";
+import { lotsRouter } from "./routers/lots";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -73,7 +75,6 @@ export const appRouter = createRouter({
   consultaPublica: consultaPublicaRouter,
   capabilities: capabilitiesRouter,
   sod: sodRouter,
-  actoAdjudicacion: actoAdjudicacionRouter,
   comision: comisionRouter,
   terminacion: terminacionRouter,
   calendario: calendarioRouter,
@@ -85,6 +86,9 @@ export const appRouter = createRouter({
   dialogo: dialogoRouter,
   continuidad: continuidadRouter,
   legalHold: legalHoldRouter,
+  institutional: institutionalRouter,
+  work: workRouter,
+  lots: lotsRouter,
 });
 
 export type AppRouter = typeof appRouter;
