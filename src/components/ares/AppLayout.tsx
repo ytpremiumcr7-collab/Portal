@@ -34,6 +34,8 @@ import {
   Dices,
   KeyRound,
   Mail,
+  ListTodo,
+  Network,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMemo, useState } from "react";
@@ -82,6 +84,7 @@ const navGroups: NavGroup[] = [
     label: "Área dependencia",
     items: [
       { path: "/", label: "Tablero", icon: LayoutDashboard, roles: ["admin", "licitante"] },
+      { path: "/mi-trabajo", label: "Mi trabajo", icon: ListTodo, roles: ["admin", "licitante"] },
       { path: "/planeacion", label: "Planeación", icon: ClipboardList, roles: ["admin", "licitante"] },
       { path: "/investigacion-mercado", label: "Investigación de mercado", icon: Search, roles: ["admin", "licitante"] },
       { path: "/licitaciones", label: "Procedimientos", icon: FileText, roles: ["admin", "licitante", "proveedor"] },
@@ -118,6 +121,7 @@ const navGroups: NavGroup[] = [
       { path: "/capabilities", label: "Capacidades", icon: KeyRound, roles: ["admin"] },
       { path: "/smtp", label: "SMTP / outbox", icon: Mail, roles: ["admin"] },
       { path: "/usuarios", label: "Usuarios", icon: Users, roles: ["admin"] },
+      { path: "/organizacion", label: "Organización y autoridad", icon: Network, roles: ["admin"] },
     ],
   },
 ];
